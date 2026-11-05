@@ -1,0 +1,8 @@
+{
+  "name": "docinhos-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": { "start": "vercel dev", "seed": "node scripts/seed.js" },
+  "dependencies": { "@neondatabase/serverless": "^1.0.2" }
+}
