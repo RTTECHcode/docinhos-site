@@ -128,7 +128,7 @@ function priceItems(rawItems, catalog) {
 }
 
 // Valida os dados do cliente/entrega. Retorna valores limpos.
-function validateCustomer(b) {
+function validateCustomer(b, storeAddress = STORE_ADDRESS) {
   const name = typeof b.customer_name === 'string' ? b.customer_name.trim() : '';
   if (name.length < 2 || name.length > 80) fail('Informe seu nome (2 a 80 caracteres).');
 
@@ -144,7 +144,7 @@ function validateCustomer(b) {
     address = typeof b.address === 'string' ? b.address.trim() : '';
     if (address.length < 5 || address.length > 200) fail('Informe o endereço de entrega (5 a 200 caracteres).');
   } else {
-    address = STORE_ADDRESS; // retirada: ignora qualquer endereço enviado
+    address = storeAddress; // retirada: ignora qualquer endereço enviado
   }
 
   let notes = null;
@@ -167,7 +167,7 @@ async function loadCatalog(sql, productIds) {
   const links = await sql.query(
     `select pc.product_id, c.id, c.name, c.price_cents, c.kind, pc.max_quantity, pc.group_id
        from product_complements pc join complements c on c.id = pc.complement_id
-      where c.active and pc.product_id = any($1::int[])`,
+      where c.active and not pc.paused and pc.product_id = any($1::int[])`,
     [productIds]
   );
   const groups = await sql.query(
@@ -304,7 +304,16 @@ module.exports = async (req, res) => {
     if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
     if (!b || typeof b !== 'object' || Array.isArray(b)) fail('Dados inválidos.');
 
-    const customer = validateCustomer(b);
+    // Configurações da loja editáveis no /admin (tabela settings). Padrões = constantes acima.
+    const st = {};
+    for (const r of await sql`select key, value from settings where key in ('store_paused', 'store_paused_message', 'store_address', 'delivery_fee_cents')`) st[r.key] = r.value;
+    if (st.store_paused === '1') {
+      return res.status(503).json({ error: st.store_paused_message || 'Estamos com os pedidos pausados no momento. Volte em instantes!' });
+    }
+    const deliveryFee = Number.parseInt(st.delivery_fee_cents, 10);
+    const DELIVERY_FEE = Number.isInteger(deliveryFee) && deliveryFee >= 0 && deliveryFee <= 100000 ? deliveryFee : DELIVERY_FEE_CENTS;
+
+    const customer = validateCustomer(b, st.store_address || STORE_ADDRESS);
     const choice = PAYMENT_CHOICES.includes(b.payment_choice) ? b.payment_choice : 'card';
     if (!Array.isArray(b.items) || b.items.length === 0) fail('O carrinho está vazio.');
     if (b.items.length > MAX_ITEMS) fail(`O pedido pode ter no máximo ${MAX_ITEMS} itens.`);
@@ -312,7 +321,7 @@ module.exports = async (req, res) => {
 
     const catalog = await loadCatalog(sql, ids);
     const priced = priceItems(b.items, catalog);
-    const total = priced.subtotal_cents + DELIVERY_FEE_CENTS;
+    const total = priced.subtotal_cents + DELIVERY_FEE;
 
     // Limite de abuso: o insert só acontece se o telefone tiver < 5 pedidos nos últimos 10 min
     // (checagem e inserção na mesma instrução, para reduzir corridas).
@@ -325,7 +334,7 @@ module.exports = async (req, res) => {
                   and created_at > now() - interval '10 minutes') < $11::int
        returning id, code, total_cents`,
       [newCode(), customer.name, customer.phone, customer.method, customer.address, JSON.stringify(priced.items),
-        priced.subtotal_cents, DELIVERY_FEE_CENTS, total, customer.notes, MAX_ORDERS_PER_PHONE]
+        priced.subtotal_cents, DELIVERY_FEE, total, customer.notes, MAX_ORDERS_PER_PHONE]
     );
     if (!rows.length) return res.status(429).json({ error: 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.' });
     const order = rows[0];

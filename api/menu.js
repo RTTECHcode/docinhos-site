@@ -12,8 +12,19 @@ module.exports = async (req, res) => {
       select pc.product_id, c.id, c.name, c.price_cents, c.kind, pc.max_quantity, pc.group_id
       from product_complements pc
       join complements c on c.id = pc.complement_id and c.active
+      where not pc.paused
       order by c.kind, c.name
     `;
+    // Configurações da loja (painel /admin). Valores padrão se a chave ainda não existir.
+    const settingRows = await sql`select key, value from settings where key in ('store_address', 'delivery_fee_cents', 'store_paused', 'store_paused_message')`;
+    const st = {};
+    for (const s of settingRows) st[s.key] = s.value;
+    const settings = {
+      storeAddress: st.store_address || 'Manoel Hare Peralta, 101',
+      deliveryFeeCents: Number.parseInt(st.delivery_fee_cents, 10) || 0,
+      storePaused: st.store_paused === '1',
+      storePausedMessage: st.store_paused_message || ''
+    };
     const groupRows = await sql`
       select id, product_id, key, label, min_choices, max_choices
       from product_groups order by product_id, sort_order, id
@@ -32,6 +43,6 @@ module.exports = async (req, res) => {
       if (!category) { category = { id: row.category_id, name: row.category_name, products: [] }; categories.push(category); }
       category.products.push({ id: row.id, name: row.name, description: row.description, priceCents: row.price_cents, imagePath: row.image_path, complements: byProduct[row.id] || [], groups: groupsByProduct[row.id] || [] });
     }
-    res.status(200).json({ categories });
+    res.status(200).json({ categories, settings });
   } catch (error) { res.status(500).json({ error: 'Não foi possível carregar o cardápio' }); }
 };
