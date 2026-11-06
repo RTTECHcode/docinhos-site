@@ -1,9 +1,100 @@
 <!doctype html>
 <html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Docinhos da Gigi</title><link rel="stylesheet" href="/styles.css"></head>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Docinhos da Gigi — Feito para adoçar seu dia</title>
+<meta name="description" content="Doces artesanais: copos da felicidade, geladinhos gourmet, açaí, brigadeiros e sobremesas. Peça pelo site e receba no WhatsApp.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
 <body>
-<header class="hero"><img src="/images/branding/logo.jpg" alt="Docinhos da Gigi"><p>Docinhos da Gigi</p><h1>Feito para adoçar seu dia.</h1><a class="button" href="#cardapio">Ver cardápio</a></header>
-<main id="cardapio"><div id="status">Carregando cardápio...</div><div id="menu"></div></main>
-<footer><span>Docinhos da Gigi</span><a id="whatsapp" class="button" target="_blank" rel="noopener">Pedir pelo WhatsApp</a></footer>
+<header class="hero">
+  <a class="hero-link" href="/quem-somos.html">Quem somos</a>
+  <img src="/images/branding/logo.jpg" alt="Docinhos da Gigi" class="hero-logo">
+  <p class="hero-name">Docinhos da Gigi</p>
+  <h1>Feito para adoçar seu dia</h1>
+  <a class="button" href="#cardapio">Ver cardápio</a>
+</header>
+<nav id="categorias" class="categorias" aria-label="Categorias"></nav>
+<main id="cardapio">
+  <div id="status">Carregando cardápio...</div>
+  <div id="menu"></div>
+</main>
+<footer>
+  <span>Docinhos da Gigi</span>
+  <span class="footer-note">Peça fácil, receba feliz</span>
+  <a class="footer-link" href="/quem-somos.html">Quem somos</a>
+</footer>
+
+<button id="cat-fab" class="cat-fab" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="cat-sheet">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+  <span>Categorias</span>
+</button>
+
+<button id="cart-fab" class="cart-fab" hidden aria-label="Abrir carrinho">
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+  <span id="cart-fab-count">0</span>
+</button>
+
+<div id="cat-sheet" class="modal sheet" hidden>
+  <div class="modal-backdrop" data-sheet-close></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="cat-sheet-title">
+    <button class="modal-close" data-sheet-close aria-label="Fechar categorias">&times;</button>
+    <h2 id="cat-sheet-title">Categorias</h2>
+    <ul id="cat-list" class="cat-list"></ul>
+  </div>
+</div>
+
+<div id="product-modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-panel" role="dialog" aria-modal="true">
+    <button class="modal-close" data-close aria-label="Fechar">&times;</button>
+    <div id="product-modal-body"></div>
+  </div>
+</div>
+
+<div id="cart-modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-panel" role="dialog" aria-modal="true">
+    <button class="modal-close" data-close aria-label="Fechar">&times;</button>
+    <h2>Seu carrinho</h2>
+    <div id="cart-items"></div>
+    <div id="cart-total" class="cart-total"></div>
+    <button id="checkout-btn" class="button primary full">Finalizar pedido</button>
+  </div>
+</div>
+
+<div id="checkout-modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="checkout-title">
+    <button class="modal-close" data-close aria-label="Fechar">&times;</button>
+    <h2 id="checkout-title">Finalizar pedido</h2>
+    <form id="checkout-form">
+      <label>Seu nome<input name="name" required autocomplete="name"></label>
+      <label>WhatsApp<input name="phone" required inputmode="tel" placeholder="(11) 90000-0000" autocomplete="tel"></label>
+      <fieldset>
+        <legend>Retirada ou entrega?</legend>
+        <label class="radio"><input type="radio" name="delivery" value="delivery" checked> Entrega</label>
+        <label class="radio"><input type="radio" name="delivery" value="pickup"> Retirada</label>
+      </fieldset>
+      <label id="address-field">Endereço de entrega<input name="address" placeholder="Rua, número, bairro, ponto de referência"></label>
+      <label>Observações<textarea name="notes" rows="2" placeholder="Ex.: sem açúcar, entregar às 15h"></textarea></label>
+      <div id="payment-summary" class="cart-total"></div>
+      <button type="submit" class="button primary full">Enviar pedido</button>
+      <p class="checkout-note">Você será levado ao WhatsApp para confirmar. Pagamento no Mercado Pago após confirmação.</p>
+    </form>
+    <div id="payment-step" class="payment-step" hidden>
+      <p class="payment-code">Pedido <strong id="payment-code"></strong></p>
+      <p class="payment-text">Seu pedido foi registrado. Finalize o pagamento pelo Mercado Pago e envie o pedido pelo WhatsApp para confirmar.</p>
+      <a id="pay-mp" class="button primary full" href="#" target="_blank" rel="noopener noreferrer">Pagar com Mercado Pago</a>
+      <a id="pay-wa" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer">Enviar pelo WhatsApp</a>
+    </div>
+  </div>
+</div>
+
 <script src="/app.js" defer></script>
-</body></html>
+</body>
+</html>

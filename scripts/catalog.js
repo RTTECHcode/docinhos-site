@@ -1,16 +1,19 @@
 const products = [
-// [nome, arquivo de imagem, categoria, preço em centavos (null = consultar), descrição]
+// [nome, imagem, categoria, preço em centavos, descrição]
 ['Copão da Felicidade','Copão da Felicidade - Monte do Seu Jeito.avif','Copos da felicidade',1800,'Preço base do copo 250ml; muda conforme o tamanho e os complementos escolhidos.'],
 ['Copo da Felicidade - Brownie, Brigadeiro, Ninho e Kinder','Copo da Felicidade - Brownie, Brigadeiro, Ninho e Kinder.avif','Copos da felicidade',2000,'Delicioso Copo da Felicidade com Kinder Bueno: camadas de brigadeiro de ninho, kinder, chocolate e muito amor.'],
 ['Copo da Felicidade - Brownie com Ninho e Brigadeiro','Copo da Felicidade - Brownie com Ninho e Brigadeiro.avif','Copos da felicidade',1800,'Delicioso Copo da Felicidade: brownie macio, ninho cremoso e brigadeiro irresistível em uma só embalagem.'],
 ['Copo da Felicidade - Brownie, Brigadeiro e Maracujá','Copo da Felicidade - Brownie, Brigadeiro e Maracujá.avif','Copos da felicidade',1800,'Delicie-se com nosso Copo da Felicidade: Brownie macio, Brigadeiro cremoso e Brigadeiro de maracujá.'],
 ['Copo da Felicidade de Oreo - Brownie, Ninho e Oreo','Copo da Felicidade de Oreo - Brownie, Ninho e Oreo.avif','Copos da felicidade',1800,'Delicioso copo com camadas de brownie, creme de Oreo e creme de Ninho, finalizado com pedaços crocantes.'],
 ['Delícia de Nutella - Copo da Felicidade Ninho com Nutella','Delícia de Nutella - Copo da Felicidade Ninho com Nutella.avif','Copos da felicidade',2200,''],
-['Fatia de Brownie - Ninho com Nutella','Fatia de Brownie - Ninho com Nutella.avif','Doce no pote',2000,'Uma fatia de brownie fresquinho, coberto com uma camada de ninho e finalizada com nutella.'],
-['Brigadeiros - Bicho de Pé, Ninho e Chocolate','Brigadeiros - Bicho de Pé, Ninho e Chocolate.avif','Brigadeiros',1299,''],
-['Brigadeiros - Brigadeiro Tradicional, Ninho e Confete','Brigadeiros - Brigadeiro Tradicional, Ninho e Confete.avif','Brigadeiros',1299,''],
-['Brigadeiros - Brigadeiro tradicional e Confete','Brigadeiros - Brigadeiro tradicional e Confete.avif','Brigadeiros',1299,''],
-['Brigadeiros - Brigadeiro tradicional e Ninho','Brigadeiros - Brigadeiro tradicional e Ninho.avif','Brigadeiros',1299,''],
+['Fatia de Brownie - Ninho com Nutella','Fatia de Brownie - Ninho com Nutella.avif','Doces no pote',2000,'Uma fatia de brownie fresquinho, coberto com uma camada de ninho e finalizada com nutella.'],
+['Brigadeiros - Bicho de Pé, Ninho e Chocolate','Brigadeiros - Bicho de Pé, Ninho e Chocolate.avif','Doces no pote',1299,''],
+['Brigadeiros - Brigadeiro Tradicional, Ninho e Confete','Brigadeiros - Brigadeiro Tradicional, Ninho e Confete.avif','Doces no pote',1299,''],
+['Brigadeiros - Brigadeiro tradicional e Confete','Brigadeiros - Brigadeiro tradicional e Confete.avif','Doces no pote',1299,''],
+['Brigadeiros - Brigadeiro tradicional e Ninho','Brigadeiros - Brigadeiro tradicional e Ninho.avif','Doces no pote',1299,''],
+['Surpresa Mix! Uva e morango','Surpresa Mix! Uva e morango.avif','Doces no pote',1300,'Delicioso mix de sabores com uva e morango frescos, cobertos com brigadeiro de ninho e chocolate.'],
+['Surpresa de Morango - Bombom de morango','Surpresa de Morango - Bombom de morango.avif','Doces no pote',1300,'Delicioso doce feito com morangos frescos, brigadeiro de ninho e chocolate. Surpreenda-se com cada colherada.'],
+['Surpresa de Uva - Bombom de Uva','Surpresa de Uva - Bombom de Uva.avif','Doces no pote',1300,'Deliciosa Surpresa de Uva: uma combinação irresistível de uvas frescas, brigadeiro de chocolate e muito mais.'],
 ['Geladinho Gourmet de Chocolate Branco - Laka','Geladinho Gourmet de Chocolate Branco - Laka.avif','Geladinhos Gourmet',600,'Refrescante e cremoso, nosso Geladinho Laka é feito com o delicioso sabor do chocolate branco.'],
 ['Geladinho Gourmet de Chocolate com Nutella','Geladinho Gourmet de Chocolate com Nutella.avif','Geladinhos Gourmet',600,'Delicioso geladinho de chocolate com Nutella, perfeito para quem deseja se refrescar com muito sabor.'],
 ['Geladinho Gourmet de Limão','Geladinho Gourmet de Limão.avif','Geladinhos Gourmet',600,'Refrescante geladinho de limão, perfeito para os dias quentes. Uma delícia cítrica e refrescante.'],
@@ -28,10 +31,51 @@ const products = [
 ['Açaí 500ml - Monte seu copo','Açaí 500ml - Monte seu copo.avif','Açaí',2000,'Delicioso açaí cremoso, servido em copo de 500ml. Monte o seu com até 4 complementos.'],
 ['Açaí Trufado - Brigadeiro de Chocolate','Açaí Trufado - Brigadeiro de Chocolate.avif','Açaí',1800,''],
 ['Açaí Trufado - Brigadeiro de Ninho','Açaí Trufado - Brigadeiro de Ninho.avif','Açaí',1800,''],
-['Surpresa Mix! Uva e morango','Surpresa Mix! Uva e morango.avif','Surpresas',1300,'Delicioso mix de sabores com uva e morango frescos, cobertos com brigadeiro de ninho e chocolate.'],
-['Surpresa de Morango - Bombom de morango','Surpresa de Morango - Bombom de morango.avif','Surpresas',1300,'Delicioso doce feito com morangos frescos, brigadeiro de ninho e chocolate. Surpreenda-se com cada colherada.'],
 ['Surpresa de Morango - Na Travessa - Tamanho familia','Surpresa de Morango - Na Travessa - Tamanho familia.avif','Sobremesas tamanho família',6000,'Deliciosas camadas de brigadeiro de ninho, com pedaços de morango e finalizada com brigadeiro de chocolate.'],
-['Surpresa de Uva - Bombom de Uva','Surpresa de Uva - Bombom de Uva.avif','Surpresas',1300,'Deliciosa Surpresa de Uva: uma combinação irresistível de uvas frescas, brigadeiro de chocolate e muito mais.'],
 ['Surpresa de Uva - Na Travessa - Tamanho familia','Surpresa de Uva - Na Travessa - Tamanho familia.avif','Sobremesas tamanho família',5500,'Deliciosas camadas de brigadeiro de ninho, com pedaços de uva finalizadas com brigadeiro de chocolate.']
 ];
-module.exports = products;
+
+// Complementos: kind = size (escolha 1) | additional (adicionais)
+const complements = [
+  { name: 'Copo 250ml', price_cents: 0, kind: 'size' },
+  { name: 'Copo 300ml', price_cents: 300, kind: 'size' },
+  { name: 'Copo 500ml', price_cents: 1700, kind: 'size' },
+  { name: 'Recheio de Brownie', price_cents: 0, kind: 'additional' },
+  { name: 'Recheio de Pedaços de Oreo', price_cents: 100, kind: 'additional' },
+  { name: 'Brigadeiro de Chocolate', price_cents: 0, kind: 'additional' },
+  { name: 'Brigadeiro de Ninho', price_cents: 0, kind: 'additional' },
+  { name: 'Brigadeiro de Kinder', price_cents: 199, kind: 'additional' },
+  { name: 'Fruta - Banana', price_cents: 0, kind: 'additional' },
+  { name: 'Fruta - Uva', price_cents: 0, kind: 'additional' },
+  { name: 'Fruta - Morango', price_cents: 0, kind: 'additional' },
+  { name: 'Topping - Pedaço de Brownie', price_cents: 0, kind: 'additional' },
+  { name: 'Topping - Nutella', price_cents: 299, kind: 'additional' },
+  { name: 'Topping - Creme de Ovomaltine', price_cents: 199, kind: 'additional' },
+  { name: 'Topping - Biscoito Oreo', price_cents: 100, kind: 'additional' },
+  { name: 'Banana', price_cents: 100, kind: 'additional' },
+  { name: 'Confetes (tipo M&M)', price_cents: 100, kind: 'additional' },
+  { name: 'Creme de Ovomaltine', price_cents: 250, kind: 'additional' },
+  { name: 'Granola', price_cents: 100, kind: 'additional' },
+  { name: 'Leite Condensado', price_cents: 100, kind: 'additional' },
+  { name: 'Leite em Pó', price_cents: 100, kind: 'additional' },
+  { name: 'Nutella', price_cents: 250, kind: 'additional' },
+  { name: 'Ovomaltine em pó', price_cents: 100, kind: 'additional' },
+  { name: 'Paçoca', price_cents: 100, kind: 'additional' },
+  { name: 'Uva', price_cents: 100, kind: 'additional' }
+];
+
+// Produtos que recebem cada grupo de complementos
+const copaoSizes = ['Copo 250ml', 'Copo 300ml', 'Copo 500ml'];
+const copaoExtras = ['Recheio de Brownie','Recheio de Pedaços de Oreo','Brigadeiro de Chocolate','Brigadeiro de Ninho','Brigadeiro de Kinder','Fruta - Banana','Fruta - Uva','Fruta - Morango','Topping - Pedaço de Brownie','Topping - Nutella','Topping - Creme de Ovomaltine','Topping - Biscoito Oreo'];
+const acaiExtras = ['Banana','Confetes (tipo M&M)','Creme de Ovomaltine','Granola','Leite Condensado','Leite em Pó','Nutella','Ovomaltine em pó','Paçoca','Uva'];
+
+const productComplements = [];
+for (const [name] of products.filter(p => p[2] === 'Copos da felicidade' && /Monte|Copão/.test(p[0]))) {
+  for (const c of copaoSizes) productComplements.push([name, c, 1]);
+  for (const c of copaoExtras) productComplements.push([name, c, 3]);
+}
+for (const [name] of products.filter(p => p[2] === 'Açaí' && /Monte/.test(p[0]))) {
+  for (const c of acaiExtras) productComplements.push([name, c, 4]);
+}
+
+module.exports = { products, complements, productComplements };

@@ -8,11 +8,21 @@ module.exports = async (req, res) => {
       from categories c join products p on p.category_id = c.id
       where c.active and p.active order by c.sort_order, p.sort_order, p.name
     `;
+    const links = await sql`
+      select pc.product_id, c.id, c.name, c.price_cents, c.kind, pc.max_quantity
+      from product_complements pc
+      join complements c on c.id = pc.complement_id and c.active
+      order by c.kind, c.name
+    `;
+    const byProduct = {};
+    for (const l of links) {
+      (byProduct[l.product_id] ||= []).push({ id: l.id, name: l.name, priceCents: l.price_cents, kind: l.kind, maxQuantity: l.max_quantity });
+    }
     const categories = [];
     for (const row of rows) {
       let category = categories.find(item => item.id === row.category_id);
       if (!category) { category = { id: row.category_id, name: row.category_name, products: [] }; categories.push(category); }
-      category.products.push({ id: row.id, name: row.name, description: row.description, priceCents: row.price_cents, imagePath: row.image_path });
+      category.products.push({ id: row.id, name: row.name, description: row.description, priceCents: row.price_cents, imagePath: row.image_path, complements: byProduct[row.id] || [] });
     }
     res.status(200).json({ categories });
   } catch (error) { res.status(500).json({ error: 'Não foi possível carregar o cardápio' }); }
