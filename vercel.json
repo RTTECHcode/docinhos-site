@@ -52,6 +52,15 @@
           "value": "no-store"
         }
       ]
+    },
+    {
+      "source": "/api/order-status",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
     }
   ],
   "rewrites": [

@@ -25,4 +25,16 @@ assert.deepStrictEqual(parseNotification({ 'data.id': '55', type: 'payment' }, {
 assert.deepStrictEqual(parseNotification({ topic: 'merchant_order' }, null), { type: 'merchant_order', dataId: '' });
 assert.deepStrictEqual(parseNotification({}, { type: 'payment', data: { id: 777 } }), { type: 'payment', dataId: '777' });
 
+// Pix vira 'pix'; pagamento do Checkout Pro (cartão) vira 'mercadopago_card'.
+const { paymentMethodOf } = require('../api/mp-webhook')._internal;
+assert.strictEqual(paymentMethodOf({ payment_method_id: 'pix' }), 'pix');
+assert.strictEqual(paymentMethodOf({ payment_method_id: 'visa' }), 'mercadopago_card');
+assert.strictEqual(paymentMethodOf({}), 'mercadopago_card');
+assert.strictEqual(paymentMethodOf(null), 'mercadopago_card');
+
+// order-status: validação do código
+const { CODE_RE } = require('../api/order-status')._internal;
+assert.ok(CODE_RE.test('DG0123456789') && CODE_RE.test('DGABCDEF0123'));
+for (const bad of ['', 'dg0123456789', 'DG012345678', 'DG01234567890', 'DG012345678G', "DG0123456789' or 1=1"]) assert.ok(!CODE_RE.test(bad), bad);
+
 console.log('mp-webhook: todos os testes passaram');

@@ -9,20 +9,28 @@ module.exports = async (req, res) => {
       where c.active and p.active order by c.sort_order, p.sort_order, p.name
     `;
     const links = await sql`
-      select pc.product_id, c.id, c.name, c.price_cents, c.kind, pc.max_quantity
+      select pc.product_id, c.id, c.name, c.price_cents, c.kind, pc.max_quantity, pc.group_id
       from product_complements pc
       join complements c on c.id = pc.complement_id and c.active
       order by c.kind, c.name
     `;
+    const groupRows = await sql`
+      select id, product_id, key, label, min_choices, max_choices
+      from product_groups order by product_id, sort_order, id
+    `;
+    const groupsByProduct = {};
+    for (const g of groupRows) {
+      (groupsByProduct[g.product_id] ||= []).push({ id: g.id, key: g.key, label: g.label, minChoices: g.min_choices, maxChoices: g.max_choices });
+    }
     const byProduct = {};
     for (const l of links) {
-      (byProduct[l.product_id] ||= []).push({ id: l.id, name: l.name, priceCents: l.price_cents, kind: l.kind, maxQuantity: l.max_quantity });
+      (byProduct[l.product_id] ||= []).push({ id: l.id, name: l.name, priceCents: l.price_cents, kind: l.kind, maxQuantity: l.max_quantity, groupId: l.kind === 'size' ? null : l.group_id });
     }
     const categories = [];
     for (const row of rows) {
       let category = categories.find(item => item.id === row.category_id);
       if (!category) { category = { id: row.category_id, name: row.category_name, products: [] }; categories.push(category); }
-      category.products.push({ id: row.id, name: row.name, description: row.description, priceCents: row.price_cents, imagePath: row.image_path, complements: byProduct[row.id] || [] });
+      category.products.push({ id: row.id, name: row.name, description: row.description, priceCents: row.price_cents, imagePath: row.image_path, complements: byProduct[row.id] || [], groups: groupsByProduct[row.id] || [] });
     }
     res.status(200).json({ categories });
   } catch (error) { res.status(500).json({ error: 'Não foi possível carregar o cardápio' }); }

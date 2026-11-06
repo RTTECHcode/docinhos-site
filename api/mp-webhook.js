@@ -34,6 +34,11 @@ function parseNotification(query, body) {
   return { type, dataId };
 }
 
+// Pix (payment_method_id 'pix') vira 'pix'; qualquer outro pagamento vem do Checkout Pro com cartão.
+function paymentMethodOf(pay) {
+  return pay && pay.payment_method_id === 'pix' ? 'pix' : 'mercadopago_card';
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
@@ -93,11 +98,11 @@ module.exports = async (req, res) => {
 
     // Idempotente: só grava se algo mudou; um pagamento recusado não sobrescreve um já aprovado.
     await sql.query(
-      `update orders set payment_status = $2, payment_id = $3, payment_method = 'mercadopago'
+      `update orders set payment_status = $2, payment_id = $3, payment_method = $4
        where code = $1
          and (payment_status is distinct from $2 or payment_id is distinct from $3)
          and not (payment_status = 'approved' and payment_id is distinct from $3 and $2 <> 'approved')`,
-      [String(code), String(pay.status), String(pay.id)]
+      [String(code), String(pay.status), String(pay.id), paymentMethodOf(pay)]
     );
     return res.status(200).json({ ok: true });
   } catch (error) {
@@ -106,4 +111,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { parseSignature, verifySignature, parseNotification };
+module.exports._internal = { parseSignature, verifySignature, parseNotification, paymentMethodOf };

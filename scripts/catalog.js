@@ -1,6 +1,6 @@
 const products = [
 // [nome, imagem, categoria, preço em centavos, descrição]
-['Copão da Felicidade','Copão da Felicidade - Monte do Seu Jeito.avif','Copos da felicidade',1800,'Preço base do copo 250ml; muda conforme o tamanho e os complementos escolhidos.'],
+['Monte seu copo','Copão da Felicidade - Monte do Seu Jeito.avif','Copos da felicidade',1800,'Monte do seu jeito: escolha o tamanho, até 2 brigadeiros, 2 frutas, 2 recheios e 2 toppings.'],
 ['Copo da Felicidade - Brownie, Brigadeiro, Ninho e Kinder','Copo da Felicidade - Brownie, Brigadeiro, Ninho e Kinder.avif','Copos da felicidade',2000,'Delicioso Copo da Felicidade com Kinder Bueno: camadas de brigadeiro de ninho, kinder, chocolate e muito amor.'],
 ['Copo da Felicidade - Brownie com Ninho e Brigadeiro','Copo da Felicidade - Brownie com Ninho e Brigadeiro.avif','Copos da felicidade',1800,'Delicioso Copo da Felicidade: brownie macio, ninho cremoso e brigadeiro irresistível em uma só embalagem.'],
 ['Copo da Felicidade - Brownie, Brigadeiro e Maracujá','Copo da Felicidade - Brownie, Brigadeiro e Maracujá.avif','Copos da felicidade',1800,'Delicie-se com nosso Copo da Felicidade: Brownie macio, Brigadeiro cremoso e Brigadeiro de maracujá.'],
@@ -27,10 +27,10 @@ const products = [
 ['Geladinho Gourmet de Ninho com Oreo','Geladinho Gourmet de Ninho com Oreo.avif','Geladinhos Gourmet',600,'Refrescante geladinho com sabor cremoso do leite Ninho e pedacinhos crocantes de biscoito Oreo.'],
 ['Geladinho Gourmet de Ninho com Ovomaltine','Geladinho Gourmet de Ninho com Ovomaltine.avif','Geladinhos Gourmet',600,'Delicioso geladinho de Ninho cremoso com crocantes de Ovomaltine, perfeito para refrescar e adoçar.'],
 ['Geladinho Gourmet de Paçoca - Paçoquita','Geladinho Gourmet de Paçoca - Paçoquita.avif','Geladinhos Gourmet',600,'Delicioso geladinho de Paçoquita, perfeito para matar a sede e se refrescar com um sabor irresistível.'],
-['Açaí 300ml - Monte Seu Copo','Açaí 300ml - Monte Seu Copo.avif','Açaí',1500,'Delicioso açaí 300ml, cremoso e refrescante. Monte o seu com até 4 complementos.'],
-['Açaí 500ml - Monte seu copo','Açaí 500ml - Monte seu copo.avif','Açaí',2000,'Delicioso açaí cremoso, servido em copo de 500ml. Monte o seu com até 4 complementos.'],
-['Açaí Trufado - Brigadeiro de Chocolate','Açaí Trufado - Brigadeiro de Chocolate.avif','Açaí',1800,''],
-['Açaí Trufado - Brigadeiro de Ninho','Açaí Trufado - Brigadeiro de Ninho.avif','Açaí',1800,''],
+['Açaí 300ml - Monte Seu Copo','Açaí 300ml - Monte Seu Copo.avif','Açaí',1500,'Delicioso açaí 300ml, cremoso e refrescante. Monte o seu com até 3 complementos.'],
+['Açaí 500ml - Monte seu copo','Açaí 500ml - Monte seu copo.avif','Açaí',2000,'Delicioso açaí cremoso, servido em copo de 500ml. Monte o seu com até 5 complementos.'],
+['Açaí Trufado 300ml - Brigadeiro de Chocolate','Açaí Trufado - Brigadeiro de Chocolate.avif','Açaí',1800,''],
+['Açaí Trufado 300ml - Brigadeiro de Ninho','Açaí Trufado - Brigadeiro de Ninho.avif','Açaí',1800,''],
 ['Surpresa de Morango - Na Travessa - Tamanho familia','Surpresa de Morango - Na Travessa - Tamanho familia.avif','Sobremesas tamanho família',6000,'Deliciosas camadas de brigadeiro de ninho, com pedaços de morango e finalizada com brigadeiro de chocolate.'],
 ['Surpresa de Uva - Na Travessa - Tamanho familia','Surpresa de Uva - Na Travessa - Tamanho familia.avif','Sobremesas tamanho família',5500,'Deliciosas camadas de brigadeiro de ninho, com pedaços de uva finalizadas com brigadeiro de chocolate.']
 ];
@@ -42,9 +42,12 @@ const complements = [
   { name: 'Copo 500ml', price_cents: 1700, kind: 'size' },
   { name: 'Recheio de Brownie', price_cents: 0, kind: 'additional' },
   { name: 'Recheio de Pedaços de Oreo', price_cents: 100, kind: 'additional' },
+  { name: 'Recheio de Kitkat', price_cents: 199, kind: 'additional' }, // CONFIRMAR PREÇO
+  { name: 'Recheio de Bis', price_cents: 100, kind: 'additional' }, // CONFIRMAR PREÇO
   { name: 'Brigadeiro de Chocolate', price_cents: 0, kind: 'additional' },
   { name: 'Brigadeiro de Ninho', price_cents: 0, kind: 'additional' },
   { name: 'Brigadeiro de Kinder', price_cents: 199, kind: 'additional' },
+  { name: 'Brigadeiro de Oreo', price_cents: 100, kind: 'additional' }, // CONFIRMAR PREÇO
   { name: 'Fruta - Banana', price_cents: 0, kind: 'additional' },
   { name: 'Fruta - Uva', price_cents: 0, kind: 'additional' },
   { name: 'Fruta - Morango', price_cents: 0, kind: 'additional' },
@@ -52,6 +55,10 @@ const complements = [
   { name: 'Topping - Nutella', price_cents: 299, kind: 'additional' },
   { name: 'Topping - Creme de Ovomaltine', price_cents: 199, kind: 'additional' },
   { name: 'Topping - Biscoito Oreo', price_cents: 100, kind: 'additional' },
+  { name: 'Topping - Ferrero Rocher', price_cents: 299, kind: 'additional' }, // CONFIRMAR PREÇO
+  { name: 'Topping - Tubes de Morango', price_cents: 100, kind: 'additional' }, // CONFIRMAR PREÇO
+  { name: 'Topping - Tubes de Avelã', price_cents: 100, kind: 'additional' }, // CONFIRMAR PREÇO
+  { name: 'Topping - Kinder Bueno', price_cents: 299, kind: 'additional' }, // CONFIRMAR PREÇO
   { name: 'Banana', price_cents: 100, kind: 'additional' },
   { name: 'Confetes (tipo M&M)', price_cents: 100, kind: 'additional' },
   { name: 'Creme de Ovomaltine', price_cents: 250, kind: 'additional' },
@@ -64,18 +71,38 @@ const complements = [
   { name: 'Uva', price_cents: 100, kind: 'additional' }
 ];
 
-// Produtos que recebem cada grupo de complementos
-const copaoSizes = ['Copo 250ml', 'Copo 300ml', 'Copo 500ml'];
-const copaoExtras = ['Recheio de Brownie','Recheio de Pedaços de Oreo','Brigadeiro de Chocolate','Brigadeiro de Ninho','Brigadeiro de Kinder','Fruta - Banana','Fruta - Uva','Fruta - Morango','Topping - Pedaço de Brownie','Topping - Nutella','Topping - Creme de Ovomaltine','Topping - Biscoito Oreo'];
+// Renomeações em place (preservam o id do produto). O seed só aplica se o nome antigo existe e o novo não.
+const renames = [
+  ['Copão da Felicidade', 'Monte seu copo'],
+  ['Açaí Trufado - Brigadeiro de Chocolate', 'Açaí Trufado 300ml - Brigadeiro de Chocolate'],
+  ['Açaí Trufado - Brigadeiro de Ninho', 'Açaí Trufado 300ml - Brigadeiro de Ninho']
+];
+
+// Produtos que recebem complementos
+const copoSizes = ['Copo 250ml', 'Copo 300ml', 'Copo 500ml'];
+// Grupos de escolha do "Monte seu copo" (ordem = sort_order): cada um com mín 0 e máx 2, opções com max_quantity 1.
+const copoGroups = [
+  { key: 'brigadeiro', label: 'Escolha o brigadeiro', options: ['Brigadeiro de Chocolate', 'Brigadeiro de Ninho', 'Brigadeiro de Kinder', 'Brigadeiro de Oreo'] },
+  { key: 'fruta', label: 'Escolha sua fruta', options: ['Fruta - Banana', 'Fruta - Uva', 'Fruta - Morango'] },
+  { key: 'recheio', label: 'Escolha o recheio', options: ['Recheio de Brownie', 'Recheio de Pedaços de Oreo', 'Recheio de Kitkat', 'Recheio de Bis'] },
+  { key: 'topping', label: 'Escolha o topping', options: ['Topping - Pedaço de Brownie', 'Topping - Nutella', 'Topping - Creme de Ovomaltine', 'Topping - Biscoito Oreo', 'Topping - Ferrero Rocher', 'Topping - Tubes de Morango', 'Topping - Tubes de Avelã', 'Topping - Kinder Bueno'] }
+];
 const acaiExtras = ['Banana','Confetes (tipo M&M)','Creme de Ovomaltine','Granola','Leite Condensado','Leite em Pó','Nutella','Ovomaltine em pó','Paçoca','Uva'];
 
+// [produto, chave, rótulo, mín, máx, ordem]
+const productGroups = [];
+// [produto, complemento, max_quantity, chave do grupo | null]
 const productComplements = [];
-for (const [name] of products.filter(p => p[2] === 'Copos da felicidade' && /Monte|Copão/.test(p[0]))) {
-  for (const c of copaoSizes) productComplements.push([name, c, 1]);
-  for (const c of copaoExtras) productComplements.push([name, c, 3]);
+for (const [name] of products.filter(p => p[2] === 'Copos da felicidade' && /Monte/.test(p[0]))) {
+  for (const c of copoSizes) productComplements.push([name, c, 1, null]);
+  copoGroups.forEach((g, idx) => {
+    productGroups.push([name, g.key, g.label, 0, 2, idx]);
+    for (const o of g.options) productComplements.push([name, o, 1, g.key]);
+  });
 }
 for (const [name] of products.filter(p => p[2] === 'Açaí' && /Monte/.test(p[0]))) {
-  for (const c of acaiExtras) productComplements.push([name, c, 4]);
+  productGroups.push([name, 'complementos', 'Escolha seus complementos', 0, /300ml/.test(name) ? 3 : 5, 0]);
+  for (const c of acaiExtras) productComplements.push([name, c, 1, 'complementos']);
 }
 
-module.exports = { products, complements, productComplements };
+module.exports = { products, complements, productComplements, productGroups, renames };

@@ -20,6 +20,7 @@ const MODAL_MS = 300; // um pouco acima da transição de 280ms do CSS
 let menu = [];
 let activeProduct = null;
 let sel = { size: null, extras: {} };
+let pmGroups = []; // grupos de escolha do produto aberto: { id, label, min, max, opts[] }
 
 const brl = cents => 'R$ ' + (cents / 100).toFixed(2).replace('.', ',');
 const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' };
@@ -277,6 +278,14 @@ function openProduct(id, opener) {
   const sizes = comps.filter(c => c.kind === 'size');
   const extras = comps.filter(c => c.kind !== 'size');
   sel = { size: sizes.length ? sizes[0] : null, extras: {} };
+  // Grupos de escolha: a API pode não enviar `groups` (ainda); sem eles tudo segue como complemento com +/−.
+  pmGroups = (Array.isArray(activeProduct.groups) ? activeProduct.groups : []).map(g => {
+    const opts = extras.filter(c => c.groupId != null && Number(c.groupId) === Number(g.id));
+    const max = Number(g.maxChoices) > 0 ? Math.min(Number(g.maxChoices), opts.length) : opts.length;
+    return { id: Number(g.id), label: String(g.label || ''), min: Math.min(Math.max(0, Number(g.minChoices) || 0), max), max, opts };
+  }).filter(g => g.opts.length);
+  const grouped = new Set(pmGroups.flatMap(g => g.opts.map(o => o.id)));
+  const loose = extras.filter(c => !grouped.has(c.id));
 
   document.querySelector('#product-modal-body').innerHTML = `
     <div class="pm-photo">${activeProduct.imagePath ? `<img src="${esc(encodeURI(activeProduct.imagePath))}" alt="${esc(activeProduct.name)}">` : ''}</div>
@@ -293,13 +302,26 @@ function openProduct(id, opener) {
             <span class="comp-qty"><button type="button" data-size="${s.id}" aria-label="Escolher ${esc(s.name)}" ${i === 0 ? 'disabled' : ''}>${i === 0 ? '✓' : '+'}</button></span>
           </div>`).join('')}
       </div>` : ''}
-    ${extras.length ? `
+    ${pmGroups.map(g => `
+      <div class="comp-group choice-group" data-gid="${g.id}" role="group" aria-labelledby="gt-${g.id}">
+        <div class="group-head"><h4 id="gt-${g.id}">${esc(g.label)}</h4><span class="group-count" data-gcount aria-live="polite">0/${g.max}</span></div>
+        <p class="hint">${g.min ? `Escolha ${g.min === g.max ? g.max : `de ${g.min} a ${g.max}`}` : `Escolha até ${g.max}`}</p>
+        <p class="group-error" data-gerr role="alert" hidden></p>
+        <div class="chips">
+          ${g.opts.map(o => `
+            <label class="chip">
+              <input type="checkbox" data-opt="${o.id}" data-opt-group="${g.id}" aria-disabled="false">
+              <span class="chip-text"><span class="chip-name">${esc(stripPrefix(o.name))}</span>${priceTag(o)}</span>
+            </label>`).join('')}
+        </div>
+      </div>`).join('')}
+    ${loose.length ? `
       <div class="comp-group">
-        <h4>Complementos</h4>
-        <p class="hint">Opcional — até ${Math.max(...extras.map(x => x.maxQuantity))} por item</p>
-        ${extras.map(x => `
+        <h4>${pmGroups.length ? 'Outros complementos' : 'Complementos'}</h4>
+        <p class="hint">Opcional — até ${Math.max(...loose.map(x => x.maxQuantity))} por item</p>
+        ${loose.map(x => `
           <div class="comp-item">
-            <span class="comp-left">${esc(x.name)}${x.priceCents ? `<span class="comp-price">+ ${brl(x.priceCents)}</span>` : ''}</span>
+            <span class="comp-left">${esc(stripPrefix(x.name))}${priceTag(x)}</span>
             <span class="comp-qty">
               <button type="button" data-minus="${x.id}" aria-label="Menos ${esc(x.name)}" disabled>−</button>
               <span class="n" data-count="${x.id}">0</span>
@@ -311,6 +333,25 @@ function openProduct(id, opener) {
     <button type="button" class="button primary full" id="pm-add">Adicionar ao carrinho</button>`;
   updatePmTotal();
   openModal('#product-modal', { opener });
+}
+
+// Só exibição: dentro dos grupos o título já diz "Fruta"/"Topping". Carrinho e pedido seguem por id (e nome completo).
+const stripPrefix = n => String(n).replace(/^(Fruta|Topping) - /, '');
+const priceTag = c => c.priceCents ? `<span class="comp-price">+ ${brl(c.priceCents)}</span>` : '<span class="comp-price free">sem custo</span>';
+const groupCount = g => g.opts.reduce((n, o) => n + (sel.extras[o.id] ? 1 : 0), 0);
+function groupRoot(g) { return document.querySelector(`[data-gid="${g.id}"]`); }
+function refreshGroup(g) {
+  const root = groupRoot(g);
+  if (!root) return;
+  const n = groupCount(g);
+  const full = n >= g.max;
+  root.querySelector('[data-gcount]').textContent = `${n}/${g.max}`;
+  root.classList.toggle('is-full', full);
+  root.classList.remove('invalid');
+  const err = root.querySelector('[data-gerr]');
+  err.hidden = true;
+  err.textContent = '';
+  root.querySelectorAll('[data-opt]').forEach(i => i.setAttribute('aria-disabled', String(full && !i.checked)));
 }
 
 function pmTotalCents() {
@@ -337,6 +378,17 @@ document.addEventListener('click', e => {
     updatePmTotal();
     return;
   }
+  const opt = e.target.closest('[data-opt]');
+  if (opt) {
+    const g = pmGroups.find(x => x.id === Number(opt.dataset.optGroup));
+    if (!g) return;
+    // opt.checked já é o NOVO estado; groupCount ainda não conta esta opção
+    if (opt.checked && groupCount(g) >= g.max) { e.preventDefault(); return; } // limite do grupo
+    if (opt.checked) sel.extras[Number(opt.dataset.opt)] = 1; else delete sel.extras[Number(opt.dataset.opt)];
+    refreshGroup(g);
+    updatePmTotal();
+    return;
+  }
   const plus = e.target.closest('[data-plus]');
   const minus = e.target.closest('[data-minus]');
   if (plus || minus) {
@@ -352,6 +404,19 @@ document.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('#pm-add')) {
+    if (closing.has('#product-modal')) return; // toque duplo durante o fechamento não adiciona duas vezes
+    const missing = pmGroups.find(g => groupCount(g) < g.min);
+    if (missing) { // minChoices não atendido: não adiciona
+      const root = groupRoot(missing);
+      const msg = `Escolha ${missing.min === 1 ? 'pelo menos 1' : `pelo menos ${missing.min}`} em "${missing.label}" para continuar.`;
+      root.classList.add('invalid');
+      const err = root.querySelector('[data-gerr]');
+      err.textContent = msg;
+      err.hidden = false;
+      root.scrollIntoView({ block: 'center', behavior: REDUCED.matches ? 'auto' : 'smooth' });
+      toast(msg, 2600);
+      return;
+    }
     addToCart(activeProduct, sel);
     requestClose('#product-modal');
     toast('Adicionado ao carrinho ✓');
@@ -376,10 +441,17 @@ function addToCart(product, sel2) {
 function cartTotal() { return cart.reduce((s, i) => s + i.unitTotal * i.qty, 0); }
 function cartCount() { return cart.reduce((s, i) => s + i.qty, 0); }
 
+let lastFabCount = cartCount();
 function renderCartFab() {
   const n = cartCount();
   cartFab.hidden = n === 0;
   cartFabCount.textContent = n;
+  if (n > lastFabCount && !REDUCED.matches) { // contador "salta" ao adicionar
+    cartFabCount.classList.remove('bump');
+    void cartFabCount.offsetWidth;
+    cartFabCount.classList.add('bump');
+  }
+  lastFabCount = n;
 }
 
 cartFab.addEventListener('click', () => { renderCart(); openModal('#cart-modal', { opener: cartFab }); });
@@ -433,28 +505,195 @@ function syncDelivery() {
 checkoutFormEl.addEventListener('change', e => { if (e.target.name === 'delivery') syncDelivery(); });
 syncDelivery();
 
-// Etapa pós-pedido: links <a> reais (toque direto do usuário), sem window.open depois de await.
-function showOrderStep({ code, whatsappText, paymentUrl }, { title = 'Pagamento', text = '', showPay = true } = {}) {
-  const payOk = showPay && typeof paymentUrl === 'string' && /^https:\/\//i.test(paymentUrl);
-  const pay = document.querySelector('#pay-mp');
-  const wa = document.querySelector('#pay-wa');
-  document.querySelector('#payment-code').textContent = code || '';
-  document.querySelector('#payment-code-row').hidden = !code;
-  document.querySelector('#payment-text').textContent = text;
-  pay.hidden = !payOk;
-  document.querySelector('#pay-support').hidden = !payOk;
-  if (payOk) pay.href = paymentUrl;
-  const waOk = !!WHATSAPP_NUMBER && !!whatsappText;
-  wa.hidden = !waOk;
-  if (waOk) wa.href = waLink(whatsappText);
-  wa.classList.toggle('primary', !payOk);
-  wa.classList.toggle('secondary', payOk);
+/* ---------- Etapa pós-pedido: cartão (link), Pix (QR no site) ou só WhatsApp ----------
+   Links são <a> reais (toque direto do usuário), sem window.open depois de await. */
+const payEls = {
+  codeRow: document.querySelector('#payment-code-row'),
+  code: document.querySelector('#payment-code'),
+  text: document.querySelector('#payment-text'),
+  status: document.querySelector('#pay-status'),
+  pixBox: document.querySelector('#pix-box'),
+  qr: document.querySelector('#pix-qr'),
+  pixCode: document.querySelector('#pix-code'),
+  copyBtn: document.querySelector('#pix-copy'),
+  copyStatus: document.querySelector('#pix-copy-status'),
+  timer: document.querySelector('#pix-timer'),
+  card: document.querySelector('#pay-mp'),
+  support: document.querySelector('#pay-support'),
+  retry: document.querySelector('#pay-retry'),
+  wa: document.querySelector('#pay-wa')
+};
+const PIX_DEFAULT_MS = 30 * 60 * 1000;
+const POLL_MS = 5000;
+const watch = { token: 0, poll: null, tick: null, pollNow: null };
+let lastCartCopy = null; // cópia do carrinho do último pedido, para "refazer" se o Pix expirar ou falhar
+let copyTimer = null;
+
+// Para contagem e polling (fechar o modal, expirar, aprovar, refazer). O token invalida respostas em voo.
+function stopPayWatch() {
+  watch.token++;
+  clearInterval(watch.poll);
+  clearInterval(watch.tick);
+  watch.poll = watch.tick = watch.pollNow = null;
+}
+modalHooks['#checkout-modal'] = { open() {}, close: stopPayWatch };
+
+function normalizePayment(p) {
+  if (!p || typeof p !== 'object') return null;
+  if (p.type === 'pix') {
+    const qr = typeof p.qr_code === 'string' ? p.qr_code.trim() : '';
+    const b64 = typeof p.qr_code_base64 === 'string' ? p.qr_code_base64.replace(/\s+/g, '') : '';
+    if (!qr) return null;
+    return { type: 'pix', id: p.id, qr_code: qr, qr_code_base64: /^[A-Za-z0-9+/]+=*$/.test(b64) ? b64 : '', expires_at: p.expires_at };
+  }
+  // type 'card' (ou resposta antiga só com url)
+  if (typeof p.url === 'string' && /^https:\/\//i.test(p.url)) return { type: 'card', url: p.url, id: p.id };
+  return null;
+}
+
+function setWhatsApp(text, primary) {
+  const ok = !!WHATSAPP_NUMBER && !!text;
+  payEls.wa.hidden = !ok;
+  if (ok) payEls.wa.href = waLink(text);
+  payEls.wa.classList.toggle('primary', primary);
+  payEls.wa.classList.toggle('secondary', !primary);
+}
+function setPayStatus(msg, kind) {
+  payEls.status.textContent = msg;
+  payEls.status.className = 'pay-status' + (kind ? ' ' + kind : '');
+  payEls.status.hidden = !msg;
+}
+
+function renderOrderStep(order, { title, text } = {}) {
+  stopPayWatch();
+  const pay = order.payment;
+  const type = pay ? pay.type : null;
+  payEls.code.textContent = order.code || '';
+  payEls.codeRow.hidden = !order.code;
+  setPayStatus('', '');
+  payEls.pixBox.hidden = type !== 'pix';
+  payEls.card.hidden = payEls.support.hidden = type !== 'card';
+  payEls.retry.hidden = true;
+  payEls.copyStatus.textContent = '';
+  payEls.timer.textContent = '';
+  let msg = text;
+  if (msg == null) {
+    msg = type === 'pix' ? 'Pedido registrado! Pague com o Pix abaixo e depois avise a Gigi pelo WhatsApp.'
+      : type === 'card' ? 'Pedido registrado! Pague com cartão e depois envie o pedido pelo WhatsApp para a Gigi receber o aviso.'
+      : 'Não foi possível gerar o pagamento agora. Seu pedido foi registrado: envie pelo WhatsApp para a Gigi combinar o pagamento.';
+  }
+  payEls.text.textContent = msg;
+  if (type === 'card') payEls.card.href = pay.url;
+  if (type === 'pix') {
+    payEls.pixCode.value = pay.qr_code;
+    if (pay.qr_code_base64) { payEls.qr.src = 'data:image/png;base64,' + pay.qr_code_base64; payEls.qr.hidden = false; }
+    else { payEls.qr.removeAttribute('src'); payEls.qr.hidden = true; }
+  }
+  setWhatsApp(order.whatsappText, !pay);
   checkoutFormEl.hidden = true;
   paymentStepEl.hidden = false;
-  checkoutTitleEl.textContent = title;
-  (payOk ? pay : wa).focus({ preventScroll: true });
+  checkoutTitleEl.textContent = title || (type === 'pix' ? 'Pague com Pix' : type === 'card' ? 'Pagamento' : 'Pedido registrado');
+  const panel = paymentStepEl.closest('.modal-panel');
+  if (panel) panel.scrollTop = 0;
+  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : payEls.wa).focus({ preventScroll: true });
+  if (type === 'pix') startPixWatch(order, pay);
 }
+
+function startPixWatch(order, pay) {
+  const token = watch.token;
+  let expiresAt = Date.parse(pay.expires_at);
+  if (!Number.isFinite(expiresAt)) expiresAt = Date.now() + PIX_DEFAULT_MS;
+  const tick = () => {
+    if (token !== watch.token) return;
+    const left = expiresAt - Date.now();
+    if (left <= 0) { onPixEnded('O Pix expirou (valia 30 minutos). Nenhum valor foi cobrado. Você pode refazer o pedido.'); return; }
+    const s = Math.ceil(left / 1000);
+    payEls.timer.textContent = `O Pix expira em ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  };
+  tick();
+  if (token !== watch.token) return; // já expirou ao abrir
+  watch.tick = setInterval(tick, 1000);
+  let busy = false;
+  const poll = async () => {
+    if (busy || token !== watch.token) return;
+    busy = true;
+    try {
+      const r = await fetch('/api/order-status?code=' + encodeURIComponent(order.code), { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (token !== watch.token) return;
+      if (d.payment_status === 'approved') onPixApproved(order);
+      else if (d.payment_status === 'rejected') onPixEnded('O pagamento foi recusado. Você pode refazer o pedido.');
+      else if (d.payment_status === 'cancelled') onPixEnded('O pagamento foi cancelado. Você pode refazer o pedido.');
+    } catch { /* sem rede: tenta de novo no próximo ciclo */ } finally { busy = false; }
+  };
+  watch.pollNow = poll;
+  watch.poll = setInterval(poll, POLL_MS);
+}
+
+function onPixApproved(order) {
+  stopPayWatch();
+  payEls.pixBox.hidden = true;
+  payEls.retry.hidden = true;
+  setPayStatus('Pagamento confirmado!', 'ok');
+  payEls.text.textContent = 'Agora envie o pedido pelo WhatsApp para a Gigi receber o aviso.';
+  checkoutTitleEl.textContent = 'Pagamento confirmado';
+  const text = order.whatsappText + '\nPagamento Pix confirmado ✓';
+  setWhatsApp(text, true);
+  const last = readStore(LAST_ORDER_KEY);
+  if (last && last.code === order.code) writeStore(LAST_ORDER_KEY, { ...last, whatsappText: text });
+  payEls.wa.focus({ preventScroll: true });
+  toast('Pagamento confirmado! ✓', 3000);
+}
+
+function onPixEnded(msg) {
+  stopPayWatch();
+  payEls.pixBox.hidden = true;
+  setPayStatus(msg, 'warn');
+  payEls.text.textContent = 'Se já pagou, fale com a Gigi pelo WhatsApp informando o número do pedido.';
+  checkoutTitleEl.textContent = 'Pix não concluído';
+  payEls.retry.hidden = !(lastCartCopy && lastCartCopy.length);
+  (payEls.retry.hidden ? payEls.wa : payEls.retry).focus({ preventScroll: true });
+}
+
+// Refazer: devolve os itens ao carrinho e volta ao formulário
+payEls.retry.addEventListener('click', () => {
+  if (!lastCartCopy || !lastCartCopy.length) return;
+  cart = lastCartCopy.map(i => ({ ...i }));
+  save();
+  resetCheckoutView();
+  document.querySelector('#payment-summary').innerHTML = `<span>Total</span><span>${brl(cartTotal())}</span>`;
+});
+
+// Ao voltar para a aba, confere o pagamento na hora (o navegador atrasa timers em segundo plano)
+document.addEventListener('visibilitychange', () => { if (!document.hidden && watch.pollNow) watch.pollNow(); });
+
+async function copyPix() {
+  const text = payEls.pixCode.value;
+  let ok = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; }
+  } catch { /* cai no plano B */ }
+  if (!ok) {
+    try {
+      payEls.pixCode.focus({ preventScroll: true });
+      payEls.pixCode.select();
+      payEls.pixCode.setSelectionRange(0, text.length);
+      ok = document.execCommand('copy');
+    } catch { ok = false; }
+  }
+  clearTimeout(copyTimer);
+  payEls.copyStatus.textContent = '';
+  copyTimer = setTimeout(() => { // vazio -> texto, para o leitor de tela anunciar de novo
+    payEls.copyStatus.textContent = ok ? 'Copiado!' : 'Não deu para copiar sozinho. Toque no código, selecione tudo e copie.';
+    payEls.copyStatus.classList.toggle('err', !ok);
+  }, 30);
+}
+payEls.copyBtn.addEventListener('click', copyPix);
+payEls.pixCode.addEventListener('focus', () => payEls.pixCode.select());
+
 function resetCheckoutView() {
+  stopPayWatch();
   checkoutFormEl.hidden = false;
   paymentStepEl.hidden = true;
   checkoutTitleEl.textContent = 'Finalizar pedido';
@@ -483,6 +722,7 @@ function buildWhatsAppMessage(srv, cust) {
   lines.push(`WhatsApp: ${cust.customer_phone}`);
   if (srv.delivery_method === 'pickup') lines.push(`Retirada em: ${STORE_ADDRESS}`);
   else lines.push(`Entrega: ${srv.address || cust.address || 'a combinar'}`);
+  lines.push(`Pagamento: ${cust.payment_choice === 'card' ? 'Cartão de crédito ou débito' : 'Pix'}`);
   if (cust.notes) lines.push(`Obs.: ${cust.notes}`);
   return lines.join('\n');
 }
@@ -502,6 +742,7 @@ checkoutFormEl.addEventListener('submit', async e => {
       delivery_method: pickup ? 'pickup' : 'delivery',
       address: pickup ? '' : String(form.get('address') || '').trim(),
       notes: String(form.get('notes') || '').trim(),
+      payment_choice: form.get('payment_choice') === 'card' ? 'card' : 'pix',
       // só ids e quantidades: o servidor calcula nomes e preços
       items: cart.map(i => ({ product_id: i.productId, size_id: i.size ? i.size.id : null, extras: i.extras.map(x => ({ id: x.id, qty: x.qty })), qty: i.qty }))
     };
@@ -518,18 +759,14 @@ checkoutFormEl.addEventListener('submit', async e => {
     }
     const srv = { ...data, items: Array.isArray(data.items) ? data.items : [] };
     const whatsappText = buildWhatsAppMessage(srv, order);
-    const paymentUrl = data.payment && typeof data.payment.url === 'string' ? data.payment.url : null;
-    // pedido criado com sucesso: só agora o carrinho é limpo
+    const payment = normalizePayment(data.payment);
+    // pedido criado com sucesso: só agora o carrinho é limpo (cópia guardada para "refazer")
+    lastCartCopy = cart.map(i => ({ ...i }));
     cart = [];
     save();
-    writeStore(LAST_ORDER_KEY, { code: data.code, whatsappText, paymentUrl });
-    showOrderStep({ code: data.code, whatsappText, paymentUrl }, {
-      title: paymentUrl ? 'Pagamento' : 'Pedido registrado',
-      text: paymentUrl
-        ? 'Seu pedido foi registrado. Pague agora e envie o pedido pelo WhatsApp para a Gigi receber o aviso.'
-        : 'Seu pedido foi registrado. Envie pelo WhatsApp para a Gigi confirmar.'
-    });
-    toast(paymentUrl ? 'Pedido registrado! Falta o pagamento ✓' : 'Pedido registrado! Envie pelo WhatsApp ✓');
+    writeStore(LAST_ORDER_KEY, { code: data.code, whatsappText, payment_choice: order.payment_choice, paymentUrl: payment && payment.type === 'card' ? payment.url : null });
+    renderOrderStep({ code: data.code, whatsappText, payment });
+    toast(payment ? 'Pedido registrado! Agora é só pagar' : 'Pedido registrado! Envie pelo WhatsApp');
   } catch {
     toast('Sem conexão com o servidor. Confira a internet e tente de novo.', 4000);
   } finally {
@@ -561,7 +798,9 @@ function handlePaymentReturn() {
     erro: 'O pagamento não foi concluído. Tente pagar de novo ou envie o pedido pelo WhatsApp.'
   };
   openModal('#checkout-modal', { opener: document.body });
-  showOrderStep(last, { title: status === 'erro' ? 'Pagamento não concluído' : 'Pedido registrado', text: texts[status], showPay: status === 'erro' });
+  const retryPay = status === 'erro' && typeof last.paymentUrl === 'string' ? normalizePayment({ type: 'card', url: last.paymentUrl }) : null;
+  renderOrderStep({ code: last.code, whatsappText: last.whatsappText, payment: retryPay }, { title: status === 'erro' ? 'Pagamento não concluído' : 'Pedido registrado', text: texts[status] });
+  if (status === 'erro') payEls.wa.classList.toggle('primary', !retryPay);
 }
 
 renderCartFab();

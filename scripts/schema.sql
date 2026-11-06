@@ -28,6 +28,17 @@ create table if not exists product_complements (
   max_quantity integer not null default 1,
   primary key (product_id, complement_id)
 );
+create table if not exists product_groups (
+  id serial primary key,
+  product_id integer not null references products(id) on delete cascade,
+  key text not null,
+  label text not null,
+  min_choices integer not null default 0,
+  max_choices integer not null,
+  sort_order integer not null default 0,
+  unique (product_id, key)
+);
+alter table product_complements add column if not exists group_id integer references product_groups(id) on delete set null;
 create table if not exists orders (
   id serial primary key,
   code text not null unique,

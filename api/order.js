@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 
 const SITE_URL = 'https://docinhos-site.vercel.app';
 const MP_PREFERENCES_URL = 'https://api.mercadopago.com/checkout/preferences';
+const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
 
 // Endereço da loja gravado nos pedidos de retirada ("pickup").
 // TODO: no futuro virá do painel admin (configuração da loja), não mais desta constante.
@@ -14,11 +15,19 @@ const MAX_ITEM_QTY = 20;
 const MAX_ORDERS_PER_PHONE = 5; // por janela de 10 minutos
 const MAX_INT4 = 2147483647;
 
-// Decisões de pagamento (Checkout Pro):
-// - Parcelamento: até 3x (ticket médio baixo; mais parcelas só encarece para a loja).
-// - Expiração: a preferência (link de pagamento) vale por 2 horas a partir da criação.
+// Decisões de pagamento:
+// - Cartão (Checkout Pro, redirecionamento): só crédito e débito, sem Pix.
+//   Parcelamento até 3x (ticket médio baixo; mais parcelas só encarece para a loja).
+//   A preferência (link de pagamento) vale por 2 horas a partir da criação.
+// - Pix: gerado direto no site via POST /v1/payments (sem preference), válido por 30 min
+//   (mínimo aceito pela API do Mercado Pago).
+// - A API exige payer.email no Pix e não coletamos e-mail do cliente. Usamos um e-mail sintético
+//   por pedido (pedido-<codigo>@docinhos-site.vercel.app): tem formato válido, não pertence a ninguém
+//   e não é usado para contato (o aviso ao cliente é feito pelo WhatsApp).
 const MAX_INSTALLMENTS = 3;
 const PREFERENCE_TTL_MS = 2 * 60 * 60 * 1000;
+const PIX_TTL_MS = 30 * 60 * 1000;
+const PAYMENT_CHOICES = ['pix', 'card'];
 
 class ValidationError extends Error {}
 const fail = message => { throw new ValidationError(message); };
@@ -35,8 +44,11 @@ function mpDate(date) {
  *
  * catalog = {
  *   products: Map<productId, { id, name, price_cents }>,           // só ativos
- *   complements: Map<productId, Map<complementId, { id, name, price_cents, kind, max_quantity }>>
+ *   complements: Map<productId, Map<complementId, { id, name, price_cents, kind, max_quantity, group_id }>>,
+ *   groups?: Map<productId, Map<groupId, { id, label, min_choices, max_choices }>>   // opcional
  * }
+ * Produtos com grupos: a soma das qty dos adicionais de cada grupo deve ficar entre min_choices e max_choices.
+ * Adicionais sem grupo seguem só a regra de max_quantity.
  * Retorna { items: [normalizados], subtotal_cents }. Lança ValidationError (mensagem em português).
  */
 function priceItems(rawItems, catalog) {
@@ -71,6 +83,7 @@ function priceItems(rawItems, catalog) {
     const rawExtras = raw.extras === undefined || raw.extras === null ? [] : raw.extras;
     if (!Array.isArray(rawExtras) || rawExtras.length > MAX_ITEMS) fail(`Item ${n}: adicionais inválidos.`);
     const seen = new Set();
+    const groupTotals = new Map(); // groupId -> soma das qty escolhidas
     let extrasCents = 0;
     const extras = rawExtras.map(e => {
       if (!e || typeof e !== 'object' || !isId(e.id)) fail(`Item ${n}: adicional inválido.`);
@@ -81,8 +94,17 @@ function priceItems(rawItems, catalog) {
       if (!Number.isInteger(e.qty) || e.qty < 1 || e.qty > comp.max_quantity)
         fail(`Item ${n}: "${comp.name}" permite de 1 a ${comp.max_quantity}.`);
       extrasCents += comp.price_cents * e.qty;
+      if (comp.group_id != null) groupTotals.set(comp.group_id, (groupTotals.get(comp.group_id) || 0) + e.qty);
       return e.qty > 1 ? `${comp.name} x${e.qty}` : comp.name;
     });
+
+    // Limites por grupo de escolha (derivados do banco, nunca do cliente).
+    const groups = (catalog.groups && catalog.groups.get(product.id)) || new Map();
+    for (const g of groups.values()) {
+      const total = groupTotals.get(g.id) || 0;
+      if (total > g.max_choices) fail(`Item ${n}: escolha até ${g.max_choices} em "${g.label}".`);
+      if (total < g.min_choices) fail(`Item ${n}: escolha pelo menos ${g.min_choices} em "${g.label}".`);
+    }
 
     // Preço base do produto pode ser nulo (preço só pelo tamanho).
     if (product.price_cents === null || product.price_cents === undefined) {
@@ -143,16 +165,25 @@ async function loadCatalog(sql, productIds) {
     [productIds]
   );
   const links = await sql.query(
-    `select pc.product_id, c.id, c.name, c.price_cents, c.kind, pc.max_quantity
+    `select pc.product_id, c.id, c.name, c.price_cents, c.kind, pc.max_quantity, pc.group_id
        from product_complements pc join complements c on c.id = pc.complement_id
       where c.active and pc.product_id = any($1::int[])`,
     [productIds]
   );
-  const catalog = { products: new Map(), complements: new Map() };
+  const groups = await sql.query(
+    `select id, product_id, label, min_choices, max_choices
+       from product_groups where product_id = any($1::int[])`,
+    [productIds]
+  );
+  const catalog = { products: new Map(), complements: new Map(), groups: new Map() };
   for (const p of products) catalog.products.set(p.id, p);
   for (const l of links) {
     if (!catalog.complements.has(l.product_id)) catalog.complements.set(l.product_id, new Map());
     catalog.complements.get(l.product_id).set(l.id, l);
+  }
+  for (const g of groups) {
+    if (!catalog.groups.has(g.product_id)) catalog.groups.set(g.product_id, new Map());
+    catalog.groups.get(g.product_id).set(g.id, g);
   }
   return catalog;
 }
@@ -180,14 +211,15 @@ function buildPreferenceBody(order, prefItems, now = new Date()) {
     auto_return: 'approved',
     notification_url: `${SITE_URL}/api/mp-webhook`,
     statement_descriptor: 'DOCINHOS GIGI',
-    // Pix, cartão de crédito e cartão de débito. NÃO excluir "bank_transfer" (é o Pix).
+    // Só cartão de crédito e débito: o Pix é gerado dentro do site, então "bank_transfer" (Pix) é excluído.
     // "account_money" (saldo Mercado Pago) NÃO pode ser excluído: a API responde 400
-    // "account_money cannot be excluded" (confirmado em teste), então fica disponível.
+    // "account_money cannot be excluded" (confirmado em teste), então fica disponível no checkout.
     payment_methods: {
       excluded_payment_types: [
         { id: 'ticket' },        // boleto
         { id: 'atm' },
-        { id: 'prepaid_card' }
+        { id: 'prepaid_card' },
+        { id: 'bank_transfer' }   // Pix
       ],
       installments: MAX_INSTALLMENTS
     },
@@ -213,6 +245,52 @@ async function createPreference(token, order, prefItems) {
   return mpRes.json();
 }
 
+function pixPayerEmail(code) {
+  return `pedido-${String(code).toLowerCase()}@docinhos-site.vercel.app`;
+}
+
+function buildPixBody(order, customerName, now = new Date()) {
+  const firstName = String(customerName || '').trim().split(/\s+/)[0].slice(0, 60) || 'Cliente';
+  return {
+    transaction_amount: Number((order.total_cents / 100).toFixed(2)),
+    payment_method_id: 'pix',
+    description: `Pedido ${order.code} - Docinhos da Gigi`,
+    external_reference: order.code,
+    notification_url: `${SITE_URL}/api/mp-webhook`,
+    date_of_expiration: mpDate(new Date(now.getTime() + PIX_TTL_MS)),
+    payer: { email: pixPayerEmail(order.code), first_name: firstName }
+  };
+}
+
+async function createPixPayment(token, order, customerName) {
+  const body = buildPixBody(order, customerName);
+  const mpRes = await fetch(MP_PAYMENTS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'X-Idempotency-Key': `pix-${order.code}`
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!mpRes.ok) {
+    let detail = '';
+    try { const j = await mpRes.json(); detail = j && j.message ? `: ${String(j.message).slice(0, 120)}` : ''; } catch { /* sem corpo */ }
+    throw new Error(`Mercado Pago respondeu ${mpRes.status}${detail}`);
+  }
+  const pay = await mpRes.json();
+  const td = pay && pay.point_of_interaction && pay.point_of_interaction.transaction_data;
+  if (!pay || !pay.id || !td || !td.qr_code || !td.qr_code_base64) throw new Error('Resposta do Pix sem QR code');
+  return {
+    id: String(pay.id),
+    status: String(pay.status || 'pending'),
+    qr_code: td.qr_code,
+    qr_code_base64: td.qr_code_base64,
+    expires_at: pay.date_of_expiration || body.date_of_expiration
+  };
+}
+
 function newCode() {
   return 'DG' + crypto.randomBytes(5).toString('hex').toUpperCase();
 }
@@ -227,6 +305,7 @@ module.exports = async (req, res) => {
     if (!b || typeof b !== 'object' || Array.isArray(b)) fail('Dados inválidos.');
 
     const customer = validateCustomer(b);
+    const choice = PAYMENT_CHOICES.includes(b.payment_choice) ? b.payment_choice : 'card';
     if (!Array.isArray(b.items) || b.items.length === 0) fail('O carrinho está vazio.');
     if (b.items.length > MAX_ITEMS) fail(`O pedido pode ter no máximo ${MAX_ITEMS} itens.`);
     const ids = [...new Set(b.items.map(i => (i && isId(i.product_id) ? i.product_id : null)).filter(Boolean))];
@@ -251,15 +330,24 @@ module.exports = async (req, res) => {
     if (!rows.length) return res.status(429).json({ error: 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.' });
     const order = rows[0];
 
-    // Se a preference falhar, o pedido continua válido (payment: null).
+    // Se a criação do pagamento falhar, o pedido continua válido (payment: null).
     let payment = null;
     const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
-    if (mpToken) {
+    if (mpToken && choice === 'pix') {
+      try {
+        const pix = await createPixPayment(mpToken, order, customer.name);
+        payment = { type: 'pix', id: pix.id, qr_code: pix.qr_code, qr_code_base64: pix.qr_code_base64, expires_at: pix.expires_at };
+        await sql`update orders set payment_method = 'pix', payment_id = ${pix.id}, payment_status = ${pix.status} where id = ${order.id}`;
+      } catch (err) {
+        payment = null;
+        console.error('Falha ao criar Pix no Mercado Pago:', err.message);
+      }
+    } else if (mpToken) {
       try {
         const pref = await createPreference(mpToken, order, buildPreferenceItems(priced.items));
         if (pref && pref.init_point && pref.id) {
-          payment = { url: pref.init_point, id: String(pref.id) };
-          await sql`update orders set payment_method = 'mercadopago', payment_id = ${String(pref.id)} where id = ${order.id}`;
+          payment = { type: 'card', url: pref.init_point, id: String(pref.id) };
+          await sql`update orders set payment_method = 'mercadopago_card', payment_id = ${String(pref.id)} where id = ${order.id}`;
         }
       } catch (err) {
         console.error('Falha ao criar preference do Mercado Pago:', err.message);
@@ -282,4 +370,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, STORE_ADDRESS, ValidationError };
+module.exports._internal = { priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError };

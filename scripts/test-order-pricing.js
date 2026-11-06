@@ -1,14 +1,15 @@
 // Testes da função pura de preço (sem banco): node scripts/test-order-pricing.js
 const assert = require('node:assert/strict');
-const { priceItems, validateCustomer, buildPreferenceBody, STORE_ADDRESS, ValidationError } = require('../api/order')._internal;
+const { priceItems, validateCustomer, buildPreferenceBody, buildPixBody, pixPayerEmail, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError } = require('../api/order')._internal;
 
-const comp = (id, name, price_cents, kind, max_quantity = 1) => ({ id, name, price_cents, kind, max_quantity });
+const comp = (id, name, price_cents, kind, max_quantity = 1, group_id = null) => ({ id, name, price_cents, kind, max_quantity, group_id });
 const catalog = {
   products: new Map([
     [1, { id: 1, name: 'Copão', price_cents: 1800 }],
     [2, { id: 2, name: 'Geladinho', price_cents: 600 }],
     [3, { id: 3, name: 'Só por tamanho', price_cents: null }],
-    [4, { id: 4, name: 'Sem preço', price_cents: null }]
+    [4, { id: 4, name: 'Sem preço', price_cents: null }],
+    [5, { id: 5, name: 'Com grupos', price_cents: 1000 }]
   ]),
   complements: new Map([
     [1, new Map([
@@ -17,8 +18,20 @@ const catalog = {
       [20, comp(20, 'Nutella', 299, 'additional', 3)],
       [21, comp(21, 'Granola', 100, 'additional', 1)]
     ])],
-    [3, new Map([[12, comp(12, 'Grande', 2500, 'size')]])]
-  ])
+    [3, new Map([[12, comp(12, 'Grande', 2500, 'size')]])],
+    [5, new Map([
+      [40, comp(40, 'Brig A', 0, 'additional', 1, 1)],
+      [41, comp(41, 'Brig B', 100, 'additional', 1, 1)],
+      [42, comp(42, 'Brig C', 200, 'additional', 1, 1)],
+      [50, comp(50, 'Fruta A', 0, 'additional', 1, 2)],
+      [51, comp(51, 'Fruta B', 0, 'additional', 1, 2)],
+      [60, comp(60, 'Solto', 50, 'additional', 3, null)]
+    ])]
+  ]),
+  groups: new Map([[5, new Map([
+    [1, { id: 1, label: 'Escolha o brigadeiro', min_choices: 0, max_choices: 2 }],
+    [2, { id: 2, label: 'Escolha sua fruta', min_choices: 1, max_choices: 1 }]
+  ])]])
 };
 
 let passed = 0;
@@ -76,6 +89,32 @@ test('produto com preço nulo: ok só com tamanho; senão erro', () => {
   rejects([{ product_id: 4, qty: 1 }], /sem preço/);
 });
 
+test('grupos: dentro do limite soma preço dos extras', () => {
+  const r = priceItems([{ product_id: 5, extras: [{ id: 41, qty: 1 }, { id: 42, qty: 1 }, { id: 50, qty: 1 }], qty: 1 }], catalog);
+  assert.equal(r.items[0].unit_total_cents, 1000 + 100 + 200);
+});
+test('grupos: exceder o máximo do grupo (soma das qty)', () => rejects(
+  [{ product_id: 5, extras: [{ id: 40, qty: 1 }, { id: 41, qty: 1 }, { id: 42, qty: 1 }, { id: 50, qty: 1 }], qty: 1 }],
+  /^Item 1: escolha até 2 em "Escolha o brigadeiro".$/));
+test('grupos: abaixo do mínimo (inclusive sem nenhum extra)', () => {
+  rejects([{ product_id: 5, extras: [{ id: 40, qty: 1 }], qty: 1 }], /^Item 1: escolha pelo menos 1 em "Escolha sua fruta".$/);
+  rejects([{ product_id: 5, qty: 1 }], /pelo menos 1 em "Escolha sua fruta"/);
+  rejects([{ product_id: 5, extras: [], qty: 1 }], /pelo menos 1/);
+});
+test('grupos: exceder o máximo do grupo mínimo-1 (fruta)', () => rejects(
+  [{ product_id: 5, extras: [{ id: 50, qty: 1 }, { id: 51, qty: 1 }], qty: 1 }], /escolha até 1 em "Escolha sua fruta"/));
+test('grupos: max_quantity do extra continua valendo dentro do grupo', () => rejects(
+  [{ product_id: 5, extras: [{ id: 50, qty: 2 }], qty: 1 }], /permite de 1 a 1/));
+test('sem grupo: item solto usa só max_quantity e não conta para grupos', () => {
+  const r = priceItems([{ product_id: 5, extras: [{ id: 50, qty: 1 }, { id: 60, qty: 3 }], qty: 1 }], catalog);
+  assert.equal(r.items[0].unit_total_cents, 1000 + 150);
+  rejects([{ product_id: 5, extras: [{ id: 50, qty: 1 }, { id: 60, qty: 4 }], qty: 1 }], /"Solto" permite de 1 a 3/);
+});
+test('produto sem grupos (catálogo sem groups) segue a regra antiga', () => {
+  const r = priceItems([{ product_id: 1, size_id: 10, extras: [{ id: 20, qty: 3 }], qty: 1 }], { products: catalog.products, complements: catalog.complements });
+  assert.equal(r.items[0].unit_total_cents, 1800 + 299 * 3);
+});
+
 test('validateCustomer: regras de nome, telefone, entrega e observações', () => {
   const ok = { customer_name: '  Ana  ', customer_phone: '(11) 91234-5678', delivery_method: 'delivery', address: 'Rua A, 10', notes: '' };
   const c = validateCustomer(ok);
@@ -96,14 +135,30 @@ test('validateCustomer: regras de nome, telefone, entrega e observações', () =
   assert.equal(p.address, STORE_ADDRESS);
 });
 
-test('preference: Pix + crédito + débito, 3x, expira em 2h', () => {
+test('pix: corpo do pagamento direto (valor do servidor, 30 min, e-mail sintético)', () => {
+  const now = new Date('2026-01-01T10:00:00.000Z');
+  const body = buildPixBody({ code: 'DG0123456789', total_cents: 4599 }, '  Maria  da Silva ', now);
+  assert.equal(body.payment_method_id, 'pix');
+  assert.equal(body.transaction_amount, 45.99);
+  assert.equal(body.external_reference, 'DG0123456789');
+  assert.equal(body.description, 'Pedido DG0123456789 - Docinhos da Gigi');
+  assert.equal(body.notification_url, 'https://docinhos-site.vercel.app/api/mp-webhook');
+  assert.equal(body.date_of_expiration, '2026-01-01T10:30:00.000+00:00');
+  assert.equal(body.payer.email, 'pedido-dg0123456789@docinhos-site.vercel.app');
+  assert.equal(body.payer.first_name, 'Maria');
+  assert.equal(pixPayerEmail('DGABCDEF0123'), 'pedido-dgabcdef0123@docinhos-site.vercel.app');
+  assert.equal(buildPixBody({ code: 'DGX', total_cents: 600 }, '', now).payer.first_name, 'Cliente');
+  assert.deepEqual(PAYMENT_CHOICES, ['pix', 'card']);
+});
+
+test('preference (cartão): sem Pix, boleto, atm e pré-pago; 3x; expira em 2h', () => {
   const now = new Date('2026-01-01T10:00:00.000Z');
   const body = buildPreferenceBody({ code: 'DGX' }, [], now);
   const excluded = body.payment_methods.excluded_payment_types.map(t => t.id).sort();
-  // account_money não pode ser excluído (a API do MP devolve 400).
-  assert.deepEqual(excluded, ['atm', 'prepaid_card', 'ticket']);
+  // bank_transfer = Pix (fica no site). account_money não pode ser excluído (a API do MP devolve 400).
+  assert.deepEqual(excluded, ['atm', 'bank_transfer', 'prepaid_card', 'ticket']);
   assert.ok(!excluded.includes('account_money'));
-  assert.ok(!excluded.includes('bank_transfer'), 'bank_transfer (Pix) não pode ser excluído');
+  assert.ok(!excluded.includes('credit_card') && !excluded.includes('debit_card'), 'cartões não podem ser excluídos');
   assert.equal(body.payment_methods.installments, 3);
   assert.equal(body.expires, true);
   assert.equal(body.expiration_date_from, '2026-01-01T10:00:00.000+00:00');
