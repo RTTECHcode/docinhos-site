@@ -19,7 +19,7 @@ const fs = require('fs');
     const [name, image, category, priceCents, description] = products[i];
     const [{ id: categoryId }] = await sql`select id from categories where name = ${category}`;
     await sql`insert into products (category_id, name, description, price_cents, image_path, sort_order) values (${categoryId}, ${name}, ${description}, ${priceCents}, ${'/images/products/' + image}, ${i})
-      on conflict (name) do update set description = excluded.description, price_cents = excluded.price_cents, image_path = excluded.image_path, sort_order = excluded.sort_order, active = true`;
+      on conflict (name) do update set category_id = excluded.category_id, description = excluded.description, price_cents = excluded.price_cents, image_path = excluded.image_path, sort_order = excluded.sort_order, active = true`;
   }
   await sql.query('update products set active = false where name <> all($1::text[])', [products.map(p => p[0])]);
 

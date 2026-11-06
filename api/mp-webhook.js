@@ -35,6 +35,7 @@ function parseNotification(query, body) {
 }
 
 module.exports = async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
 
   const { type, dataId } = parseNotification(req.query, req.body);
@@ -80,6 +81,11 @@ module.exports = async (req, res) => {
     const [order] = await sql.query('select total_cents from orders where code = $1', [String(code)]);
     if (!order) return res.status(200).json({ ok: true });
 
+    // Só confirma se moeda e valor pago batem com o total gravado no servidor.
+    if (pay.currency_id && pay.currency_id !== 'BRL') {
+      console.error('Moeda do pagamento diferente de BRL', code, dataId);
+      return res.status(200).json({ ok: true });
+    }
     if (Math.round(Number(pay.transaction_amount) * 100) !== order.total_cents) {
       console.error('Valor do pagamento diferente do pedido', code, dataId);
       return res.status(200).json({ ok: true });

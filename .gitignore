@@ -3,3 +3,8 @@ node_modules/
 .vercel/
 
 .vercel
+
+# ferramentas locais de agentes
+.claude/
+.agents/
+skills-lock.json

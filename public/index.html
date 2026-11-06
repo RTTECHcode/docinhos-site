@@ -80,21 +80,24 @@
         <label class="radio"><input type="radio" name="delivery" value="delivery" checked> Entrega</label>
         <label class="radio"><input type="radio" name="delivery" value="pickup"> Retirada</label>
       </fieldset>
-      <label id="address-field">Endereço de entrega<input name="address" placeholder="Rua, número, bairro, ponto de referência"></label>
+      <label id="address-field">Endereço de entrega<input name="address" required autocomplete="street-address" placeholder="Rua, número, bairro, ponto de referência"></label>
+      <div id="pickup-info" class="pickup-info" hidden><strong>Retire em:</strong> <span id="store-address"></span></div>
       <label>Observações<textarea name="notes" rows="2" placeholder="Ex.: sem açúcar, entregar às 15h"></textarea></label>
       <div id="payment-summary" class="cart-total"></div>
       <button type="submit" class="button primary full">Enviar pedido</button>
-      <p class="checkout-note">Você será levado ao WhatsApp para confirmar. Pagamento no Mercado Pago após confirmação.</p>
+      <p class="checkout-note">Depois de enviar, você paga com Pix, crédito ou débito e avisa a Gigi pelo WhatsApp.</p>
     </form>
     <div id="payment-step" class="payment-step" hidden>
-      <p class="payment-code">Pedido <strong id="payment-code"></strong></p>
-      <p class="payment-text">Seu pedido foi registrado. Finalize o pagamento pelo Mercado Pago e envie o pedido pelo WhatsApp para confirmar.</p>
-      <a id="pay-mp" class="button primary full" href="#" target="_blank" rel="noopener noreferrer">Pagar com Mercado Pago</a>
-      <a id="pay-wa" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer">Enviar pelo WhatsApp</a>
+      <p class="payment-code" id="payment-code-row" hidden>Pedido <strong id="payment-code"></strong></p>
+      <p class="payment-text" id="payment-text"></p>
+      <a id="pay-mp" class="button primary full" href="#" hidden>Pagar com Pix ou cartão</a>
+      <p class="payment-support" id="pay-support" hidden>Você paga com segurança no Mercado Pago: Pix, crédito ou débito</p>
+      <a id="pay-wa" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Enviar pedido no WhatsApp</a>
     </div>
   </div>
 </div>
 
+<script src="/config.js"></script>
 <script src="/app.js" defer></script>
 </body>
 </html>
