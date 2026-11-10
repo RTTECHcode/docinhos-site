@@ -13,6 +13,8 @@ const COOKIE_NAME = '__Host-dg_cliente';
 const SESSION_TTL_S = 30 * 24 * 3600;
 const LOGIN_MAX_FAILS = 5;
 const LOCK_MS = 30 * 60 * 1000;
+const LONG_MAX_FAILS = 10;               // 10 erros em 24 h (por conta) = bloqueio de 24 h
+const LONG_LOCK_MS = 24 * 3600 * 1000;
 const RECOVERY_POINTS_LOCK = '48 hours';
 
 // Texto do consentimento mostrado ao cliente. Mudou o texto = mude a versão (fica gravada com o aceite).
@@ -24,8 +26,10 @@ class CustomerError extends Error {
 }
 const bad = (message, code) => { throw new CustomerError(400, message, code); };
 const MSG_LOCKED = 'Muitas tentativas. Tente novamente em 30 minutos.';
+const MSG_LOCKED_LONG = 'Muitas tentativas. Tente novamente mais tarde.';
 const MSG_BAD_LOGIN = 'Telefone ou senha incorretos.';
 const MSG_BAD_RECOVERY = 'Não foi possível recuperar a conta com esses dados.';
+const MSG_DUPLICATE = 'Já existe uma conta com esse telefone ou e-mail. Entre ou recupere o acesso.';
 
 // ---------- Validação ----------
 // Telefone brasileiro em E.164: +55 + DDD (11 a 99) + 8 ou 9 dígitos (celular de 9 dígitos começa com 9).
@@ -114,24 +118,54 @@ async function logoutFromRequest(sql, req) {
   return clearSessionCookie();
 }
 
-// ---------- Bloqueio por tentativas (login e recuperação: 5 erros = 30 min, por conta e por IP) ----------
-async function isLocked(sql, scope, phone, ip) {
+// ---------- Bloqueio por tentativas ----------
+// Login e recuperação: 5 erros = 30 min (por conta e por IP) e 10 erros em 24 h = 24 h (por conta). Acerto zera a contagem.
+// A coluna phone também guarda chaves que não são telefone, porque o CHECK de scope só aceita 'login' e 'recover':
+//   '#cadastro'       -> tentativas de cadastro por IP (scope 'login')
+//   '#senha:+55...'   -> senha atual errada na troca de senha (scope 'login'), contagem separada do login
+// Telefone real sempre começa com '+55', então essas chaves nunca colidem com uma conta.
+// A contagem por IP do login/recuperação só olha linhas de telefone real (phone like '+%').
+const ATTEMPT_REGISTER = '#cadastro';
+const passwordAttemptKey = phone => '#senha:' + phone;
+
+// Retorna null (livre) ou a mensagem de bloqueio (genérica). ip === null: sem limite por IP.
+async function lockMessage(sql, scope, phone, ip) {
   const [byPhone, byIp, now] = await Promise.all([
     sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
-                where scope = $1 and phone = $2 and ok = false and at > now() - interval '30 minutes'
+                where scope = $1 and phone = $2 and ok = false and at > now() - interval '48 hours'
                   and at > coalesce((select max(at) from customer_login_attempts where scope = $1 and phone = $2 and ok = true), '-infinity'::timestamptz)
-                order by at desc limit 10`, [scope, phone]),
-    sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
-                where scope = $1 and ip = $2 and ok = false and at > now() - interval '30 minutes' order by at desc limit 10`, [scope, ip || 'unknown']),
+                order by at desc limit ${LONG_MAX_FAILS}`, [scope, phone]),
+    ip === null ? [] : sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
+                where scope = $1 and ip = $2 and phone like '+%' and ok = false and at > now() - interval '30 minutes'
+                order by at desc limit 10`, [scope, ip || 'unknown']),
     sql.query(`select (extract(epoch from now()) * 1000)::float8 as ms`)
   ]);
   const nowMs = Number(now[0].ms);
   const f = rows => rows.map(r => Number(r.ms));
-  return auth.evaluateAttemptLock({ failsMs: f(byPhone), nowMs, max: LOGIN_MAX_FAILS, lockMs: LOCK_MS }).locked
-    || auth.evaluateAttemptLock({ failsMs: f(byIp), nowMs, max: LOGIN_MAX_FAILS, lockMs: LOCK_MS }).locked;
+  if (auth.evaluateAttemptLock({ failsMs: f(byPhone), nowMs, max: LONG_MAX_FAILS, lockMs: LONG_LOCK_MS }).locked) return MSG_LOCKED_LONG;
+  if (auth.evaluateAttemptLock({ failsMs: f(byPhone), nowMs, max: LOGIN_MAX_FAILS, lockMs: LOCK_MS }).locked
+    || auth.evaluateAttemptLock({ failsMs: f(byIp), nowMs, max: LOGIN_MAX_FAILS, lockMs: LOCK_MS }).locked) return MSG_LOCKED;
+  return null;
+}
+async function assertNotLocked(sql, scope, phone, ip) {
+  const msg = await lockMessage(sql, scope, phone, ip);
+  if (msg) throw new CustomerError(429, msg, 'locked');
 }
 const recordAttempt = (sql, scope, phone, ip, ok) =>
   sql.query('insert into customer_login_attempts (scope, phone, ip, ok) values ($1, $2, $3, $4)', [scope, phone, ip || 'unknown', ok]);
+
+// Cadastro: tentativas deste IP na última hora (toda tentativa conta: 201, 400, 409...).
+async function registerAttemptsLastHour(sql, ip) {
+  const [r] = await sql.query(
+    `select count(*)::int as n from customer_login_attempts where scope = 'login' and phone = $1 and ip = $2 and at > now() - interval '1 hour'`,
+    [ATTEMPT_REGISTER, ip || 'unknown']);
+  return r.n;
+}
+const recordRegisterAttempt = (sql, ip) => recordAttempt(sql, 'login', ATTEMPT_REGISTER, ip, true);
+
+// Troca de senha: contagem própria (não soma com o login). 5 erros = 30 min, 10 em 24 h = 24 h. Sem limite por IP (já exige sessão).
+const assertPasswordNotLocked = (sql, phone) => assertNotLocked(sql, 'login', passwordAttemptKey(phone), null);
+const recordPasswordAttempt = (sql, phone, ip, ok) => recordAttempt(sql, 'login', passwordAttemptKey(phone), ip, ok);
 
 // ---------- Consentimento ----------
 async function recordConsentEvent(sql, customerId, action, { ip, source }) {
@@ -150,11 +184,14 @@ async function createAccount(sql, input, ctx = {}) {
   const name = vName(b.name), phone = vPhone(b.phone), email = vEmail(b.email);
   const password = auth.validatePassword(b.password);
   const question = auth.validateQuestionId(b.security_question);
-  const answerHash = await auth.hashAnswer(b.security_answer); // valida (mín. 3 caracteres) e gera o hash
+  const answer = auth.validateAnswer(b.security_answer); // normalizada (mín. 3 caracteres)
   const birth = vBirth(b.birth_day, b.birth_month);
   if (b.whatsapp_consent !== undefined && typeof b.whatsapp_consent !== 'boolean') bad('Consentimento inválido.', 'invalid_consent');
   const consent = b.whatsapp_consent === true; // nunca pré-marcado: só true explícito vale
-  const passwordHash = await auth.hashPassword(password);
+  // Duplicado ANTES do scrypt: o 409 sai barato (o hash é a parte cara). O 23505 abaixo continua cobrindo corrida.
+  const [dup] = await sql.query('select 1 from customers where phone = $1 or ($2::text is not null and lower(email) = $2) limit 1', [phone, email]);
+  if (dup) throw new CustomerError(409, MSG_DUPLICATE, 'duplicate');
+  const [answerHash, passwordHash] = await Promise.all([auth.hashPassword(answer), auth.hashPassword(password)]);
   let row;
   try {
     [row] = await sql.query(
@@ -165,7 +202,7 @@ async function createAccount(sql, input, ctx = {}) {
        returning ${CUSTOMER_COLUMNS}`,
       [name, phone, email, passwordHash, question, answerHash, consent, CONSENT_TEXT, CONSENT_VERSION, ctx.ip || null, birth.day, birth.month]);
   } catch (e) {
-    if (e && e.code === '23505') throw new CustomerError(409, 'Já existe uma conta com esse telefone ou e-mail. Entre ou recupere o acesso.', 'duplicate');
+    if (e && e.code === '23505') throw new CustomerError(409, MSG_DUPLICATE, 'duplicate');
     throw e;
   }
   if (consent) await recordConsentEvent(sql, row.id, 'opt_in', { ip: ctx.ip, source: ctx.source || 'cadastro' });
@@ -179,13 +216,13 @@ async function login(sql, { phone: phoneInput, password }, ctx = {}) {
   if (typeof password !== 'string' || !password || password.length > 256) throw new CustomerError(401, MSG_BAD_LOGIN, 'bad_login');
   const ip = ctx.ip || 'unknown';
   const dummy = await auth.dummyHash();
-  if (await isLocked(sql, 'login', phone, ip)) throw new CustomerError(429, MSG_LOCKED, 'locked');
+  await assertNotLocked(sql, 'login', phone, ip);
   const [row] = await sql.query('select * from customers where phone = $1', [phone]);
   const usable = !!(row && row.active);
   const matches = await auth.verifyPassword(password, usable ? row.password_hash : dummy); // gasta o mesmo tempo sem conta
   if (!(matches && usable)) {
     await recordAttempt(sql, 'login', phone, ip, false);
-    if (await isLocked(sql, 'login', phone, ip)) throw new CustomerError(429, MSG_LOCKED, 'locked');
+    await assertNotLocked(sql, 'login', phone, ip);
     throw new CustomerError(401, MSG_BAD_LOGIN, 'bad_login');
   }
   await recordAttempt(sql, 'login', phone, ip, true);
@@ -206,7 +243,7 @@ async function recoveryQuestion(sql, { phone: phoneInput }) {
 }
 
 /**
- * Recupera o acesso: telefone + resposta + nova senha. 5 erros bloqueiam por 30 min (conta e IP).
+ * Recupera o acesso: telefone + resposta + nova senha. 5 erros bloqueiam por 30 min (conta e IP); 10 em 24 h, por 24 h (conta).
  * Depois de recuperar: derruba todas as sessões e trava o resgate de pontos por 48 h.
  */
 async function recover(sql, { phone: phoneInput, answer, new_password }, ctx = {}) {
@@ -214,13 +251,13 @@ async function recover(sql, { phone: phoneInput, answer, new_password }, ctx = {
   const next = auth.validatePassword(new_password, 'Nova senha');
   const ip = ctx.ip || 'unknown';
   const dummy = await auth.dummyHash();
-  if (await isLocked(sql, 'recover', phone, ip)) throw new CustomerError(429, MSG_LOCKED, 'locked');
+  await assertNotLocked(sql, 'recover', phone, ip);
   const [row] = await sql.query('select id, security_answer_hash, active from customers where phone = $1', [phone]);
   const usable = !!(row && row.active);
   const ok = await auth.verifyAnswer(answer, usable ? row.security_answer_hash : dummy);
   if (!(ok && usable)) {
     await recordAttempt(sql, 'recover', phone, ip, false);
-    if (await isLocked(sql, 'recover', phone, ip)) throw new CustomerError(429, MSG_LOCKED, 'locked');
+    await assertNotLocked(sql, 'recover', phone, ip);
     throw new CustomerError(400, MSG_BAD_RECOVERY, 'bad_recovery');
   }
   await recordAttempt(sql, 'recover', phone, ip, true);
@@ -322,7 +359,8 @@ async function getPoints(sql, customerId, { limit = 30 } = {}) {
 }
 
 module.exports = {
-  COOKIE_NAME, SESSION_TTL_S, CONSENT_VERSION, CONSENT_TEXT, CustomerError, MSG_LOCKED,
+  COOKIE_NAME, SESSION_TTL_S, CONSENT_VERSION, CONSENT_TEXT, CustomerError, MSG_LOCKED, MSG_LOCKED_LONG,
+  registerAttemptsLastHour, recordRegisterAttempt, assertPasswordNotLocked, recordPasswordAttempt,
   SECURITY_QUESTIONS: auth.SECURITY_QUESTIONS,
   normalizePhone, customerView, sessionCookie, clearSessionCookie,
   createAccount, login, logout, logoutFromRequest, getSession, recoveryQuestion, recover,
