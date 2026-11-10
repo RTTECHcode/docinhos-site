@@ -38,6 +38,25 @@ function readStore(key, storage = localStorage) {
 function writeStore(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* segue sem persistir */ }
 }
+function removeStore(key) {
+  try { localStorage.removeItem(key); } catch { /* ignora */ }
+}
+
+/* Último pedido (para a volta do Mercado Pago). Guarda só o mínimo: DG-####, token de acompanhamento, status, forma de
+   pagamento e os valores do resumo. O texto do WhatsApp (tem nome, telefone e endereço) só é guardado no pagamento com
+   cartão, que sai do site e volta; tudo vale 24 h e o texto é apagado assim que a pessoa toca em "Enviar pelo WhatsApp".
+   Entradas antigas (sem prazo, com dados pessoais) são apagadas na primeira leitura. */
+const LAST_ORDER_TTL_MS = 24 * 60 * 60 * 1000;
+function saveLastOrder(o) { writeStore(LAST_ORDER_KEY, { ...o, expires_at: Date.now() + LAST_ORDER_TTL_MS }); }
+function readLastOrder() {
+  const last = readStore(LAST_ORDER_KEY);
+  if (!last || typeof last !== 'object' || typeof last.token !== 'string' || !(last.expires_at > Date.now())) { removeStore(LAST_ORDER_KEY); return null; }
+  return last;
+}
+function forgetWhatsAppText() {
+  const last = readLastOrder();
+  if (last && 'whatsappText' in last) { delete last.whatsappText; writeStore(LAST_ORDER_KEY, last); }
+}
 
 const isId = n => Number.isInteger(n) && n > 0;
 const cartKey = i => `${i.productId}|${i.size ? i.size.id : ''}|${i.extras.map(x => `${x.id}x${x.qty}`).sort().join(',')}`;
@@ -522,12 +541,14 @@ document.addEventListener('click', e => {
 const RECENT_MAX = 10;
 function loadRecent() {
   const raw = readStore(RECENT_KEY);
-  return Array.isArray(raw) ? raw.filter(r => r && typeof r.token === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(r.token)) : [];
+  // Só código público, token e data: qualquer outro campo (versões antigas) é descartado.
+  return Array.isArray(raw) ? raw.filter(r => r && typeof r.token === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(r.token))
+    .map(r => ({ public_code: typeof r.public_code === 'string' ? r.public_code.slice(0, 20) : '', token: r.token, date: typeof r.date === 'string' ? r.date : '' })) : [];
 }
 function addRecent(order) {
   if (!order.token) return;
   const list = loadRecent().filter(r => r.token !== order.token);
-  list.unshift({ public_code: order.public_code || order.code || '', token: order.token, date: new Date().toISOString() });
+  list.unshift({ public_code: order.public_code || '', token: order.token, date: new Date().toISOString() });
   writeStore(RECENT_KEY, list.slice(0, RECENT_MAX));
   renderRecentBtn();
 }
@@ -967,7 +988,8 @@ function onPayApproved(order) {
   setPayStatus('Pagamento confirmado!', 'ok');
   payEls.text.textContent = PREP_TEXT + (WHATSAPP_NUMBER ? ' Se quiser, envie o pedido também pelo WhatsApp.' : '');
   checkoutTitleEl.textContent = 'Pagamento confirmado';
-  setWhatsApp((order.whatsappText || '') + '\nPagamento confirmado ✓');
+  setWhatsApp(order.whatsappText ? order.whatsappText + '\nPagamento confirmado ✓'
+    : `Olá! Fiz o pedido ${order.publicCode || order.code || ''} pelo site e o pagamento foi confirmado ✓` + (order.token ? `\nAcompanhar: ${location.origin}${trackUrl(order.token)}` : ''));
   (payEls.wa.hidden ? payEls.trackLink : payEls.wa).focus({ preventScroll: true });
   toast('Pagamento confirmado! ✓', 3000);
 }
@@ -1146,7 +1168,9 @@ checkoutFormEl.addEventListener('submit', async e => {
     usePoints = 0;
     quote = null;
     addRecent({ public_code: data.public_code, code: data.code, token: data.tracking_token });
-    writeStore(LAST_ORDER_KEY, { code: data.code, public_code: data.public_code, token: data.tracking_token, whatsappText, summary, payment_choice: order.payment_choice, paymentUrl: payment && payment.type === 'card' ? payment.url : null });
+    const card = payment && payment.type === 'card';
+    saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice,
+      ...(card ? { paymentUrl: payment.url, whatsappText } : {}) });
     renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary });
     toast(payment ? 'Pedido registrado! Agora é só pagar.' : 'Pedido registrado!');
     if (account) loadAccount(); // saldo mudou (pontos reservados)
@@ -1174,8 +1198,8 @@ function handlePaymentReturn() {
   };
   if (!msgs[status]) return;
   toast(msgs[status], 6000);
-  const last = readStore(LAST_ORDER_KEY);
-  if (!last || typeof last.whatsappText !== 'string') return;
+  const last = readLastOrder();
+  if (!last) return;
   const texts = {
     ok: 'Estamos confirmando o seu pagamento. Esta tela atualiza sozinha e mostra o botão do WhatsApp assim que for aprovado.',
     pendente: 'Pagamento pendente. Esta tela atualiza sozinha quando for aprovado. Você também pode acompanhar pelo link do pedido.',
@@ -1183,10 +1207,12 @@ function handlePaymentReturn() {
   };
   openModal('#checkout-modal', { opener: document.body });
   const retryPay = status === 'erro' && typeof last.paymentUrl === 'string' ? normalizePayment({ type: 'card', url: last.paymentUrl }) : null;
-  renderOrderStep({ code: last.code, publicCode: last.public_code, token: last.token, whatsappText: last.whatsappText, payment: retryPay, summary: last.summary },
+  renderOrderStep({ publicCode: last.public_code, token: last.token, whatsappText: typeof last.whatsappText === 'string' ? last.whatsappText : '', payment: retryPay, summary: last.summary },
     { title: status === 'erro' ? 'Pagamento não concluído' : 'Pedido registrado', text: texts[status], watchNow: status !== 'erro' });
 }
 
+payEls.wa.addEventListener('click', forgetWhatsAppText); // texto enviado: não fica mais guardado no aparelho
+readLastOrder(); // apaga o último pedido vencido (24 h) ou no formato antigo
 syncDelivery();
 renderCartFab();
 renderAccount();
