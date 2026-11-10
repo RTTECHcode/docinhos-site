@@ -209,9 +209,12 @@ async function loadCatalog(sql, productIds) {
 // Com desconto de pontos o Mercado Pago não aceita valor negativo: os produtos viram uma linha só, já com o desconto
 // (subtotal - desconto), para o total pago continuar igual ao total_cents do pedido.
 function buildPreferenceItems(items, deliveryFeeCents = 0, discountCents = 0, orderLabel = 'Pedido') {
+  // Com desconto de pontos: um item só com o subtotal já descontado (o MP não aceita item de valor negativo ou zero).
+  const discounted = items.reduce((s, i) => s + i.unit_total_cents * i.qty, 0) - discountCents;
   const list = discountCents > 0
-    ? [{ id: '1', title: `${orderLabel} - Docinhos da Gigi (com desconto de pontos)`.slice(0, 256), quantity: 1, currency_id: 'BRL',
-        unit_price: Number(((items.reduce((s, i) => s + i.unit_total_cents * i.qty, 0) - discountCents) / 100).toFixed(2)) }]
+    ? (discounted > 0
+      ? [{ id: '1', title: `${orderLabel} - Docinhos da Gigi (com desconto de pontos)`.slice(0, 256), quantity: 1, currency_id: 'BRL', unit_price: Number((discounted / 100).toFixed(2)) }]
+      : [])
     : items
     .filter(i => i.unit_total_cents > 0)
     .map((i, idx) => {
