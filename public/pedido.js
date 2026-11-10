@@ -83,13 +83,34 @@
 
   function stop() { clearInterval(timer); timer = null; }
 
+  // 429 rate_limited (F5, A1-12): para de consultar por um tempo (60 s, depois 120 s) e mostra um aviso discreto.
+  var NOTE_TEXT = 'Esta página atualiza sozinha a cada 20 segundos.';
+  var BACKOFF_MS = [60000, 120000];
+  var pausedUntil = 0, backoffStep = 0, resumeTimer = null;
+  function rateLimited(r) {
+    var wait = BACKOFF_MS[Math.min(backoffStep, BACKOFF_MS.length - 1)];
+    var retry = Number(r.headers.get('Retry-After'));
+    if (retry > 0) wait = Math.max(wait, Math.min(retry, 600) * 1000);
+    backoffStep++;
+    pausedUntil = Date.now() + wait;
+    clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(function () { if (timer && !document.hidden) load(); }, wait); // tenta de novo na hora certa, sem esperar o próximo ciclo de 20 s
+    var min = Math.round(wait / 60000);
+    $('t-note').textContent = 'Muitas consultas agora. Voltamos a atualizar em ' + (min > 1 ? min + ' minutos' : '1 minuto') + '.';
+    $('t-note').hidden = false;
+  }
+  function canLoad() { return !document.hidden && Date.now() >= pausedUntil; }
+
   async function load() {
     if (busy) return;
     busy = true;
     try {
       var r = await fetch('/api/order-status?t=' + encodeURIComponent(token), { cache: 'no-store' });
       if (r.status === 404) { stop(); $('t-code').textContent = ''; $('t-msg').textContent = 'Não encontramos esse pedido. Confira o link ou veja seus pedidos recentes abaixo.'; return; }
+      if (r.status === 429) { rateLimited(r); return; }
       if (!r.ok) { $('t-msg').textContent = 'Não foi possível atualizar agora. Tentamos de novo em instantes.'; return; }
+      backoffStep = 0;
+      $('t-note').textContent = NOTE_TEXT;
       render(await r.json());
     } catch (e) {
       $('t-msg').textContent = 'Sem conexão. Tentamos de novo em instantes.';
@@ -103,6 +124,6 @@
     return;
   }
   load();
-  timer = setInterval(function () { if (!document.hidden) load(); }, REFRESH_MS);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && timer) load(); });
+  timer = setInterval(function () { if (canLoad()) load(); }, REFRESH_MS);
+  document.addEventListener('visibilitychange', function () { if (timer && canLoad()) load(); });
 })();

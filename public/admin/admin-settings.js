@@ -68,6 +68,7 @@
     const finish = async () => {
       lockEl.remove(); lockEl = null;
       try { await DG.api('me'); } catch { return; }
+      if (DG.state.user && DG.state.user.weakPassword && DG.forcePasswordChange) { DG.forcePasswordChange(); return; }
       $('#app').hidden = false;
       DG.go(DG.state.tab);
     };
