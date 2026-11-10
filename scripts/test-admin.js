@@ -259,7 +259,7 @@ async function loginAs(username, password, ip) {
 function trackImage(path) { const m = /id=(\d+)/.exec(String(path || '')); if (m) S.imageIds.add(Number(m[1])); }
 
 async function setup() {
-  sql = require('../api/db'); Q = (text, params) => sql.query(text, params || []);
+  sql = require('../api/_lib/db'); Q = (text, params) => sql.query(text, params || []);
   S.before = await snapshot();
   S.settingsBefore = await Q('select key, value from settings');
   S.names = { adm: 'zz-teste-adm', staff: 'zz-teste-staff', lock: 'zz-teste-lock', ghost: 'zz-teste-ghost', fresh: 'zz-teste-novo' };

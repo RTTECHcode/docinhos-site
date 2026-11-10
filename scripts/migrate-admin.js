@@ -1,6 +1,6 @@
 // Migração do painel /admin (idempotente e só aditiva: nada é apagado nem alterado de forma destrutiva).
 // Uso: set -a && . ./.env && set +a && node scripts/migrate-admin.js
-const sql = require('../api/db');
+const sql = require('../api/_lib/db');
 
 const STATEMENTS = [
   `create table if not exists admin_users (

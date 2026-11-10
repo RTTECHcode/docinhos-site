@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { hasControlChars } = require('./_lib/validate');
 
 const SITE_URL = 'https://docinhos-site.vercel.app';
 const MP_PREFERENCES_URL = 'https://api.mercadopago.com/checkout/preferences';
@@ -131,6 +132,7 @@ function priceItems(rawItems, catalog) {
 function validateCustomer(b, storeAddress = STORE_ADDRESS) {
   const name = typeof b.customer_name === 'string' ? b.customer_name.trim() : '';
   if (name.length < 2 || name.length > 80) fail('Informe seu nome (2 a 80 caracteres).');
+  if (hasControlChars(name, false)) fail('O nome contém caracteres inválidos.');
 
   const phone = typeof b.customer_phone === 'string' || typeof b.customer_phone === 'number'
     ? String(b.customer_phone).replace(/\D/g, '') : '';
@@ -143,6 +145,7 @@ function validateCustomer(b, storeAddress = STORE_ADDRESS) {
   if (method === 'delivery') {
     address = typeof b.address === 'string' ? b.address.trim() : '';
     if (address.length < 5 || address.length > 200) fail('Informe o endereço de entrega (5 a 200 caracteres).');
+    if (hasControlChars(address, false)) fail('O endereço contém caracteres inválidos.');
   } else {
     address = storeAddress; // retirada: ignora qualquer endereço enviado
   }
@@ -152,6 +155,7 @@ function validateCustomer(b, storeAddress = STORE_ADDRESS) {
     if (typeof b.notes !== 'string') fail('Observações inválidas.');
     notes = b.notes.trim() || null;
     if (notes && notes.length > 300) fail('As observações podem ter no máximo 300 caracteres.');
+    if (notes && hasControlChars(notes, true)) fail('As observações contêm caracteres inválidos.');
   }
   return { name, phone, method, address, notes };
 }
@@ -189,14 +193,20 @@ async function loadCatalog(sql, productIds) {
 }
 
 // Um item do Mercado Pago por item do pedido (preço em reais, calculado no servidor).
-function buildPreferenceItems(items) {
-  return items
+// A taxa de entrega (se > 0) entra como item extra: o total pago precisa ser igual ao total_cents do pedido,
+// senão o webhook (que confere o valor) nunca aprova.
+function buildPreferenceItems(items, deliveryFeeCents = 0) {
+  const list = items
     .filter(i => i.unit_total_cents > 0)
     .map((i, idx) => {
       const title = [i.name, i.size ? `- ${i.size}` : '', i.extras.length ? `(+ ${i.extras.join(', ')})` : '']
         .filter(Boolean).join(' ').slice(0, 256);
       return { id: String(idx + 1), title, quantity: i.qty, currency_id: 'BRL', unit_price: Number((i.unit_total_cents / 100).toFixed(2)) };
     });
+  if (deliveryFeeCents > 0) {
+    list.push({ id: 'frete', title: 'Taxa de entrega', quantity: 1, currency_id: 'BRL', unit_price: Number((deliveryFeeCents / 100).toFixed(2)) });
+  }
+  return list;
 }
 
 function buildPreferenceBody(order, prefItems, now = new Date()) {
@@ -299,7 +309,7 @@ module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
   try {
-    const sql = require('./db'); // carregado aqui para testar a função pura sem DATABASE_URL
+    const sql = require('./_lib/db'); // carregado aqui para testar a função pura sem DATABASE_URL
     let b = req.body;
     if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
     if (!b || typeof b !== 'object' || Array.isArray(b)) fail('Dados inválidos.');
@@ -353,7 +363,7 @@ module.exports = async (req, res) => {
       }
     } else if (mpToken) {
       try {
-        const pref = await createPreference(mpToken, order, buildPreferenceItems(priced.items));
+        const pref = await createPreference(mpToken, order, buildPreferenceItems(priced.items, DELIVERY_FEE));
         if (pref && pref.init_point && pref.id) {
           payment = { type: 'card', url: pref.init_point, id: String(pref.id) };
           await sql`update orders set payment_method = 'mercadopago_card', payment_id = ${String(pref.id)} where id = ${order.id}`;

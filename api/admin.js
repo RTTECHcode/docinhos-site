@@ -32,7 +32,8 @@ const DEFAULT_SETTINGS = {
 
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 const bad = message => { throw new HttpError(400, message); };
-const getSql = () => require('./db'); // carregado sob demanda: funções puras testáveis sem DATABASE_URL
+const { hasControlChars } = require('./_lib/validate');
+const getSql = () => require('./_lib/db'); // carregado sob demanda: funções puras testáveis sem DATABASE_URL
 const q = (text, params = []) => getSql().query(text, params);
 const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
 
@@ -71,15 +72,6 @@ function evaluateLock({ failsMs, ipFails, nowMs }) {
 }
 
 // ---------- Validadores ----------
-// Rejeita caracteres de controle; quebras de linha só quando permitidas (texto multilinha).
-function hasControlChars(s, allowNewlines) {
-  for (let k = 0; k < s.length; k++) {
-    const c = s.charCodeAt(k);
-    if (c === 10 || c === 13) { if (!allowNewlines) return true; continue; }
-    if (c < 32 || c === 127) return true;
-  }
-  return false;
-}
 function vId(v, label = 'Identificador') {
   if (!Number.isInteger(v) || v < 1 || v > MAX_INT4) bad(`${label} inválido.`);
   return v;

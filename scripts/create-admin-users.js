@@ -9,7 +9,7 @@
 const crypto = require('node:crypto');
 const { promisify } = require('node:util');
 const scrypt = promisify(crypto.scrypt);
-const sql = require('../api/db');
+const sql = require('../api/_lib/db');
 
 const PARAMS = { N: 32768, r: 8, p: 1, keylen: 64 };
 

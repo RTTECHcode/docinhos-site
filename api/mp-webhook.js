@@ -12,10 +12,25 @@ function parseSignature(header) {
   return out;
 }
 
+const MAX_SIGNATURE_AGE_S = 300; // recusa assinaturas com mais de 5 min de diferença (anti-replay)
+
+// ts do Mercado Pago pode vir em milissegundos (13 dígitos) ou segundos (10 dígitos).
+// Valores >= 1e11 são tratados como ms (1e11 s seria o ano 5138; 1e11 ms é março de 1973).
+// Retorna o instante em segundos, ou null se não for um número inteiro positivo.
+function tsToSeconds(ts) {
+  if (!/^\d{1,16}$/.test(String(ts))) return null;
+  const n = Number(ts);
+  if (!(n > 0)) return null;
+  return n >= 1e11 ? n / 1000 : n;
+}
+
 // Valida x-signature: HMAC-SHA256 de "id:{data.id};request-id:{x-request-id};ts:{ts};".
-function verifySignature({ secret, signatureHeader, requestId, dataId }) {
+// nowMs injetável para teste.
+function verifySignature({ secret, signatureHeader, requestId, dataId, nowMs = Date.now() }) {
   const { ts, v1 } = parseSignature(signatureHeader);
   if (!ts || !v1 || !requestId || !dataId) return false;
+  const tsSec = tsToSeconds(ts);
+  if (tsSec === null || Math.abs(nowMs / 1000 - tsSec) > MAX_SIGNATURE_AGE_S) return false;
   const expected = crypto.createHmac('sha256', secret)
     .update(`id:${dataId};request-id:${requestId};ts:${ts};`)
     .digest('hex');
@@ -29,7 +44,8 @@ function parseNotification(query, body) {
   const q = query || {};
   const bd = body && typeof body === 'object' ? body : {};
   const type = String(bd.type || q.type || q.topic || '');
-  let dataId = String((bd.data && bd.data.id) ?? q['data.id'] ?? '');
+  // O manifest assinado usa o data.id da query; o corpo só serve de reserva.
+  let dataId = String(q['data.id'] ?? (bd.data && bd.data.id) ?? '');
   if (/^[a-z0-9]+$/i.test(dataId)) dataId = dataId.toLowerCase();
   return { type, dataId };
 }
@@ -46,6 +62,11 @@ module.exports = async (req, res) => {
   const { type, dataId } = parseNotification(req.query, req.body);
 
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+  if (!secret && process.env.VERCEL_ENV === 'production') {
+    // Fail-closed: em produção, sem segredo não há como validar a origem da notificação.
+    console.error('MERCADOPAGO_WEBHOOK_SECRET não definido em produção: notificação recusada.');
+    return res.status(500).json({ error: 'Configuração ausente' });
+  }
   if (secret) {
     const ok = verifySignature({
       secret,
@@ -82,7 +103,7 @@ module.exports = async (req, res) => {
     const code = pay.external_reference;
     if (!code || !pay.status) return res.status(200).json({ ok: true });
 
-    const sql = require('./db'); // carregado aqui para o parser poder ser testado sem DATABASE_URL
+    const sql = require('./_lib/db'); // carregado aqui para o parser poder ser testado sem DATABASE_URL
     const [order] = await sql.query('select total_cents from orders where code = $1', [String(code)]);
     if (!order) return res.status(200).json({ ok: true });
 
@@ -111,4 +132,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { parseSignature, verifySignature, parseNotification, paymentMethodOf };
+module.exports._internal = { parseSignature, verifySignature, tsToSeconds, parseNotification, paymentMethodOf };

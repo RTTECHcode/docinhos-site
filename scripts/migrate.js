@@ -1,5 +1,5 @@
 // Aplica só o schema (idempotente, aditivo). Uso: set -a && . ./.env && set +a && node scripts/migrate.js
-const sql = require('../api/db');
+const sql = require('../api/_lib/db');
 const fs = require('fs');
 (async () => {
   const schema = fs.readFileSync(__dirname + '/schema.sql', 'utf8');

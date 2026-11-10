@@ -1,4 +1,4 @@
-const sql = require('../api/db');
+const sql = require('../api/_lib/db');
 const { products, complements, productComplements, productGroups, renames } = require('./catalog');
 const fs = require('fs');
 (async () => {

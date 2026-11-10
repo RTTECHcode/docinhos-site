@@ -1,6 +1,6 @@
 // Testes da função pura de preço (sem banco): node scripts/test-order-pricing.js
 const assert = require('node:assert/strict');
-const { priceItems, validateCustomer, buildPreferenceBody, buildPixBody, pixPayerEmail, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError } = require('../api/order')._internal;
+const { priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError } = require('../api/order')._internal;
 
 const comp = (id, name, price_cents, kind, max_quantity = 1, group_id = null) => ({ id, name, price_cents, kind, max_quantity, group_id });
 const catalog = {
@@ -149,6 +149,35 @@ test('pix: corpo do pagamento direto (valor do servidor, 30 min, e-mail sintéti
   assert.equal(pixPayerEmail('DGABCDEF0123'), 'pedido-dgabcdef0123@docinhos-site.vercel.app');
   assert.equal(buildPixBody({ code: 'DGX', total_cents: 600 }, '', now).payer.first_name, 'Cliente');
   assert.deepEqual(PAYMENT_CHOICES, ['pix', 'card']);
+});
+
+test('preference (cartão): soma dos itens (com e sem taxa de entrega) == total do pedido', () => {
+  const r = priceItems([{ product_id: 1, qty: 2, size_id: 11, extras: [{ id: 20, qty: 2 }, { id: 21, qty: 1 }] }], catalog);
+  for (const fee of [0, 500, 799]) {
+    const total = r.subtotal_cents + fee;
+    const items = buildPreferenceItems(r.items, fee);
+    const sum = items.reduce((s, i) => s + Math.round(i.unit_price * i.quantity * 100), 0);
+    assert.equal(sum, total, `taxa ${fee}`);
+    assert.equal(items.some(i => i.id === 'frete'), fee > 0);
+  }
+  const frete = buildPreferenceItems(r.items, 799).find(i => i.id === 'frete');
+  assert.deepEqual(frete, { id: 'frete', title: 'Taxa de entrega', quantity: 1, currency_id: 'BRL', unit_price: 7.99 });
+  assert.equal(buildPreferenceItems(r.items).length, r.items.length);
+});
+
+test('pix: transaction_amount inclui a taxa (total do pedido)', () => {
+  const body = buildPixBody({ code: 'DGX', total_cents: 4599 + 799 }, 'Ana');
+  assert.equal(body.transaction_amount, 53.98);
+});
+
+test('cliente: caracteres de controle rejeitados em nome, endereço e observações', () => {
+  const base = { customer_name: 'Maria', customer_phone: '11999998888', delivery_method: 'delivery', address: 'Rua das Flores, 10', notes: 'sem cebola' };
+  assert.equal(validateCustomer(base).name, 'Maria');
+  assert.equal(validateCustomer({ ...base, notes: 'linha 1\nlinha 2' }).notes, 'linha 1\nlinha 2'); // quebra de linha ok nas observações
+  const bads = [['customer_name', 'Ma\x00ria'], ['customer_name', 'Ma\nria'], ['address', 'Rua\x07 das Flores, 10'], ['address', 'Rua\r\nA, 10'], ['notes', 'oi\x1b[31m'], ['notes', 'oi\x7f']];
+  for (const [field, val] of bads) {
+    assert.throws(() => validateCustomer({ ...base, [field]: val }), e => e instanceof ValidationError && /inválidos/.test(e.message), field);
+  }
 });
 
 test('preference (cartão): sem Pix, boleto, atm e pré-pago; 3x; expira em 2h', () => {
