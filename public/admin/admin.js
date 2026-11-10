@@ -61,7 +61,12 @@
     let data = {};
     try { data = await res.json(); } catch { /* corpo vazio */ }
     if (res.status === 401 && action !== 'login') { showLogin(); throw new Error(data.error || 'Sessão expirada.'); }
-    if (!res.ok) throw new Error(data.error || 'Algo deu errado. Tente de novo.');
+    if (!res.ok) {
+      const err = new Error(data.error || 'Algo deu errado. Tente de novo.');
+      err.status = res.status; err.code = data.code;
+      if (res.status === 403 && data.code === 'security_setup_required' && DG.forceSecurity) DG.forceSecurity();
+      throw err;
+    }
     if (data.user) setUser(data.user);
     return data;
   };
@@ -181,6 +186,7 @@
   async function boot() {
     try { await DG.api('me'); } catch { return; }
     $('#login-view').hidden = true;
+    if (DG.state.user && DG.state.user.needsSecurity && DG.forceSecurity) { DG.forceSecurity(); return; }
     $('#app').hidden = false;
     DG.go(DG.state.tab);
   }
@@ -273,6 +279,7 @@
     btn.disabled = false;
   });
   $('#tabbar').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) DG.go(b.dataset.tab); });
+  $('#login-forgot').addEventListener('click', () => { if (DG.forgotPassword) DG.forgotPassword(); });
   $('#weak-banner').addEventListener('click', () => DG.go('account'));
   boot().then(() => { if (!DG.state.user) { $('#login-view').hidden = false; } });
 })();

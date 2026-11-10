@@ -170,3 +170,17 @@ button { cursor: pointer; }
 .backdrop.closing { pointer-events: none; animation: a4-fade-out .22s ease-in forwards; }
 .backdrop.closing .sheet { animation: a4-sheet-down .22s ease-in forwards; }
 @media (prefers-reduced-motion: reduce) { .backdrop, .backdrop .sheet, .backdrop.closing, .backdrop.closing .sheet { animation: none !important; } }
+
+/* A5: ajustes, histórico, pausa em lote, segurança */
+.tabbar button span { white-space: nowrap; font-size: 10.5px; }
+.a5-lock { position: fixed; inset: 0; z-index: 90; background: var(--bg); overflow-y: auto; }
+.a5-warn { color: var(--warn); background: var(--warn-soft); border-radius: 12px; padding: 10px 12px; font-weight: 700; font-size: 14px; }
+.a5-list { margin: 0; padding-left: 18px; font-size: 14px; display: grid; gap: 2px; }
+.a5-check { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 6px 0; }
+.a5-check input { width: 22px; height: 22px; flex: none; margin-top: 2px; }
+.a5-codes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.a5-codes code { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 10px 8px; text-align: center; font-weight: 800; font-size: 14px; letter-spacing: .03em; }
+.a5-wrap-chips { flex-wrap: wrap; overflow: visible; }
+.a5-gap { height: 10px; }
+.field input[type="time"], .field input[type="date"] { min-width: 0; }
+/* fim A5 */

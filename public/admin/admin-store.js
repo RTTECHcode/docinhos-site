@@ -1,41 +1,33 @@
 'use strict';
-/* Aba Loja: endereço, taxa de entrega e mensagem de loja pausada. */
+/* A5: helpers de horário (fuso São Paulo) e cartão "Loja" (endereço de retirada). A aba Loja agora é a aba Ajustes (admin-settings.js). */
 (function () {
   const DG = window.DG;
   const { el } = DG;
+  const TZ = 'America/Sao_Paulo';
 
-  DG.tabs.store = {
-    async render(view) {
-      const catalog = await DG.loadCatalog();
-      const s = catalog.settings;
-      DG.setStoreBadge(s.storePaused);
-      const address = el('input', { type: 'text', maxlength: 200, value: s.storeAddress });
-      const fee = el('input', { type: 'text', inputmode: 'decimal', placeholder: '0,00', value: DG.moneyInput(s.deliveryFeeCents) });
-      const message = el('textarea', { maxlength: 200 });
-      message.value = s.storePausedMessage;
-      const state = { paused: s.storePaused };
-      const paused = DG.switchEl(state.paused, 'Loja pausada', async next => {
-        const ok = await DG.confirm(next ? 'Pausar a loja inteira? Os clientes não conseguirão pedir.' : 'Reabrir a loja?', next ? 'Pausar loja' : 'Reabrir', next);
-        if (!ok) return false;
-        const r = await DG.run(() => DG.api('store_save', { body: { store_paused: next } }), next ? 'Loja pausada.' : 'Loja aberta.');
-        if (!r) return false;
-        state.paused = next;
-        DG.setStoreBadge(next);
-        return true;
-      }, true);
-      view.replaceChildren(
-        el('div', { class: 'card row between' }, el('div', {}, el('strong', { text: 'Loja pausada' }), el('p', { class: 'muted small', text: 'Bloqueia novos pedidos' })), paused),
-        el('form', { class: 'card stack', novalidate: true, on: { submit: async e => {
-          e.preventDefault();
-          const cents = DG.parseMoney(fee.value);
-          if (Number.isNaN(cents)) { DG.toast('Taxa inválida. Use o formato 5,00.', true); return; }
-          const r = await DG.run(() => DG.api('store_save', { body: { store_address: address.value, delivery_fee_cents: cents === null ? 0 : cents, store_paused_message: message.value } }), 'Loja atualizada.');
-          if (r) DG.setStoreBadge(r.settings.storePaused);
-        } } },
-        el('label', { class: 'field' }, el('span', { text: 'Endereço para retirada' }), address),
-        el('label', { class: 'field' }, el('span', { text: 'Taxa de entrega (R$)' }), fee),
-        el('label', { class: 'field' }, el('span', { text: 'Mensagem quando a loja estiver pausada' }), message),
-        el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar' })));
-    }
+  // Data/hora no fuso da loja, independente do fuso do aparelho.
+  DG.fmtSP = iso => (iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
+  DG.timeSP = iso => (iso ? new Date(iso).toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }) : '');
+  // Minutos que faltam até o próximo HH:MM (horário de São Paulo). Se já passou hoje, conta para amanhã.
+  DG.minutesUntilSP = hhmm => {
+    const m = /^(\d{2}):(\d{2})$/.exec(hhmm || '');
+    if (!m) return NaN;
+    const parts = new Intl.DateTimeFormat('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
+    const h = Number(parts.find(p => p.type === 'hour').value) % 24, mi = Number(parts.find(p => p.type === 'minute').value);
+    let diff = (Number(m[1]) * 60 + Number(m[2])) - (h * 60 + mi);
+    if (diff <= 0) diff += 1440;
+    return diff;
+  };
+
+  // Cartão com o endereço da loja (retirada). Mensagem de loja fechada fica no menu "Fechar loja" da aba Pausa.
+  DG.storeCard = catalog => {
+    const address = el('input', { type: 'text', maxlength: 200, value: catalog.settings.storeAddress });
+    return el('form', { class: 'card stack', novalidate: true, on: { submit: async e => {
+      e.preventDefault();
+      const r = await DG.run(() => DG.api('store_save', { body: { store_address: address.value } }), 'Loja atualizada.');
+      if (r) catalog.settings.storeAddress = r.settings.storeAddress;
+    } } },
+    el('label', { class: 'field' }, el('span', { text: 'Endereço da loja (retirada)' }), address),
+    el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar endereço' }));
   };
 })();
