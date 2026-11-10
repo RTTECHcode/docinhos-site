@@ -159,3 +159,14 @@ button { cursor: pointer; }
 .status-grid .btn[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
 .audit { font-size: 13px; display: grid; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* A4: animação de fechar modal */
+@keyframes a4-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes a4-sheet-down { from { transform: translateY(0); } to { transform: translateY(100%); } }
+@keyframes a4-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes a4-fade-out { from { opacity: 1; } to { opacity: 0; } }
+.backdrop { animation: a4-fade-in .2s ease-out; }
+.backdrop .sheet { animation: a4-sheet-up .25s ease-out; }
+.backdrop.closing { pointer-events: none; animation: a4-fade-out .22s ease-in forwards; }
+.backdrop.closing .sheet { animation: a4-sheet-down .22s ease-in forwards; }
+@media (prefers-reduced-motion: reduce) { .backdrop, .backdrop .sheet, .backdrop.closing, .backdrop.closing .sheet { animation: none !important; } }

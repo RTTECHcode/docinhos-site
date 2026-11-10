@@ -78,8 +78,13 @@
 
   function linksBox(product, catalog) {
     const box = el('div', { class: 'stack' });
+    // B4: a API devolve os vínculos sem ORDER BY, e o Postgres muda a ordem física ao atualizar uma linha. Para a lista não
+    // "pular", guardamos a ordem em que cada complemento apareceu pela primeira vez e sempre usamos essa ordem.
+    const seen = new Map();
     const paint = () => {
       const links = catalog.links.filter(l => l.product_id === product.id);
+      links.forEach(l => { if (!seen.has(l.complement_id)) seen.set(l.complement_id, seen.size); });
+      links.sort((a, b) => seen.get(a.complement_id) - seen.get(b.complement_id));
       const groups = catalog.groups.filter(g => g.product_id === product.id);
       const comp = id => catalog.complements.find(c => c.id === id);
       const rows = links.map(l => ({ l, c: comp(l.complement_id) })).filter(x => x.c);
@@ -99,7 +104,14 @@
             el('strong', { class: 'wrap', text: g.label }), el('p', { class: 'muted small', text: 'Escolher de ' + g.min_choices + ' a ' + g.max_choices + ' - chave: ' + g.key }))))) : [el('p', { class: 'muted', text: 'Sem grupos.' })]),
         el('button', { class: 'btn block', type: 'button', text: 'Novo grupo', on: { click: () => editGroup(null) } }));
     };
-    const refresh = async () => { await DG.loadCatalog(); Object.assign(catalog, DG.state.catalog); paint(); };
+    // Repinta mantendo a posição de rolagem do pop-up (B4).
+    const paintKeepScroll = () => {
+      const sc = box.closest('.sheet');
+      const top = sc ? sc.scrollTop : 0;
+      paint();
+      if (sc) sc.scrollTop = top;
+    };
+    const refresh = async () => { await DG.loadCatalog(); Object.assign(catalog, DG.state.catalog); paintKeepScroll(); };
 
     function addLink() {
       const linked = new Set(catalog.links.filter(l => l.product_id === product.id).map(l => l.complement_id));
@@ -131,7 +143,11 @@
           c.kind === 'additional' ? el('label', { class: 'field' }, el('span', { text: 'Grupo' }), group) : null,
           el('button', { class: 'btn primary block', type: 'button', text: 'Salvar', on: { click: async () => {
             const payload = { product_id: product.id, complement_id: c.id, paused: l.paused, max_quantity: Number(maxQ.value) || 1, group_id: group.value ? Number(group.value) : null };
-            if (await DG.run(() => DG.api('link_save', { body: payload }), 'Salvo.')) { close(); refresh(); }
+            if (await DG.run(() => DG.api('link_save', { body: payload }), 'Salvo.')) {
+              // atualiza na hora, no mesmo lugar da lista, sem esperar o servidor (B4)
+              l.max_quantity = payload.max_quantity; l.group_id = payload.group_id;
+              close(); paintKeepScroll(); refresh();
+            }
           } } }),
           el('button', { class: 'btn danger block', type: 'button', text: 'Desvincular', on: { click: async () => {
             if (!(await DG.confirm('Desvincular ' + c.name + ' deste produto?', 'Desvincular', true))) return;
@@ -172,6 +188,7 @@
     const isNew = !productIn;
     const product = productIn ? { ...productIn } : { id: null, name: '', description: '', price_cents: null, category_id: defaultCategoryId || (catalog.categories[0] || {}).id, sort_order: 0, active: true, image_path: null };
     let changed = false;
+    const syncCatalog = patch => { const cur = catalog.products.find(x => x.id === product.id); if (cur) Object.assign(cur, patch); };
     DG.sheet(isNew ? 'Novo produto' : 'Editar produto', (body, close) => {
       const name = el('input', { type: 'text', maxlength: 120, value: product.name });
       const desc = el('textarea', { maxlength: 500 });
@@ -180,37 +197,49 @@
       const cat = el('select', {}, ...catalog.categories.map(c => el('option', { value: String(c.id), text: c.name + (c.active ? '' : ' (pausada)') })));
       cat.value = String(product.category_id);
       const order = el('input', { type: 'number', inputmode: 'numeric', min: 0, value: String(product.sort_order) });
-      const active = DG.switchEl(product.active, 'Produto ativo', async next => { product.active = next; return true; });
-      const saveBtn = el('button', { class: 'btn primary block', type: 'button', text: isNew ? 'Criar produto' : 'Salvar alterações' });
-      const extra = el('div', { class: 'stack' });
+      // P2 / B2: produto novo leva "active" no Criar. Produto existente chama product_toggle na hora (a API já suporta) e o
+      // "Salvar alterações" NÃO reenvia "active", então um valor antigo do modal nunca reativa um item pausado.
+      const active = DG.switchEl(product.active, 'Produto ativo', async next => {
+        if (isNew) { product.active = next; return true; }
+        const r = await DG.run(() => DG.api('product_toggle', { body: { id: product.id, active: next } }), next ? 'Produto ativado.' : 'Produto pausado.');
+        if (!r) return false;
+        product.active = next; syncCatalog({ active: next }); changed = true;
+        return true;
+      });
+      // TODO(O2): aqui entra o campo "texto da pausa" (ex.: "volto logo <3"), quando o backend (fase F2) tiver o campo novo.
+      const saveBtn = el('button', { class: 'btn primary block', type: 'button', text: isNew ? 'Criar item' : 'Salvar alterações' });
       saveBtn.addEventListener('click', async () => {
         const cents = DG.parseMoney(price.value);
         if (Number.isNaN(cents)) { DG.toast('Preço inválido. Use o formato 12,50.', true); return; }
-        const payload = { name: name.value, description: desc.value, price_cents: cents, category_id: Number(cat.value), sort_order: Number(order.value) || 0, active: product.active };
-        if (!isNew) payload.id = product.id;
-        const r = await DG.run(() => DG.api('product_save', { body: payload }), 'Produto salvo.');
+        const payload = { name: name.value, description: desc.value, price_cents: cents, category_id: Number(cat.value), sort_order: Number(order.value) || 0 };
+        if (isNew) payload.active = product.active; else payload.id = product.id;
+        saveBtn.disabled = true;
+        const r = await DG.run(() => DG.api('product_save', { body: payload }), isNew ? 'Item criado.' : 'Produto salvo.');
+        saveBtn.disabled = false;
         if (!r) return;
         changed = true;
         Object.assign(product, r.product);
-        if (isNew) { await DG.loadCatalog(); Object.assign(catalog, DG.state.catalog); close(); DG.openProduct(product, catalog, null, onDone); }
+        if (isNew) { await DG.loadCatalog(); Object.assign(catalog, DG.state.catalog); close(); DG.openProduct(product, catalog, null, onDone); return; }
+        syncCatalog(r.product); // a lista atrás do pop-up já usa os dados novos
+        close();                // fecha com animação; onClose chama onDone e a lista é repintada na hora
       });
-      body.append(
+      const fields = [
         el('label', { class: 'field' }, el('span', { text: 'Nome' }), name),
         el('label', { class: 'field' }, el('span', { text: 'Descrição' }), desc),
         el('div', { class: 'grid2' }, el('label', { class: 'field' }, el('span', { text: 'Preço (R$)' }), price), el('label', { class: 'field' }, el('span', { text: 'Ordem' }), order)),
         el('label', { class: 'field' }, el('span', { text: 'Categoria' }), cat),
-        el('div', { class: 'card row between' }, el('div', {}, el('strong', { text: 'Disponível no cardápio' }), el('p', { class: 'muted small', text: 'Desligue para pausar' })), active),
-        saveBtn);
-      if (!isNew) {
-        body.append(photoBox(product, () => { changed = true; }), linksBox(product, catalog),
+        el('div', { class: 'card row between' }, el('div', {}, el('strong', { text: 'Disponível no cardápio' }), el('p', { class: 'muted small', text: 'Desligue para pausar' })), active)];
+      if (isNew) {
+        // P1: "Criar item" no topo, visível sem rolar.
+        body.append(saveBtn, ...fields, el('p', { class: 'muted small', text: 'Depois de criar, você poderá enviar a foto e vincular complementos.' }));
+      } else {
+        // P1: "Salvar alterações" logo depois do bloco da foto.
+        body.append(...fields, photoBox(product, () => { changed = true; syncCatalog({ image_path: product.image_path }); }), saveBtn, linksBox(product, catalog),
           el('button', { class: 'btn danger block', type: 'button', text: 'Excluir produto', on: { click: async () => {
             if (!(await DG.confirm('Excluir "' + product.name + '" de vez? Pedidos antigos não são afetados.', 'Excluir', true))) return;
             if (await DG.run(() => DG.api('product_delete', { body: { id: product.id } }), 'Produto excluído.')) { changed = true; close(); }
           } } }));
-      } else {
-        body.append(el('p', { class: 'muted small', text: 'Depois de criar, você poderá enviar a foto e vincular complementos.' }));
       }
-      body.append(extra);
     }, () => { if (changed && onDone) onDone(); });
   };
 })();
