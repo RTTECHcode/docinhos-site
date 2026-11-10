@@ -82,7 +82,8 @@ Erros:
 - 423 `points_locked` (recuperação de conta recente: pontos bloqueados 48 h).
 - 403 `forbidden_origin`: `Origin` ausente ou diferente do host, ou `Sec-Fetch-Site` de outro site (F5, A1-05). Nenhum pedido é criado.
 - 415 `unsupported_type`: corpo sem `Content-Type: application/json` (ex.: `text/plain`) (F5, A1-05).
-- 429: mais de 5 pedidos do mesmo telefone OU mais de 10 pedidos do mesmo IP em 10 min (o limite por IP é novo na F5; trocar o telefone não burla).
+- 429 `rate_limited` `Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.`: mais de 20 TENTATIVAS do mesmo IP em 10 min (toda tentativa conta, até as recusadas com 400, 409, 422, 429, 503; 403 e 415 não contam), OU 5 pedidos criados do mesmo telefone, OU 10 pedidos criados do mesmo IP em 10 min (trocar o telefone não burla). Tudo é checado ANTES da consulta de frete (A2). O `code` é novo (antes vinha só `error`).
+- 429 `shipping_busy` `Muitas consultas de frete agora. Tente de novo em instantes.` (só entrega, A2): mesmo teto global de endereços novos por minuto do `/api/store?a=quote` (40), checado antes do frete.
 - 503 `store_closed`: `{ error, code, store: { open:false, reason, reopens_at, next_open_at, message } }`. 503 `origin_unavailable` (frete indisponível agora).
 
 ## 4. Acompanhamento: GET /api/order-status
@@ -113,6 +114,8 @@ Autenticação e perfis:
 - Bloqueio de login (F5, A1-04): 5 erros em 15 min ou 10 em 24 h travam o PAR usuário+IP (o mesmo usuário em outro IP segue livre). 20 erros de um IP em 15 min travam o IP para qualquer usuário. Contra ataque espalhado: 30 erros do usuário em 1 h (somando todos os IPs) barram só IPs sem login certo desse usuário nos últimos 7 dias. Resposta: 429 `Muitas tentativas. Tente mais tarde.` (mesmo com a senha certa).
 - Senha atual errada em `password_change`, `security_setup` (troca) e `recovery_codes_new` conta no mesmo bloqueio do login (par usuário+IP): ao travar, 429 `Muitas tentativas. Tente mais tarde.` (F5, A1-07).
 - `audit`: para `staff`, os eventos `login_falhou` e `recuperacao_falhou` (têm IP e o usuário digitado) não aparecem; o `admin` vê tudo (F5, A1-08).
+- `audit` (A2): evento `pagamento_apos_cancelamento` (usuário `mercadopago`), gravado pelo webhook quando um pedido JÁ CANCELADO recebe pagamento aprovado: `Pedido DG-1234 estava cancelado e recebeu pagamento aprovado (pagamento <id>). Pontos não creditados. Estorne o valor manualmente no Mercado Pago.` Um aviso por pedido + pagamento. Nada é estornado automaticamente.
+- `user_reset` (A2): a senha definida pelo admin é provisória: grava `weakPassword: true` e a pessoa cai no portão `password_change_required` no próximo login até trocar. Se o admin redefinir a própria senha, não fica preso.
 
 ### 5.1 Ações novas por tema
 
@@ -252,12 +255,12 @@ Cookie: `__Host-dg_cliente` (HttpOnly, Secure, SameSite=Lax, Path=/, 30 dias). A
 | Função | Uso | Retorno / erros |
 |---|---|---|
 | `createAccount(sql, { name, phone, email?, password, security_question, security_answer, whatsapp_consent?, birth_day?, birth_month? }, ctx)` | cadastro (já abre sessão) | `{ customer, token }`; 400 validação; 409 `duplicate`. Pergunta e resposta são obrigatórias. `whatsapp_consent` só vale `true` explícito (nunca pré-marcado); aceite grava texto, versão, data, IP e evento. Telefone vira E.164 (+55...). |
-| `login(sql, { phone, password }, ctx)` | entrar | `{ customer, token }`; 401 `bad_login`; 429 `locked` (5 erros = 30 min, por telefone e por IP) |
+| `login(sql, { phone, password }, ctx)` | entrar | `{ customer, token }`; 401 `bad_login`; 429 `locked` (A2: 5 erros em 30 min = 30 min e 10 em 24 h = 24 h, pelo PAR telefone+IP; 5 erros de um IP em 30 min travam o IP; 10 erros no telefone em 1 h, somando IPs, barram os IPs que nunca entraram nessa conta) |
 | `getSession(sql, req)` | cliente da requisição | `{ customer, tokenHash }` ou `null` |
 | `sessionCookie(token)` / `clearSessionCookie()` | valor do `Set-Cookie` | string |
 | `logoutFromRequest(sql, req)` | sair | devolve o `Set-Cookie` que limpa |
 | `recoveryQuestion(sql, { phone })` | tela de recuperar | `{ question_id, question }` (falsa e estável se o telefone não existe) |
-| `recover(sql, { phone, answer, new_password }, ctx)` | recuperar | `{ ok, points_locked_until }`; 400 `bad_recovery` (genérico); 429 `locked`. Derruba todas as sessões e trava o resgate de pontos por 48 h. |
+| `recover(sql, { phone, answer, new_password }, ctx)` | recuperar | `{ ok, points_locked_until }`; 400 `bad_recovery` (genérico); 429 `locked` (mesmas regras do login, com contagem própria). Derruba todas as sessões e trava o resgate de pontos por 48 h. |
 | `getProfile(sql, id)` / `customerView(row)` | perfil | `{ id, name, phone, email, whatsapp_consent, whatsapp_consent_at, whatsapp_opt_out_at, whatsapp_confirmed_at, birth_day, birth_month, points_locked_until, security_question_id, security_question, created_at }` |
 | `updateProfile(sql, id, { name?, email?, birth_day?, birth_month? })` | editar | perfil; 409 e-mail em uso |
 | `changePassword(sql, id, { current_password, new_password }, keepTokenHash)` | trocar senha | `{ ok }`; derruba as outras sessões (passe `tokenHash` da sessão atual) |
@@ -281,6 +284,8 @@ Cookie: `__Host-dg_cliente` (HttpOnly, Secure, SameSite=Lax, Path=/, 30 dias). A
 Migração: `node scripts/migrate-2026-11-10-painel-v2.js` (idempotente; nada é apagado ou renomeado).
 
 F5: `node scripts/migrate-2026-11-10-scopes.js` (idempotente, aditiva; rodar ANTES do deploy do código da F5): amplia o CHECK de `customer_login_attempts.scope` para `login`, `recover`, `register` (cadastro, por IP) e `password` (senha atual errada na troca); cria `orders.client_ip` (limite de pedidos por IP; não aparece em nenhuma resposta). Linhas antigas com chave falsa na coluna `phone` (`#cadastro`, `#senha:+55...`) continuam sendo lidas nas mesmas janelas (até 48 h) e depois deixam de importar. Novas tabelas: `store_hours`, `store_state`, `ingredient_synonyms`, `ingredient_pause_batches`, `ingredient_pause_items`, `geocode_cache`, `route_cache`, `customers` e tabelas de sessão/pontos/consentimento, `admin_recovery_codes`, `admin_recovery_attempts`. Colunas novas: `products.paused/pause_label`, `product_complements.paused`, `orders.public_code/tracking_token_hash/…_at/discount_cents/points_redeemed/distance_km/customer_id`, `admin_users.security_*`.
+
+A2: `node scripts/migrate-2026-11-10-order-attempts.js` (idempotente, aditiva; rodar ANTES do deploy): cria `order_attempts (id, ip, at)` com índice `(ip, at)`. Uma linha por tentativa de pedido; o próprio `/api/order` apaga, de vez em quando, linhas com mais de 1 dia.
 
 ## 8. Decisões e pontos de atenção
 
