@@ -47,7 +47,7 @@
         if (!inCat.length) continue;
         out.push(el('h3', { class: 'section-title', text: c.name + (c.active ? '' : ' (pausada)') }), ...inCat.map(p => productRow(p, catalog, afterEdit)));
       }
-      list.replaceChildren(...(out.length ? out : [el('p', { class: 'muted', text: 'Nenhum produto encontrado.' })]));
+      list.replaceChildren(...(out.length ? out : [DG.empty('Nenhum produto encontrado.')]));
     };
     search.addEventListener('input', () => { st.search = search.value; paint(); });
     paint();
@@ -126,7 +126,7 @@
       list.replaceChildren(...(items.length ? items.map(c => el('div', { class: 'card' }, el('div', { class: 'row' },
         el('button', { class: 'item-btn grow', type: 'button', on: { click: () => editComplement(c, reload) } },
           el('strong', { class: 'wrap', text: c.name }), el('p', { class: 'muted small', text: (c.kind === 'size' ? 'Tamanho' : 'Adicional') + ' - ' + DG.money(c.price_cents) + ' - em ' + c.uses + ' produto(s)' })),
-        DG.switchEl(c.active, 'Complemento ' + c.name + ' disponível', async next => !!(await DG.run(() => DG.api('complement_toggle', { body: { id: c.id, active: next } }))) && ((c.active = next), true))))) : [el('p', { class: 'muted', text: 'Nenhum complemento.' })]));
+        DG.switchEl(c.active, 'Complemento ' + c.name + ' disponível', async next => !!(await DG.run(() => DG.api('complement_toggle', { body: { id: c.id, active: next } }))) && ((c.active = next), true))))) : [DG.empty('Nenhum complemento encontrado.')]));
     };
     search.addEventListener('input', paint);
     paint();

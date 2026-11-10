@@ -24,6 +24,9 @@
     return node;
   };
   const el = DG.el;
+  // Estados padrão (classes .is-loading e .empty-state em admin.css): use estes em vez de um p.muted solto.
+  DG.loading = text => el('p', { class: 'is-loading', role: 'status', text: text || 'Carregando...' });
+  DG.empty = text => el('p', { class: 'empty-state', text });
 
   // append/replaceChildren nativos transformam null/false em texto ("null"). Aqui eles passam a ignorar esses valores,
   // para que condicionais como `cond ? el(...) : null` funcionem em qualquer ponto da interface.
@@ -175,7 +178,7 @@
     DG.state.tab = tab;
     document.querySelectorAll('#tabbar button').forEach(b => { if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     const view = $('#view');
-    view.replaceChildren(el('p', { class: 'muted', text: 'Carregando...' }));
+    view.replaceChildren(DG.loading());
     window.scrollTo(0, 0);
     try { await DG.tabs[tab].render(view); } catch (e) { if (DG.state.tab === tab) view.replaceChildren(el('p', { class: 'error', text: e.message })); }
   };
@@ -200,12 +203,12 @@
           el('button', { class: 'btn', type: 'button', text: 'Sair', on: { click: logout } }))),
         el('h2', { class: 'section-title', text: 'Trocar senha' }), passwordForm(),
         u.role === 'admin' ? el('div', { id: 'users-box' }) : null,
-        el('h2', { class: 'section-title', text: 'Atividade recente' }), el('div', { id: 'audit-box', class: 'card' }, el('p', { class: 'muted', text: 'Carregando...' })));
+        el('h2', { class: 'section-title', text: 'Atividade recente' }), el('div', { id: 'audit-box', class: 'card' }, DG.loading()));
       DG.api('audit').then(r => {
         const box = $('#audit-box');
         if (!box) return;
         box.replaceChildren(...(r.rows.length ? r.rows.map(a => el('div', { class: 'audit' }, el('strong', { text: a.action.replace(/_/g, ' ') }),
-          el('span', { class: 'muted wrap', text: DG.fmtDate(a.at) + ' - ' + (a.username || 'sistema') + (a.detail ? ' - ' + a.detail : '') }))) : [el('p', { class: 'muted', text: 'Nada registrado.' })]));
+          el('span', { class: 'muted wrap', text: DG.fmtDate(a.at) + ' - ' + (a.username || 'sistema') + (a.detail ? ' - ' + a.detail : '') }))) : [DG.empty('Nada registrado ainda.')]));
       }).catch(() => {});
       if (u.role === 'admin') loadUsers();
     }
@@ -237,7 +240,7 @@
       ...r.users.map(u => el('div', { class: 'card' }, el('div', { class: 'row between' },
         el('div', { class: 'grow' }, el('strong', { text: u.username }), el('p', { class: 'muted small', text: (u.role === 'admin' ? 'Administrador' : 'Equipe') + (u.active ? '' : ' - desativado') + (u.weak_password ? ' - senha fraca' : '') })),
         el('button', { class: 'btn small', type: 'button', text: 'Nova senha', on: { click: () => resetPassword(u) } }),
-        u.username === DG.state.user.username ? null : el('button', { class: 'btn small', type: 'button', text: u.active ? 'Desativar' : 'Ativar', on: { click: async () => {
+        u.username === DG.state.user.username ? null : el('button', { class: 'btn small' + (u.active ? ' danger' : ''), type: 'button', text: u.active ? 'Desativar' : 'Ativar', on: { click: async () => {
           if (u.active && !(await DG.confirm('Desativar o usuário ' + u.username + '?', 'Desativar', true))) return;
           await DG.run(() => DG.api('user_toggle', { body: { id: u.id, active: !u.active } }), 'Pronto.');
           loadUsers();

@@ -120,7 +120,7 @@
   // ---------- Horários (M3) ----------
   function hoursSheet(onSaved) {
     DG.sheet('Horários de funcionamento', async (body, close) => {
-      body.append(el('p', { class: 'muted', text: 'Carregando...' }));
+      body.append(DG.loading());
       let r;
       try { r = await DG.api('store_hours'); } catch (e) { body.replaceChildren(el('p', { class: 'error', text: e.message })); return; }
       const model = {};
@@ -188,7 +188,7 @@
   }
 
   function hoursCard() {
-    const box = el('div', { class: 'card stack' }, el('p', { class: 'muted', text: 'Carregando...' }));
+    const box = el('div', { class: 'card stack' }, DG.loading());
     const load = async () => {
       const r = await DG.api('store_hours').catch(() => null);
       if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar os horários.' })); return; }
@@ -196,7 +196,7 @@
         const rg = r.hours.filter(h => h.weekday === d).map(h => h.opens + ' às ' + h.closes);
         return el('div', { class: 'row between' }, el('span', { text: name }), el('span', { class: 'muted small', text: rg.length ? rg.join(' e ') : '-' }));
       });
-      box.replaceChildren(...(r.hours.length ? lines : [el('p', { class: 'muted', text: 'Nenhum horário cadastrado: a loja fica aberta o tempo todo.' })]),
+      box.replaceChildren(...(r.hours.length ? lines : [DG.empty('Nenhum horário cadastrado: a loja fica aberta o tempo todo.')]),
         el('button', { class: 'btn block', type: 'button', text: 'Editar horários', on: { click: () => hoursSheet(load) } }));
     };
     load();
@@ -205,7 +205,7 @@
 
   // ---------- Frete (M5) ----------
   function shippingCard() {
-    const box = el('div', { class: 'card stack' }, el('p', { class: 'muted', text: 'Carregando...' }));
+    const box = el('div', { class: 'card stack' }, DG.loading());
     const load = async () => {
       const r = await DG.api('shipping_get').catch(() => null);
       if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar o frete.' })); return; }
@@ -288,7 +288,7 @@
           el('button', { class: 'btn small danger', type: 'button', 'aria-label': 'Apagar ' + x.synonym, text: '×', on: { click: async () => {
             if (!(await DG.confirm('Apagar o sinônimo "' + x.synonym + '"?', 'Apagar', true))) return;
             if (await DG.run(() => DG.api('synonym_delete', { body: { id: x.id } }), 'Apagado.')) load();
-          } } }))) : [el('p', { class: 'muted', text: 'Nenhum sinônimo.' })]),
+          } } }))) : [DG.empty('Nenhum sinônimo cadastrado.')]),
         el('button', { class: 'btn block', type: 'button', text: 'Novo sinônimo', on: { click: () => edit(null) } }));
     };
     const edit = x => {
@@ -310,7 +310,7 @@
 
   // ---------- Segurança ----------
   function securityCard() {
-    const box = el('div', { class: 'card stack' }, el('p', { class: 'muted', text: 'Carregando...' }));
+    const box = el('div', { class: 'card stack' }, DG.loading());
     const load = async () => {
       const r = await DG.api('security_status').catch(() => null);
       if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar.' })); return; }

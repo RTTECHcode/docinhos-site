@@ -61,7 +61,7 @@
       const load = async () => {
         if (from.value && to.value && from.value > to.value) { DG.toast('A data inicial deve ser antes da final.', true); return; }
         st.from = from.value; st.to = to.value; st.f = sel.value; st.s = search.value.trim();
-        list.replaceChildren(el('p', { class: 'muted', text: 'Carregando...' }));
+        list.replaceChildren(DG.loading());
         const query = { page: st.page, page_size: 20 };
         if (st.from) query.from = st.from;
         if (st.to) query.to = st.to;
@@ -70,7 +70,7 @@
         let r;
         try { r = await DG.api('order_history', { query }); } catch (e) { list.replaceChildren(el('p', { class: 'error', text: e.message })); pager.replaceChildren(); return; }
         if (DG.state.tab !== 'history') return;
-        list.replaceChildren(...(r.orders.length ? r.orders.map(card) : [el('p', { class: 'muted', text: 'Nenhum pedido antigo encontrado.' })]));
+        list.replaceChildren(...(r.orders.length ? r.orders.map(card) : [DG.empty('Nenhum pedido antigo encontrado.')]));
         const pages = Math.max(1, r.total_pages || 1);
         const go = n => { st.page = n; load(); window.scrollTo(0, 0); };
         pager.replaceChildren(

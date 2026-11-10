@@ -96,12 +96,12 @@
             el('p', { class: 'muted small', text: (c.kind === 'size' ? 'Tamanho' : 'Adicional') + ' - ' + DG.money(c.price_cents) + (c.kind === 'additional' ? ' - até ' + l.max_quantity : '') + (l.group_id ? ' - ' + ((groups.find(g => g.id === l.group_id) || {}).label || 'grupo') : ''), })),
           DG.switchEl(!l.paused, 'Complemento ' + c.name + ' neste produto', async next => {
             return !!(await DG.run(() => DG.api('link_toggle', { body: { product_id: product.id, complement_id: c.id, paused: !next } }))) && ((l.paused = !next), true);
-          })))) : [el('p', { class: 'muted', text: 'Nenhum complemento vinculado.' })]),
+          })))) : [DG.empty('Nenhum complemento vinculado.')]),
         el('button', { class: 'btn block', type: 'button', text: 'Vincular complemento', on: { click: addLink } }),
         el('h3', { class: 'section-title', text: 'Grupos de escolha' }),
         ...(groups.length ? groups.map(g => el('div', { class: 'card' }, el('div', { class: 'row between' },
           el('button', { class: 'item-btn grow', type: 'button', on: { click: () => editGroup(g) } },
-            el('strong', { class: 'wrap', text: g.label }), el('p', { class: 'muted small', text: 'Escolher de ' + g.min_choices + ' a ' + g.max_choices + ' - chave: ' + g.key }))))) : [el('p', { class: 'muted', text: 'Sem grupos.' })]),
+            el('strong', { class: 'wrap', text: g.label }), el('p', { class: 'muted small', text: 'Escolher de ' + g.min_choices + ' a ' + g.max_choices + ' - chave: ' + g.key }))))) : [DG.empty('Nenhum grupo de escolha.')]),
         el('button', { class: 'btn block', type: 'button', text: 'Novo grupo', on: { click: () => editGroup(null) } }));
     };
     // Repinta mantendo a posição de rolagem do pop-up (B4).
@@ -124,7 +124,7 @@
           const shown = free.filter(c => !term || c.name.toLowerCase().includes(term)).slice(0, 40);
           list.replaceChildren(...(shown.length ? shown.map(c => el('button', { class: 'card item-btn', type: 'button', on: { click: async () => {
             if (await DG.run(() => DG.api('link_save', { body: { product_id: product.id, complement_id: c.id, max_quantity: 1 } }), 'Vinculado.')) { close(); refresh(); }
-          } } }, el('strong', { class: 'wrap', text: c.name }), el('p', { class: 'muted small', text: (c.kind === 'size' ? 'Tamanho' : 'Adicional') + ' - ' + DG.money(c.price_cents) }))) : [el('p', { class: 'muted', text: 'Nada encontrado.' })]));
+          } } }, el('strong', { class: 'wrap', text: c.name }), el('p', { class: 'muted small', text: (c.kind === 'size' ? 'Tamanho' : 'Adicional') + ' - ' + DG.money(c.price_cents) }))) : [DG.empty('Nada encontrado.')]));
         };
         search.addEventListener('input', paintList);
         paintList();

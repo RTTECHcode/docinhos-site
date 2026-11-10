@@ -50,7 +50,7 @@
     const sum = r.summary || {};
     out.replaceChildren(
       el('p', { class: 'muted small', text: 'Reativar "' + r.term + '": confira.' }),
-      r.will_resume.length ? el('div', { class: 'card stack' }, el('strong', { text: 'Voltam a ficar disponíveis (' + r.will_resume.length + ')' }), listNames(r.will_resume)) : el('p', { class: 'muted', text: 'Nada volta agora.' }),
+      r.will_resume.length ? el('div', { class: 'card stack' }, el('strong', { text: 'Voltam a ficar disponíveis (' + r.will_resume.length + ')' }), listNames(r.will_resume)) : DG.empty('Nada volta agora.'),
       r.keep_paused.length ? el('div', { class: 'card stack' }, el('strong', { text: 'Continuam pausados (' + r.keep_paused.length + ')' }), listNames(r.keep_paused, 'keep')) : null,
       sum.already_active ? el('p', { class: 'muted small', text: sum.already_active + ' item(ns) já estava(m) ativo(s).' }) : null,
       el('div', { class: 'grid2' },
@@ -117,7 +117,7 @@
     const load = async () => {
       const r = await DG.api('pause_batches').catch(() => null);
       if (!r) { box.replaceChildren(); return; }
-      if (!r.batches.length) { box.replaceChildren(el('div', { class: 'card' }, el('p', { class: 'muted small', text: 'Nenhuma pausa por ingrediente aberta.' }))); return; }
+      if (!r.batches.length) { box.replaceChildren(DG.empty('Nenhuma pausa por ingrediente aberta.')); return; }
       box.replaceChildren(...r.batches.map(b => {
         const out = el('div', { class: 'stack' });
         return el('div', { class: 'card stack' }, el('div', { class: 'row between' },
@@ -143,7 +143,7 @@
       const command = String(text === undefined ? input.value : text).trim();
       if (!command) { DG.toast('Escreva um comando.', true); return; }
       input.value = command;
-      out.replaceChildren(el('p', { class: 'muted', text: 'Entendendo...' }));
+      out.replaceChildren(DG.loading('Entendendo...'));
       const term = ingredientTerm(command);
       if (term) {
         const p = await DG.api('pause_preview', { body: { term } }).catch(() => null);
@@ -231,7 +231,7 @@
   }
 
   function storeBox(catalog) {
-    const box = el('div', { class: 'card stack' }, el('p', { class: 'muted', text: 'Carregando...' }));
+    const box = el('div', { class: 'card stack' }, DG.loading());
     const load = async () => {
       const r = await DG.api('store_state').catch(() => null);
       if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui ver o estado da loja.' })); return; }
@@ -259,7 +259,7 @@
       const links = catalog.links.filter(l => l.product_id === product.id).map(l => ({ l, c: catalog.complements.find(c => c.id === l.complement_id) })).filter(x => x.c);
       body.append(el('p', { class: 'muted small', text: 'Pause um complemento só neste produto.' }),
         ...(links.length ? links.map(({ l, c }) => toggleRow(c.name, DG.money(c.price_cents), !l.paused, async next =>
-          !!(await DG.run(() => DG.api('link_toggle', { body: { product_id: product.id, complement_id: c.id, paused: !next } }))) && ((l.paused = !next), true))) : [el('p', { class: 'muted', text: 'Sem complementos.' })]));
+          !!(await DG.run(() => DG.api('link_toggle', { body: { product_id: product.id, complement_id: c.id, paused: !next } }))) && ((l.paused = !next), true))) : [DG.empty('Este produto não tem complementos.')]));
     });
   }
 
@@ -281,11 +281,11 @@
             el('button', { class: 'btn small', type: 'button', 'aria-label': (pinned.has(c.id) ? 'Desafixar ' : 'Fixar ') + c.name, 'aria-pressed': String(pinned.has(c.id)), text: pinned.has(c.id) ? '★' : '☆', on: { click: async () => {
               const r = await DG.run(() => DG.api('pin_toggle', { body: { complement_id: c.id, pinned: !pinned.has(c.id) } }));
               if (r) { catalog.pinned = r.pinned; pinned.clear(); r.pinned.forEach(x => pinned.add(x)); paint(); }
-            } } }))) : [el('p', { class: 'muted', text: 'Nenhum complemento.' })]),
+            } } }))) : [DG.empty('Nenhum complemento encontrado.')]),
           el('h2', { class: 'section-title', text: 'Produtos' }),
           ...(prods.length ? prods.map(p => toggleRow(p.name, DG.money(p.price_cents), p.active,
             async next => !!(await DG.run(() => DG.api('product_toggle', { body: { id: p.id, active: next } }))) && ((p.active = next), true),
-            el('button', { class: 'btn small', type: 'button', text: 'Extras', 'aria-label': 'Complementos de ' + p.name, on: { click: () => linksSheet(p, catalog) } }))) : [el('p', { class: 'muted', text: 'Nenhum produto.' })]));
+            el('button', { class: 'btn small', type: 'button', text: 'Extras', 'aria-label': 'Complementos de ' + p.name, on: { click: () => linksSheet(p, catalog) } }))) : [DG.empty('Nenhum produto encontrado.')]));
       };
       // Depois de pausar/desfazer/reativar em lote: recarrega lotes e as listas de baixo sem apagar a prévia ou o botão Desfazer.
       const batches = batchesBox(() => after());
