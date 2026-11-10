@@ -16,11 +16,9 @@ const loyalty = require('./_lib/loyalty');
 const getSql = () => require('./_lib/db'); // carregado sob demanda, como no admin
 
 const MAX_BODY_BYTES = 20 * 1024;
-const REGISTER_MAX_PER_HOUR = 15;   // contas novas (sessões abertas) por IP em 1 h
-const PASSWORD_MAX_FAILS = 5;       // senha atual errada ao trocar a senha: 5 erros = 30 min
+const REGISTER_MAX_PER_HOUR = 15;   // tentativas de cadastro por IP em 1 h (inclusive as que dão 400 e 409)
 const MSG_LOGIN_REQUIRED = 'Entre na sua conta para continuar.';
 const MSG_METHOD = 'Método não permitido.';
-const MSG_LOCKED = customerLib.MSG_LOCKED;
 
 class HttpError extends Error {
   constructor(status, message, code) { super(message); this.status = status; this.code = code || null; }
@@ -85,21 +83,19 @@ function ledgerDescription(row) {
 }
 
 // ---------- Limites extras (além dos de _lib/customer.js) ----------
-// Cadastro: no máximo REGISTER_MAX_PER_HOUR contas novas por IP por hora (cada conta abre uma linha em customer_sessions com o IP).
+// Cadastro: no máximo REGISTER_MAX_PER_HOUR TENTATIVAS por IP por hora. Toda tentativa conta (201, 400, 409...),
+// gravada antes de validar. Pedido já barrado (429) não grava, para a tabela não crescer sob ataque.
 async function checkRegisterLimit(sql, ip) {
-  const [r] = await sql.query(`select count(*)::int as n from customer_sessions where ip = $1 and created_at > now() - interval '1 hour'`, [ip]);
-  if (r.n >= REGISTER_MAX_PER_HOUR) throw new HttpError(429, 'Muitas tentativas. Tente novamente mais tarde.', 'locked');
+  if (await customerLib.registerAttemptsLastHour(sql, ip) >= REGISTER_MAX_PER_HOUR) throw new HttpError(429, 'Muitas tentativas. Tente novamente mais tarde.', 'locked');
+  await customerLib.recordRegisterAttempt(sql, ip);
 }
-// Troca de senha: senha atual errada conta como falha de login (5 erros desde o último acerto = 30 min).
-async function passwordLocked(sql, phone) {
-  const [r] = await sql.query(
-    `select count(*)::int as n from customer_login_attempts
-      where scope = 'login' and phone = $1 and ok = false and at > now() - interval '30 minutes'
-        and at > coalesce((select max(at) from customer_login_attempts where scope = 'login' and phone = $1 and ok = true), '-infinity'::timestamptz)`, [phone]);
-  return r.n >= PASSWORD_MAX_FAILS;
+// Consentimento: quem marca o aceite precisa ter visto o texto atual. Versão diferente = 409 consent_outdated
+// (a tela recarrega o texto e pede para confirmar de novo). Desmarcar nunca é barrado.
+function checkConsentVersion(body) {
+  if (body.whatsapp_consent === true && body.consent_version !== customerLib.CONSENT_VERSION) {
+    throw new HttpError(409, 'O texto do consentimento foi atualizado. Leia o texto novo e marque de novo, se quiser.', 'consent_outdated');
+  }
 }
-const logPasswordAttempt = (sql, phone, ip, ok) =>
-  sql.query(`insert into customer_login_attempts (scope, phone, ip, ok) values ('login', $1, $2, $3)`, [phone, ip || 'unknown', ok]);
 
 async function requireSession(sql, req) {
   const session = await customerLib.getSession(sql, req);
@@ -129,6 +125,7 @@ const A = {
   register: { m: 'POST', async fn({ sql, req, body }) {
     const ctx = ctxOf(req, 'cadastro');
     await checkRegisterLimit(sql, ctx.ip);
+    checkConsentVersion(body);
     // Só campos conhecidos. O consentimento só vale com true booleano explícito (nunca pré-marcado).
     const input = {
       name: body.name, phone: body.phone, email: body.email, password: body.password,
@@ -187,20 +184,22 @@ const A = {
   consent: { m: 'POST', async fn({ sql, req, body }) {
     const { customer } = await requireSession(sql, req);
     if (typeof body.whatsapp_consent !== 'boolean') throw new HttpError(400, 'Consentimento inválido.', 'invalid_consent');
+    checkConsentVersion(body);
     const p = await customerLib.setWhatsappConsent(sql, customer.id, body.whatsapp_consent, ctxOf(req, 'conta'));
     return { body: { ok: true, customer: profileView(p) } };
   } },
 
   password: { m: 'POST', async fn({ sql, req, body }) {
     const { customer, tokenHash } = await requireSession(sql, req);
-    if (await passwordLocked(sql, customer.phone)) throw new HttpError(429, MSG_LOCKED, 'locked');
+    // Contagem própria da troca de senha (separada do login): 5 erros = 30 min, 10 em 24 h = 24 h.
+    await customerLib.assertPasswordNotLocked(sql, customer.phone);
     try {
       await customerLib.changePassword(sql, customer.id, { current_password: str(body.current_password), new_password: body.new_password }, tokenHash);
     } catch (e) {
-      if (e && e.code === 'bad_password') await logPasswordAttempt(sql, customer.phone, auth.clientIp(req), false);
+      if (e && e.code === 'bad_password') await customerLib.recordPasswordAttempt(sql, customer.phone, auth.clientIp(req), false);
       throw e;
     }
-    await logPasswordAttempt(sql, customer.phone, auth.clientIp(req), true);
+    await customerLib.recordPasswordAttempt(sql, customer.phone, auth.clientIp(req), true);
     return { body: { ok: true } };
   } }
 };
@@ -231,7 +230,9 @@ async function handler(req, res) {
   } catch (error) {
     const known = error instanceof HttpError || error instanceof customerLib.CustomerError || error instanceof auth.AuthError || error instanceof loyalty.LoyaltyError;
     if (known) return send(res, error.status, { error: error.message, ...(error.code ? { code: error.code } : {}) });
-    console.error('Erro na conta do cliente:', error && error.message); // sem stack e sem dados pessoais
+    // Só o código do erro (ex.: '23505') ou um rótulo fixo: a mensagem pode trazer SQL, valores ou dados pessoais.
+    const code = error && typeof error.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(error.code) ? error.code : 'sem_codigo';
+    console.error('Erro na conta do cliente:', code);
     return send(res, 500, { error: 'Não foi possível concluir a operação.' });
   }
 }

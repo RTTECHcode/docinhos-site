@@ -35,7 +35,11 @@ function req(method, action, { body, cookie, ip, origin = ORIGIN, type = 'applic
 const get = (action, o) => run(req('GET', action, o));
 const post = (action, body, o = {}) => run(req('POST', action, { ...o, body }));
 const cookieOf = r => { const sc = r.headers['set-cookie']; return sc ? sc.split(';')[0] : null; };
-const reg = (over = {}, o = {}) => post('register', { name: 'ZZ-a10 Cliente', phone: newPhone(), password: PASS, security_question: 'prof_favorito', security_answer: ANS, ...over }, o);
+const reg = (over = {}, o = {}) => post('register', { name: 'ZZ-a10 Cliente', phone: newPhone(), password: PASS, security_question: 'prof_favorito', security_answer: ANS, consent_version: customerLib.CONSENT_VERSION, ...over }, o);
+// Falhas antigas inseridas direto no banco, espaçadas de 2 h (nunca 5 em 30 min): testa a regra de 10 erros em 24 h.
+const oldFails = (scope, phoneE164, n) => Q(
+  `insert into customer_login_attempts (scope, phone, ip, ok, at)
+   select $1, $2, '198.19.249.1', false, now() - interval '1 minute' - (g * interval '2 hours') from generate_series(0, $3::int - 1) g`, [scope, phoneE164, n]);
 
 let passed = 0;
 async function t(name, fn) {
@@ -47,7 +51,7 @@ async function cleanup() {
   await Q(`delete from loyalty_ledger where customer_id in (select id from customers where name like 'ZZ-a10%')`);
   await Q(`delete from orders where customer_name like 'ZZ-a10%'`);
   await Q(`delete from customers where name like 'ZZ-a10%'`); // sessões e eventos de consentimento saem em cascata
-  await Q(`delete from customer_login_attempts where ip like '198.19.%' or phone like '+551190000%'`);
+  await Q(`delete from customer_login_attempts where ip like '198.19.%' or phone like '+551190000%' or phone like '#senha:+551190000%'`);
 }
 
 (async () => {
@@ -135,14 +139,34 @@ async function cleanup() {
     assert.equal(r.status, 409); assert.equal(r.body.code, 'duplicate');
     assert.equal((await Q('select count(*)::int n from customers where phone = $1', ['+55' + A.phone]))[0].n, 1);
   });
-  await t('limite de cadastro por IP: 15 contas/h, a 16ª = 429', async () => {
+  await t('[item 1] duplicado (telefone ou e-mail) = 409 SEM calcular scrypt', async () => {
+    const authLib = require('../api/_lib/auth');
+    const orig = authLib.hashPassword; let calls = 0;
+    authLib.hashPassword = async (...a) => { calls++; return orig(...a); };
+    let r1, r2;
+    try {
+      r1 = await reg({ phone: A.phone });
+      r2 = await reg({ email: 'ZZ-A10-ANA@example.com' });
+    } finally { authLib.hashPassword = orig; }
+    assert.equal(r1.status, 409); assert.equal(r1.body.code, 'duplicate');
+    assert.equal(r2.status, 409); assert.equal(r2.body.code, 'duplicate');
+    assert.equal(calls, 0, 'nenhum hash calculado');
+  });
+  await t('[item 1] limite de cadastro por IP: 15 TENTATIVAS/h (400 e 409 contam); a 16ª = 429; barrada não grava; outro IP livre', async () => {
     const ip = '198.19.250.250';
-    const cId = (await Q('select id from customers where id = $1', [A.id]))[0].id;
-    for (let i = 0; i < 15; i++) await Q(`insert into customer_sessions (token_hash, customer_id, expires_at, ip) values ($1, $2, now() + interval '1 day', $3)`, ['zz-a10-lim-' + i, cId, ip]);
+    for (let i = 0; i < 10; i++) assert.equal((await reg({ phone: '123' }, { ip })).status, 400);
+    for (let i = 0; i < 4; i++) assert.equal((await reg({ phone: A.phone }, { ip })).status, 409);
+    assert.equal((await reg({}, { ip })).status, 201, 'a 15ª tentativa ainda passa');
     const r = await reg({}, { ip });
-    assert.equal(r.status, 429);
-    const r2 = await reg({}, { ip: nextIp() });
-    assert.equal(r2.status, 201, 'outro IP segue livre');
+    assert.equal(r.status, 429); assert.equal(r.body.code, 'locked');
+    assert.equal((await reg({ phone: A.phone }, { ip })).status, 429, 'duplicado também barrado');
+    assert.equal((await Q(`select count(*)::int n from customer_login_attempts where phone = '#cadastro' and ip = $1`, [ip]))[0].n, 15);
+    assert.equal((await reg({}, { ip: nextIp() })).status, 201, 'outro IP segue livre');
+  });
+  await t('[item 1] tentativas de cadastro não contam como erro de login do IP', async () => {
+    const ip = nextIp();
+    for (let i = 0; i < 6; i++) await reg({ phone: '123' }, { ip });
+    assert.equal((await post('login', { phone: A.phone, password: PASS }, { ip })).status, 200);
   });
 
   console.log('\nSessão: me / logout');
@@ -197,6 +221,24 @@ async function cleanup() {
     assert.equal(last.status, 429);
     assert.equal((await post('login', { phone: A.phone, password: PASS }, { ip })).status, 429);
   });
+  await t('[item 2] login: 10 erros em 24 h = bloqueio de 24 h por conta (mensagem genérica, vale em outro IP); 9 erros não bloqueiam', async () => {
+    const p9 = newPhone();
+    assert.equal((await reg({ phone: p9, name: 'ZZ-a10 Long9' })).status, 201);
+    await oldFails('login', '+55' + p9, 9);
+    assert.equal((await post('login', { phone: p9, password: PASS })).status, 200, '9 erros em 24 h: entra');
+    const p10 = newPhone();
+    assert.equal((await reg({ phone: p10, name: 'ZZ-a10 Long10' })).status, 201);
+    await oldFails('login', '+55' + p10, 9);
+    const tenth = await post('login', { phone: p10, password: 'errada-123' });
+    assert.equal(tenth.status, 429); assert.equal(tenth.body.code, 'locked');
+    assert.equal(tenth.body.error, customerLib.MSG_LOCKED_LONG); assert.ok(!/30 minutos|24|hora/.test(tenth.body.error), 'genérica');
+    assert.equal((await post('login', { phone: p10, password: PASS })).status, 429, 'senha certa bloqueada');
+    assert.equal((await post('login', { phone: p10, password: PASS }, { ip: nextIp() })).status, 429, 'outro IP');
+    // telefone inexistente bloqueia do mesmo jeito (não revela existência)
+    const ghost = newPhone(); await oldFails('login', '+55' + ghost, 9);
+    const g = await post('login', { phone: ghost, password: 'errada-123' });
+    assert.deepEqual(g.body, tenth.body);
+  });
 
   console.log('\nRecuperação');
   await t('recover_question: conta real mostra a pergunta cadastrada; conta inexistente recebe pergunta da lista, estável e do mesmo formato', async () => {
@@ -248,6 +290,16 @@ async function cleanup() {
     for (let i = 0; i < 5; i++) g = await post('recover', { phone: ghost, answer: 'errada ' + i, new_password: 'NovaSenha-123' }, { ip: ip2 });
     assert.equal(g.status, 429);
   });
+  await t('[item 2] recuperação: 10 erros em 24 h = bloqueio de 24 h por conta, mesmo com a resposta certa', async () => {
+    const phone = newPhone();
+    assert.equal((await reg({ phone, name: 'ZZ-a10 RecLong' })).status, 201);
+    await oldFails('recover', '+55' + phone, 9);
+    const tenth = await post('recover', { phone, answer: 'errada', new_password: 'NovaSenha-123' });
+    assert.equal(tenth.status, 429); assert.equal(tenth.body.error, customerLib.MSG_LOCKED_LONG);
+    assert.equal((await post('recover', { phone, answer: ANS, new_password: 'NovaSenha-123' }, { ip: nextIp() })).status, 429);
+    assert.equal((await Q('select points_locked_until from customers where phone = $1', ['+55' + phone]))[0].points_locked_until, null);
+    assert.equal((await post('login', { phone, password: PASS })).status, 200, 'login tem contagem própria');
+  });
   await t('recuperação: senha nova curta = 400 sem gastar tentativa de resposta', async () => {
     const r = await post('recover', { phone: A.phone, answer: ANS, new_password: '123' });
     assert.equal(r.status, 400);
@@ -258,15 +310,34 @@ async function cleanup() {
   await t('consent: ligar/desligar grava eventos opt_in/opt_out (origem conta); repetir não grava; valor não booleano = 400', async () => {
     B = { phone: newPhone() }; const r = await reg({ phone: B.phone, name: 'ZZ-a10 Bia' }); bCookie = cookieOf(r);
     B.id = (await Q('select id from customers where phone = $1', ['+55' + B.phone]))[0].id;
-    const on = await post('consent', { whatsapp_consent: true }, { cookie: bCookie });
+    const V = customerLib.CONSENT_VERSION;
+    const on = await post('consent', { whatsapp_consent: true, consent_version: V }, { cookie: bCookie });
     assert.equal(on.status, 200); assert.equal(on.body.customer.whatsapp_consent, true);
-    assert.equal((await post('consent', { whatsapp_consent: true }, { cookie: bCookie })).status, 200);
+    assert.equal((await post('consent', { whatsapp_consent: true, consent_version: V }, { cookie: bCookie })).status, 200);
     const off = await post('consent', { whatsapp_consent: false }, { cookie: bCookie });
     assert.equal(off.body.customer.whatsapp_consent, false); assert.ok(off.body.customer.whatsapp_opt_out_at);
     const ev = await Q('select action, source from customer_consent_events where customer_id = $1 order by id', [B.id]);
     assert.deepEqual(ev.map(e => e.action), ['opt_in', 'opt_out']); assert.ok(ev.every(e => e.source === 'conta'));
     for (const v of ['true', 1, null, undefined]) assert.equal((await post('consent', { whatsapp_consent: v }, { cookie: bCookie })).status, 400);
-    assert.equal((await post('consent', { whatsapp_consent: true }, { cookie: bCookie, origin: 'https://evil.example' })).status, 403);
+    assert.equal((await post('consent', { whatsapp_consent: true, consent_version: V }, { cookie: bCookie, origin: 'https://evil.example' })).status, 403);
+  });
+  await t('[item 5] consent_version: aceite com versão velha/ausente = 409 consent_outdated (cadastro e conta), sem gravar nada; desmarcar nunca é barrado', async () => {
+    for (const v of ['v0-velha', undefined, 123]) {
+      const phone = newPhone();
+      const r = await reg({ phone, whatsapp_consent: true, consent_version: v });
+      assert.equal(r.status, 409, JSON.stringify(r.body)); assert.equal(r.body.code, 'consent_outdated');
+      assert.equal((await Q('select count(*)::int n from customers where phone = $1', ['+55' + phone]))[0].n, 0);
+    }
+    assert.equal((await reg({ whatsapp_consent: false, consent_version: 'v0-velha' })).status, 201, 'sem aceite a versão não importa');
+    const before = (await Q('select count(*)::int n from customer_consent_events where customer_id = $1', [B.id]))[0].n;
+    const old = await post('consent', { whatsapp_consent: true, consent_version: 'v0-velha' }, { cookie: bCookie });
+    assert.equal(old.status, 409); assert.equal(old.body.code, 'consent_outdated');
+    assert.equal((await post('consent', { whatsapp_consent: true }, { cookie: bCookie })).status, 409, 'sem versão');
+    assert.equal((await Q('select whatsapp_consent from customers where id = $1', [B.id]))[0].whatsapp_consent, false);
+    assert.equal((await Q('select count(*)::int n from customer_consent_events where customer_id = $1', [B.id]))[0].n, before);
+    assert.equal((await post('consent', { whatsapp_consent: true, consent_version: customerLib.CONSENT_VERSION }, { cookie: bCookie })).status, 200);
+    const offOld = await post('consent', { whatsapp_consent: false, consent_version: 'v0-velha' }, { cookie: bCookie });
+    assert.equal(offOld.status, 200); assert.equal(offOld.body.customer.whatsapp_consent, false);
   });
   await t('profile: dados próprios, sem hash, sem id interno', async () => {
     const r = await get('profile', { cookie: bCookie });
@@ -291,6 +362,17 @@ async function cleanup() {
     assert.equal(last.status, 400);
     const blocked = await post('password', { current_password: PASS, new_password: 'Outra-Senha-1' }, { cookie: ck });
     assert.equal(blocked.status, 429);
+  });
+  await t('[item 3] password: contagem separada do login (troca bloqueada não trava o login; login bloqueado não trava a troca)', async () => {
+    const p1 = newPhone(); const ck1 = cookieOf(await reg({ phone: p1, name: 'ZZ-a10 Sep1' }));
+    for (let i = 0; i < 5; i++) await post('password', { current_password: 'errada-' + i + 'xx', new_password: 'Outra-Senha-1' }, { cookie: ck1 });
+    assert.equal((await post('password', { current_password: PASS, new_password: 'Outra-Senha-1' }, { cookie: ck1 })).status, 429);
+    assert.equal((await post('login', { phone: p1, password: PASS })).status, 200, 'login livre');
+    assert.equal((await Q(`select count(*)::int n from customer_login_attempts where phone = $1 and ok = false`, ['+55' + p1]))[0].n, 0, 'nada no login');
+    const p2 = newPhone(); const ck2 = cookieOf(await reg({ phone: p2, name: 'ZZ-a10 Sep2' }));
+    for (let i = 0; i < 5; i++) await post('login', { phone: p2, password: 'errada-123' });
+    assert.equal((await post('login', { phone: p2, password: PASS })).status, 429, 'login bloqueado');
+    assert.equal((await post('password', { current_password: PASS, new_password: 'Outra-Senha-2' }, { cookie: ck2 })).status, 200, 'troca livre');
   });
 
   console.log('\nPedidos e pontos (isolamento entre clientes)');
@@ -345,15 +427,20 @@ async function cleanup() {
   });
 
   console.log('\nHigiene de erros e código');
-  await t('erro interno não vaza stack nem SQL (resposta 500 genérica)', async () => {
+  await t('[item 4] erro interno não vaza stack nem SQL (resposta 500 genérica); o log leva só o código', async () => {
     const orig = console.error, origQuery = sql.query;
-    console.error = () => {};
-    sql.query = async () => { throw new Error('select * from customers falhou em /srv/api/_lib/customer.js:99'); }; // simula falha do banco
-    let r;
-    try { r = await run(req('GET', 'me', { cookie: '__Host-dg_cliente=abc' })); }
-    finally { console.error = orig; sql.query = origQuery; }
-    assert.equal(r.status, 500);
+    const logs = [];
+    console.error = (...a) => logs.push(a.map(String).join(' '));
+    let r, r2;
+    try {
+      sql.query = async () => { const e = new Error('select * from customers falhou em /srv/api/_lib/customer.js:99 +5511900001234'); e.code = 'XX000'; throw e; }; // simula falha do banco
+      r = await run(req('GET', 'me', { cookie: '__Host-dg_cliente=abc' }));
+      sql.query = async () => { throw new Error('falha com dado pessoal +5511900001234'); }; // sem código
+      r2 = await run(req('GET', 'me', { cookie: '__Host-dg_cliente=abc' }));
+    } finally { console.error = orig; sql.query = origQuery; }
+    assert.equal(r.status, 500); assert.equal(r2.status, 500);
     assert.deepEqual(r.body, { error: 'Não foi possível concluir a operação.' });
+    assert.deepEqual(logs, ['Erro na conta do cliente: XX000', 'Erro na conta do cliente: sem_codigo']);
   });
   await t('código: sem innerHTML/stack/segredos no handler; só SQL parametrizado', async () => {
     assert.ok(!/innerHTML|err\.stack|error\.stack|process\.env/.test(SQL_FILE));
