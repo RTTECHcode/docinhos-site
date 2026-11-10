@@ -75,9 +75,9 @@ function ledgerDescription(row) {
   const code = row.public_code ? ` ${row.public_code}` : '';
   switch (row.kind) {
     case 'earn': return `Pontos do pedido${code} (pagamento aprovado)`;
-    case 'redeem_reserve': return `Pontos reservados para o pedido${code}`;
+    case 'redeem_reserve': return `Pontos usados no pedido${code}`;
     case 'redeem_release': return `Pontos devolvidos${code ? ` (pedido${code} não foi pago)` : ''}`;
-    case 'redeem_commit': return `Desconto aplicado no pedido${code}`;
+    case 'redeem_commit': return `Desconto confirmado no pedido${code} (pagamento aprovado)`;
     case 'reversal': return `Pontos estornados do pedido${code}`;
     case 'adjust': return row.note ? `Ajuste da loja: ${String(row.note).slice(0, 120)}` : 'Ajuste da loja';
     default: return 'Movimentação de pontos';
