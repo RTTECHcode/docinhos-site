@@ -133,7 +133,7 @@ const legacyPasswordKey = phone => '#senha:' + phone;
 // legacyKey: chave antiga (scope 'login') que também conta para esta contagem, ou null.
 async function lockMessage(sql, scope, phone, ip, legacyKey = null) {
   const [byPhone, byIp, now] = await Promise.all([
-    sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts a
+    sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
                 where ((scope = $1 and phone = $2) or (scope = 'login' and phone = $3::text)) and ok = false and at > now() - interval '48 hours'
                   and at > coalesce((select max(at) from customer_login_attempts
                                        where ((scope = $1 and phone = $2) or (scope = 'login' and phone = $3::text)) and ok = true), '-infinity'::timestamptz)
