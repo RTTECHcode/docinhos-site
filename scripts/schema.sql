@@ -124,6 +124,15 @@ create table if not exists admin_recovery_codes (
      created_at timestamptz not null default now()
    );
 create index if not exists admin_recovery_codes_user_idx on admin_recovery_codes(user_id);
+create table if not exists admin_recovery_attempts (
+     id bigserial primary key,
+     username text not null,
+     ip text,
+     ok boolean not null default false,
+     at timestamptz not null default now()
+   );
+create index if not exists admin_recovery_attempts_user_idx on admin_recovery_attempts(username, at);
+create index if not exists admin_recovery_attempts_ip_idx on admin_recovery_attempts(ip, at);
 create table if not exists customers (
      id serial primary key,
      name text not null,
