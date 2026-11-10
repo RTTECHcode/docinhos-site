@@ -8,3 +8,5 @@ node_modules/
 .claude/
 .agents/
 skills-lock.json
+.env.*
+!.env.example
