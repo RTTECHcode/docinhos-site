@@ -26,6 +26,7 @@ const DEFAULT_BANDS = [
   { max_km: 10, fee_cents: 1400 }
 ];
 const MAX_FEE_CENTS = 100000; // R$ 1.000,00
+const MAX_NEW_LOOKUPS_PER_MINUTE = 40; // endereços novos geocodificados por minuto, somando todos os IPs (/api/store e /api/order)
 
 class ShippingError extends Error {
   constructor(status, message, code) { super(message); this.status = status; this.code = code || null; }
@@ -197,6 +198,12 @@ async function routeKm(sql, origin, dest) {
   }
 }
 
+// Teto global de consultas externas novas (cada endereço novo vira uma linha em geocode_cache).
+async function tooManyNewLookups(sql) {
+  const [{ n }] = await sql.query(`select count(*)::int n from geocode_cache where created_at > now() - interval '1 minute'`);
+  return n >= MAX_NEW_LOOKUPS_PER_MINUTE;
+}
+
 /**
  * Cotação de entrega. input: { cep, address, number? }. Lança ShippingError (status 400/422/503).
  * Retorna { km, fee_cents, band: { max_km, fee_cents }, source: 'osrm'|'straight_line', max_km }.
@@ -245,5 +252,5 @@ async function quoteDelivery(sql, input) {
 module.exports = {
   USER_AGENT, DEFAULT_BANDS, DEFAULT_ORIGIN_ADDRESS, STRAIGHT_LINE_FACTOR, ShippingError, setFetch,
   normalizeCep, extractNumber, validateBands, getBands, saveBands, bandForKm, maxKmOf, haversineKm,
-  getOrigin, setOrigin, routeKm, geocode, fetchViaCep, quoteDelivery
+  getOrigin, setOrigin, routeKm, geocode, fetchViaCep, quoteDelivery, MAX_NEW_LOOKUPS_PER_MINUTE, tooManyNewLookups
 };

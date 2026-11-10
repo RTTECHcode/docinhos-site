@@ -13,7 +13,7 @@ const COOKIE_NAME = '__Host-dg_cliente';
 const SESSION_TTL_S = 30 * 24 * 3600;
 const LOGIN_MAX_FAILS = 5;
 const LOCK_MS = 30 * 60 * 1000;
-const LONG_MAX_FAILS = 10;               // 10 erros em 24 h (por conta) = bloqueio de 24 h
+const LONG_MAX_FAILS = 10;               // 10 erros em 24 h (por telefone+IP; troca de senha: por conta) = bloqueio de 24 h
 const LONG_LOCK_MS = 24 * 3600 * 1000;
 const RECOVERY_POINTS_LOCK = '48 hours';
 
@@ -119,7 +119,7 @@ async function logoutFromRequest(sql, req) {
 }
 
 // ---------- Bloqueio por tentativas ----------
-// Login e recuperação: 5 erros = 30 min (por conta e por IP) e 10 erros em 24 h = 24 h (por conta). Acerto zera a contagem.
+// Login e recuperação: 5 erros = 30 min e 10 erros em 24 h = 24 h, por par telefone+IP (detalhes em lockMessage). Acerto zera a contagem do par.
 // Scopes (migração scripts/migrate-2026-11-10-scopes.js): 'login', 'recover', 'register' (cadastro, por IP; phone = '')
 // e 'password' (senha atual errada na troca de senha, phone = telefone da conta; contagem separada do login).
 // LEGADO: antes da migração, cadastro e troca de senha iam para scope 'login' com chaves falsas na coluna phone
@@ -129,25 +129,46 @@ async function logoutFromRequest(sql, req) {
 const LEGACY_REGISTER_KEY = '#cadastro';
 const legacyPasswordKey = phone => '#senha:' + phone;
 
-// Retorna null (livre) ou a mensagem de bloqueio (genérica). ip === null: sem limite por IP.
+// Login e recuperação (A2, mesmo modelo do admin): as regras de decisoes.md (5 erros em 30 min = 30 min; 10 erros em 24 h = 24 h)
+// valem para o PAR telefone+IP, contando desde o último acerto do par. Assim, quem erra de propósito o telefone de outra
+// pessoa não trava essa pessoa nos aparelhos/redes dela. Proteções extras:
+// - por IP: 5 erros em 30 min (somando telefones) travam o IP;
+// - ataque espalhado: SPREAD_MAX_FAILS erros no telefone em 1 h (somando todos os IPs) barram os IPs que nunca
+//   entraram (login ou recuperação certos) nessa conta. IPs onde o cliente já entrou seguem só a regra do par.
+// Troca de senha (ip === null): continua por conta (já exige sessão), com a chave legada.
+const SPREAD_MAX_FAILS = 10;
+
+// Retorna null (livre) ou a mensagem de bloqueio (genérica). ip === null: contagem só por telefone, sem limite por IP.
 // legacyKey: chave antiga (scope 'login') que também conta para esta contagem, ou null.
 async function lockMessage(sql, scope, phone, ip, legacyKey = null) {
-  const [byPhone, byIp, now] = await Promise.all([
-    sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
-                where ((scope = $1 and phone = $2) or (scope = 'login' and phone = $3::text)) and ok = false and at > now() - interval '48 hours'
-                  and at > coalesce((select max(at) from customer_login_attempts
-                                       where ((scope = $1 and phone = $2) or (scope = 'login' and phone = $3::text)) and ok = true), '-infinity'::timestamptz)
-                order by at desc limit ${LONG_MAX_FAILS}`, [scope, phone, legacyKey]),
-    ip === null ? [] : sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
+  const pair = ip !== null;
+  const ipKey = ip || 'unknown';
+  const [byKey, byIp, spread, now] = await Promise.all([
+    pair
+      ? sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
+                    where scope = $1 and phone = $2 and ip = $3 and ok = false and at > now() - interval '48 hours'
+                      and at > coalesce((select max(at) from customer_login_attempts
+                                           where scope = $1 and phone = $2 and ip = $3 and ok = true), '-infinity'::timestamptz)
+                    order by at desc limit ${LONG_MAX_FAILS}`, [scope, phone, ipKey])
+      : sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
+                    where ((scope = $1 and phone = $2) or (scope = 'login' and phone = $3::text)) and ok = false and at > now() - interval '48 hours'
+                      and at > coalesce((select max(at) from customer_login_attempts
+                                           where ((scope = $1 and phone = $2) or (scope = 'login' and phone = $3::text)) and ok = true), '-infinity'::timestamptz)
+                    order by at desc limit ${LONG_MAX_FAILS}`, [scope, phone, legacyKey]),
+    pair ? sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
                 where scope = $1 and ip = $2 and phone like '+%' and ok = false and at > now() - interval '30 minutes'
-                order by at desc limit 10`, [scope, ip || 'unknown']),
+                order by at desc limit 10`, [scope, ipKey]) : [],
+    pair ? sql.query(`select count(*) filter (where scope = $1 and ok = false and at > now() - interval '1 hour')::int as fails,
+                             coalesce(bool_or(ok and ip = $3 and scope in ('login', 'recover')), false) as known
+                        from customer_login_attempts where phone = $2 and scope in ('login', 'recover')`, [scope, phone, ipKey]) : [],
     sql.query(`select (extract(epoch from now()) * 1000)::float8 as ms`)
   ]);
   const nowMs = Number(now[0].ms);
   const f = rows => rows.map(r => Number(r.ms));
-  if (auth.evaluateAttemptLock({ failsMs: f(byPhone), nowMs, max: LONG_MAX_FAILS, lockMs: LONG_LOCK_MS }).locked) return MSG_LOCKED_LONG;
-  if (auth.evaluateAttemptLock({ failsMs: f(byPhone), nowMs, max: LOGIN_MAX_FAILS, lockMs: LOCK_MS }).locked
+  if (auth.evaluateAttemptLock({ failsMs: f(byKey), nowMs, max: LONG_MAX_FAILS, lockMs: LONG_LOCK_MS }).locked) return MSG_LOCKED_LONG;
+  if (auth.evaluateAttemptLock({ failsMs: f(byKey), nowMs, max: LOGIN_MAX_FAILS, lockMs: LOCK_MS }).locked
     || auth.evaluateAttemptLock({ failsMs: f(byIp), nowMs, max: LOGIN_MAX_FAILS, lockMs: LOCK_MS }).locked) return MSG_LOCKED;
+  if (pair && !spread[0].known && spread[0].fails >= SPREAD_MAX_FAILS) return MSG_LOCKED_LONG;
   return null;
 }
 async function assertNotLocked(sql, scope, phone, ip, legacyKey = null) {
@@ -363,7 +384,7 @@ async function getPoints(sql, customerId, { limit = 30 } = {}) {
 }
 
 module.exports = {
-  COOKIE_NAME, SESSION_TTL_S, CONSENT_VERSION, CONSENT_TEXT, CustomerError, MSG_LOCKED, MSG_LOCKED_LONG,
+  COOKIE_NAME, SESSION_TTL_S, CONSENT_VERSION, CONSENT_TEXT, CustomerError, MSG_LOCKED, MSG_LOCKED_LONG, SPREAD_MAX_FAILS,
   registerAttemptsLastHour, recordRegisterAttempt, assertPasswordNotLocked, recordPasswordAttempt,
   SECURITY_QUESTIONS: auth.SECURITY_QUESTIONS,
   normalizePhone, customerView, sessionCookie, clearSessionCookie,

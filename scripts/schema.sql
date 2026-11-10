@@ -207,6 +207,13 @@ create index if not exists orders_customer_idx on orders(customer_id, created_at
 -- 2026-11-10 (scripts/migrate-2026-11-10-scopes.js): IP do pedido, para o limite por IP (A1-05)
 alter table orders add column if not exists client_ip text;
 create index if not exists orders_client_ip_idx on orders (client_ip, created_at) where client_ip is not null;
+-- 2026-11-10 (scripts/migrate-2026-11-10-order-attempts.js): toda tentativa de pedido (aceita ou recusada), para o limite por IP
+create table if not exists order_attempts (
+     id bigserial primary key,
+     ip text not null,
+     at timestamptz not null default now()
+   );
+create index if not exists order_attempts_ip_idx on order_attempts (ip, at);
 create table if not exists loyalty_ledger (
      id bigserial primary key,
      customer_id integer not null references customers(id) on delete cascade,

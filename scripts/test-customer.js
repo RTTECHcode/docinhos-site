@@ -86,7 +86,7 @@ async function cleanup() {
     assert.equal(await customer.getSession(sql, cookieReq(l.token)), null);
     assert.match(customer.sessionCookie('abc'), /^__Host-dg_cliente=abc; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=2592000$/);
   });
-  await t('senha errada e telefone inexistente: mesma mensagem 401; 5 erros bloqueiam 30 min (telefone e IP); dados certos também barram', async () => {
+  await t('senha errada e telefone inexistente: mesma mensagem 401; 5 erros bloqueiam 30 min (par telefone+IP e IP); dados certos também barram no par; outro IP entra', async () => {
     const ip = nextIp();
     const wrong = await rejects(customer.login(sql, { phone: acc.input.phone, password: 'errada-123' }, { ip }), 401, 'bad_login');
     const none = await rejects(customer.login(sql, { phone: phoneOf(), password: 'errada-123' }, { ip: nextIp() }), 401, 'bad_login');
@@ -95,7 +95,9 @@ async function cleanup() {
     const fifth = await rejects(customer.login(sql, { phone: acc.input.phone, password: 'errada-123' }, { ip }), 429, 'locked');
     assert.match(fifth.message, /30 minutos/);
     await rejects(customer.login(sql, { phone: acc.input.phone, password: acc.input.password }, { ip }), 429, 'locked');
-    await rejects(customer.login(sql, { phone: acc.input.phone, password: acc.input.password }, { ip: nextIp() }), 429, 'locked'); // outro IP, mesmo telefone
+    const elsewhere = await customer.login(sql, { phone: acc.input.phone, password: acc.input.password }, { ip: nextIp() }); // A2: outro IP = outro par
+    assert.equal(elsewhere.customer.id, acc.customer.id, 'mesmo telefone em outro IP entra');
+    await rejects(customer.login(sql, { phone: acc.input.phone, password: acc.input.password }, { ip }), 429, 'locked'); // o par travado continua
     const other = await customer.createAccount(sql, base(), { ip: nextIp() });
     await rejects(customer.login(sql, { phone: other.customer.phone.slice(3), password: 'SenhaBoa-123' }, { ip }), 429, 'locked'); // mesmo IP, outro telefone
     await Q(`update customer_login_attempts set at = now() - interval '31 minutes' where phone = $1 or ip = $2`, ['+55' + acc.input.phone, ip]);

@@ -21,6 +21,9 @@ const MAX_ITEMS = 30;
 const MAX_ITEM_QTY = 20;
 const MAX_ORDERS_PER_PHONE = 5; // por janela de 10 minutos
 const MAX_ORDERS_PER_IP = 10;   // por janela de 10 minutos (A1-05: trocar o telefone não burla o limite)
+const MAX_ATTEMPTS_PER_IP = 20; // tentativas (aceitas OU recusadas: 400, 409, 422, 429, 503...) por IP em 10 minutos
+const MSG_TOO_MANY = 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.';
+const MSG_SHIPPING_BUSY = 'Muitas consultas de frete agora. Tente de novo em instantes.';
 const MAX_INT4 = 2147483647;
 
 // Decisões de pagamento:
@@ -330,6 +333,25 @@ function newCode() {
 const MAX_CODE_TRIES = 10;
 const send = (res, status, payload) => res.status(status).json(payload);
 
+// Registra esta tentativa e diz se o IP passou do limite (a tentativa atual entra na conta). Tabela order_attempts
+// (scripts/migrate-2026-11-10-order-attempts.js). De vez em quando apaga linhas com mais de 1 dia.
+async function attemptsExceeded(sql, ip) {
+  const [{ n }] = await sql.query(
+    `with ins as (insert into order_attempts (ip) values ($1) returning 1)
+     select (select count(*) from order_attempts where ip = $1 and at > now() - interval '10 minutes')::int + (select count(*) from ins)::int as n`,
+    [ip]);
+  if (Math.random() < 0.02) await sql.query(`delete from order_attempts where at < now() - interval '1 day'`);
+  return n > MAX_ATTEMPTS_PER_IP;
+}
+// Pedidos criados nos últimos 10 min por este telefone e por este IP.
+async function recentOrders(sql, phone, ip) {
+  const [r] = await sql.query(
+    `select count(*) filter (where regexp_replace(customer_phone, '\\D', '', 'g') = $1)::int n, count(*) filter (where client_ip = $2)::int by_ip
+       from orders where created_at > now() - interval '10 minutes'`, [phone, ip]);
+  return r;
+}
+const overOrderLimit = r => r.n >= MAX_ORDERS_PER_PHONE || r.by_ip >= MAX_ORDERS_PER_IP;
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
@@ -339,6 +361,10 @@ module.exports = async (req, res) => {
   if (!auth.isJsonType(req)) return res.status(415).json({ error: 'Envie os dados como JSON.', code: 'unsupported_type' });
   try {
     const sql = require('./_lib/db'); // carregado aqui para testar a função pura sem DATABASE_URL
+    // Limite por IP antes de qualquer trabalho caro (frete, catálogo). Toda tentativa conta, até as recusadas.
+    // 403/415 acima não contam: um site de terceiros não consegue gastar a cota do IP de quem o visita.
+    const ip = auth.clientIp(req);
+    if (await attemptsExceeded(sql, ip)) return send(res, 429, { error: MSG_TOO_MANY, code: 'rate_limited' });
     let b = req.body;
     if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
     if (!b || typeof b !== 'object' || Array.isArray(b)) fail('Dados inválidos.');
@@ -358,6 +384,10 @@ module.exports = async (req, res) => {
     for (const r of settingRows) st[r.key] = r.value;
 
     const customer = validateCustomer(b, st.store_address || STORE_ADDRESS);
+    // Limite de pedidos por telefone e por IP também ANTES do frete (o insert confere de novo, de forma atômica).
+    if (overOrderLimit(await recentOrders(sql, customer.phone, ip))) return send(res, 429, { error: MSG_TOO_MANY, code: 'rate_limited' });
+    // Mesmo teto global de consultas novas de endereço do /api/store (protege ViaCEP/Nominatim/OSRM), antes do catálogo e do frete.
+    if (customer.method === 'delivery' && await shipping.tooManyNewLookups(sql)) return send(res, 429, { error: MSG_SHIPPING_BUSY, code: 'shipping_busy' });
     const choice = PAYMENT_CHOICES.includes(b.payment_choice) ? b.payment_choice : 'card';
     if (!Array.isArray(b.items) || b.items.length === 0) fail('O carrinho está vazio.');
     if (b.items.length > MAX_ITEMS) fail(`O pedido pode ter no máximo ${MAX_ITEMS} itens.`);
@@ -395,7 +425,6 @@ module.exports = async (req, res) => {
 
     // Limite de abuso: o insert só acontece se o telefone tiver < 5 pedidos e o IP < 10 pedidos nos últimos 10 min, e se o
     // DG-#### não existir entre os pedidos dos últimos 90 dias (checagem e inserção na mesma instrução, para reduzir corridas).
-    const ip = auth.clientIp(req);
     const tracking = ordersLib.newTrackingToken();
     let order = null;
     for (let attempt = 0; attempt < MAX_CODE_TRIES && !order; attempt++) {
@@ -416,10 +445,7 @@ module.exports = async (req, res) => {
           ip, MAX_ORDERS_PER_IP]
       );
       if (rows.length) { order = rows[0]; break; }
-      const [{ n, by_ip }] = await sql.query(
-        `select count(*) filter (where regexp_replace(customer_phone, '\\D', '', 'g') = $1)::int n, count(*) filter (where client_ip = $2)::int by_ip
-           from orders where created_at > now() - interval '10 minutes'`, [customer.phone, ip]);
-      if (n >= MAX_ORDERS_PER_PHONE || by_ip >= MAX_ORDERS_PER_IP) return res.status(429).json({ error: 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.' });
+      if (overOrderLimit(await recentOrders(sql, customer.phone, ip))) return send(res, 429, { error: MSG_TOO_MANY, code: 'rate_limited' });
       // senão foi colisão do DG-####: sorteia outro
     }
     if (!order) throw new Error('não foi possível gerar um código de pedido único');
@@ -482,4 +508,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };
+module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };

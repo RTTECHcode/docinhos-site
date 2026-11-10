@@ -8,7 +8,6 @@ const shipping = require('./_lib/shipping');
 
 const QUOTE_WINDOW_MS = 10 * 60 * 1000;
 const QUOTE_MAX_PER_IP = 30;      // por IP em 10 min (por instância)
-const QUOTE_MAX_NEW_LOOKUPS = 40; // consultas externas novas por minuto, somando todos os IPs (cache em banco)
 const hits = new Map();
 
 function throttled(ip, now = Date.now()) {
@@ -37,8 +36,7 @@ module.exports = async (req, res) => {
     }
     if (action === 'quote') {
       if (throttled(clientIp(req))) return res.status(429).json({ error: 'Muitas consultas de frete. Aguarde alguns minutos.' });
-      const [{ n }] = await sql.query(`select count(*)::int n from geocode_cache where created_at > now() - interval '1 minute'`);
-      if (n >= QUOTE_MAX_NEW_LOOKUPS) return res.status(429).json({ error: 'Muitas consultas de frete agora. Tente de novo em instantes.' });
+      if (await shipping.tooManyNewLookups(sql)) return res.status(429).json({ error: 'Muitas consultas de frete agora. Tente de novo em instantes.' });
       const q = await shipping.quoteDelivery(sql, { cep: query.cep, address: query.address, number: query.number });
       return res.status(200).json({ km: q.km, fee_cents: q.fee_cents, faixa: q.band, max_km: q.max_km });
     }
