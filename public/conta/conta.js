@@ -111,6 +111,17 @@
     }
     return questionsLoaded;
   }
+  // O servidor recusou o aceite (409 consent_outdated): o texto mudou. Busca o texto novo e mostra nas duas telas.
+  // Não mexe na lista de perguntas (a escolha da pessoa no cadastro fica como está).
+  async function reloadConsent() {
+    try {
+      const d = await api('questions');
+      consentInfo = d.consent;
+      $('#cad-consent-text').textContent = d.consent.text;
+      $('#dados-consent-text').textContent = d.consent.text;
+    } catch { /* o aviso de erro já está na tela */ }
+  }
+  const consentVersion = () => (consentInfo ? consentInfo.version : '');
   function fillBirthSelects() {
     const day = $('select[name="birth_day"]'), month = $('select[name="birth_month"]');
     if (day.options.length > 1) return;
@@ -197,7 +208,8 @@
       name: v.name.trim(), phone: phoneDigits(v.phone), password: v.password,
       security_question: v.security_question, security_answer: v.security_answer,
       // Só vale marcado de propósito: a caixa nasce desmarcada e o servidor exige true booleano.
-      whatsapp_consent: $('#cad-consent').checked === true
+      whatsapp_consent: $('#cad-consent').checked === true,
+      consent_version: consentVersion() // o servidor confere se é o texto atual
     };
     if (v.email && v.email.trim()) body.email = v.email.trim();
     if (v.birth_day && v.birth_month) { body.birth_day = Number(v.birth_day); body.birth_month = Number(v.birth_month); }
@@ -208,7 +220,10 @@
       await refreshMe();
       flash = 'Conta criada! Bem-vinda(o) à Docinhos da Gigi.';
       go('pedidos');
-    } catch (e) { setError(f, e.message); }
+    } catch (e) {
+      if (e.code === 'consent_outdated') { await reloadConsent(); $('#cad-consent').checked = false; }
+      setError(f, e.message);
+    }
     finally { busy(f, false); }
   });
 
@@ -330,11 +345,14 @@
     const msg = $('#dados-consent-msg'), err = $('#dados-consent-erro');
     msg.hidden = true; err.hidden = true; box.disabled = true;
     try {
-      const d = await api('consent', { method: 'POST', body: { whatsapp_consent: want } });
+      const d = await api('consent', { method: 'POST', body: { whatsapp_consent: want, consent_version: consentVersion() } });
       box.checked = !!d.customer.whatsapp_consent;
       msg.textContent = d.customer.whatsapp_consent ? 'Pronto! Você vai poder receber novidades pelo WhatsApp. Para sair, desmarque aqui ou responda SAIR.' : 'Pronto! Você não vai receber promoções pelo WhatsApp.';
       msg.hidden = false;
-    } catch (e) { box.checked = !want; err.textContent = e.message; err.hidden = false; }
+    } catch (e) {
+      if (e.code === 'consent_outdated') await reloadConsent();
+      box.checked = !want; err.textContent = e.message; err.hidden = false;
+    }
     finally { box.disabled = false; }
   });
   $('#form-senha').addEventListener('submit', async ev => {
