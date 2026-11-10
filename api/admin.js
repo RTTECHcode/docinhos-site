@@ -11,6 +11,10 @@
  * (normalização, verbos, casamento aproximado por tokens/prefixo/Levenshtein). Custo zero de tokens.
  */
 const crypto = require('node:crypto');
+const ordersLib = require('./_lib/orders');
+const storeHours = require('./_lib/store-hours');
+const shipping = require('./_lib/shipping');
+const loyalty = require('./_lib/loyalty');
 
 const SESSION_COOKIE = '__Host-dg_admin';
 const SESSION_TTL_MS = 12 * 3600 * 1000;
@@ -19,12 +23,15 @@ const MAX_INT4 = 2147483647;
 const MAX_CENTS = 1000000; // R$ 10.000,00
 const MAX_IMAGE_BYTES = 2000000;
 const MAX_IMAGE_B64 = 2800000;
-const FULFILLMENT = ['new', 'preparing', 'ready', 'delivered', 'cancelled'];
+// Status de preparo (O6): regras e rótulos em api/_lib/orders.js. 'delivered' (painel antigo) vale como 'completed'.
+const FILTER_STATUSES = [...ordersLib.STATUSES, 'delivered'];
+const HISTORY_PAGE_MAX = 100;
 const DEFAULT_SETTINGS = {
   store_address: 'Manoel Hare Peralta, 101',
   delivery_fee_cents: '0',
   store_paused: '0',
-  store_paused_message: 'Estamos com os pedidos pausados no momento. Volte em instantes!'
+  store_paused_message: 'Estamos com os pedidos pausados no momento. Volte em instantes!',
+  default_pause_label: 'volto logo <3'
 };
 
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
@@ -392,7 +399,7 @@ async function authenticate(req) {
   if (!token || token.length > 100) return null;
   const tokenHash = sha256(token);
   const rows = await q(
-    `select u.id, u.username, u.role, u.weak_password
+    `select u.id, u.username, u.role, u.weak_password, (u.security_answer_hash is null) as needs_security
        from admin_sessions s join admin_users u on u.id = s.user_id
       where s.token_hash = $1 and s.expires_at > now() and s.created_at > now() - interval '7 days' and u.active`, [tokenHash]);
   if (!rows[0]) return null;
@@ -400,7 +407,7 @@ async function authenticate(req) {
   await q(`update admin_sessions set expires_at = now() + make_interval(secs => $2::int)
             where token_hash = $1 and expires_at < now() + make_interval(secs => $3::int)`, [tokenHash, SESSION_TTL_S, SESSION_TTL_S - 1800]);
   const u = rows[0];
-  return { id: u.id, username: u.username, role: u.role, weak: u.weak_password, token, tokenHash, ip: clientIp(req) };
+  return { id: u.id, username: u.username, role: u.role, weak: u.weak_password, needsSecurity: !!u.needs_security, token, tokenHash, ip: clientIp(req) };
 }
 
 async function doLogin(req, res, body) {
@@ -411,7 +418,7 @@ async function doLogin(req, res, body) {
   const dummy = await dummyHash();
   if ((await lockStatus(username, ip)).locked) return send(res, 429, { error: MSG_LOCKED });
 
-  const user = (await q('select id, username, password_hash, role, weak_password, active from admin_users where username = $1', [username]))[0];
+  const user = (await q('select id, username, password_hash, role, weak_password, active, security_answer_hash from admin_users where username = $1', [username]))[0];
   const usable = !!(user && user.active);
   // scrypt roda sempre (mesmo sem usuário) para não vazar existência pelo tempo de resposta.
   const matches = await verifyPassword(password, usable ? user.password_hash : dummy);
@@ -429,7 +436,7 @@ async function doLogin(req, res, body) {
   await q(`delete from admin_sessions where expires_at < now()`);
   await q(`delete from login_attempts where at < now() - interval '7 days'`);
   res.setHeader('Set-Cookie', sessionCookie(token));
-  return send(res, 200, { ok: true, user: { username: user.username, role: user.role, weakPassword: user.weak_password } });
+  return send(res, 200, { ok: true, user: { username: user.username, role: user.role, weakPassword: user.weak_password, needsSecurity: !user.security_answer_hash } });
 }
 
 // ---------- Helpers de banco ----------
@@ -450,7 +457,7 @@ async function getSettings() {
   return out;
 }
 const publicSettings = s => ({ storeAddress: s.store_address, deliveryFeeCents: Number(s.delivery_fee_cents) || 0,
-  storePaused: s.store_paused === '1', storePausedMessage: s.store_paused_message });
+  storePaused: s.store_paused === '1', storePausedMessage: s.store_paused_message, defaultPauseLabel: s.default_pause_label });
 const setSetting = (key, value) => q('insert into settings (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value', [key, String(value)]);
 async function getPinned() {
   const r = await q(`select value from settings where key = 'pinned_complements'`);
@@ -487,12 +494,12 @@ async function saveEntity({ table, spec, required, body, label, extra }) {
 // ---------- Ações: catálogo ----------
 const A = {}; // nome -> { m: 'GET'|'POST', role?: 'admin', fn(ctx) }
 
-A.me = { m: 'GET', fn: async ({ user }) => ({ user: { username: user.username, role: user.role, weakPassword: user.weak } }) };
+A.me = { m: 'GET', fn: async ({ user }) => ({ user: { username: user.username, role: user.role, weakPassword: user.weak, needsSecurity: user.needsSecurity } }) };
 
 A.catalog = { m: 'GET', fn: async () => {
   const [categories, products, complements, links, groups, pinned, settings] = await Promise.all([
     q('select id, name, sort_order, active from categories order by sort_order, id'),
-    q('select id, category_id, name, description, price_cents, image_path, active, sort_order from products order by sort_order, name'),
+    q('select id, category_id, name, description, price_cents, image_path, active, sort_order, paused, pause_label from products order by sort_order, name'),
     q(`select c.id, c.name, c.price_cents, c.kind, c.active,
               (select count(*) from product_complements pc where pc.complement_id = c.id)::int as uses
          from complements c order by uses desc, c.name`),
@@ -500,7 +507,7 @@ A.catalog = { m: 'GET', fn: async () => {
     q('select id, product_id, key, label, min_choices, max_choices, sort_order from product_groups order by product_id, sort_order, id'),
     getPinned(), getSettings()
   ]);
-  return { categories, products, complements, links, groups, pinned, settings: publicSettings(settings) };
+  return { categories, products, complements, links, groups, pinned, settings: publicSettings(settings), storeState: await storeHours.getStoreState(getSql()) };
 } };
 
 A.category_save = { m: 'POST', fn: async ({ body, user }) => {
@@ -705,26 +712,73 @@ A.command_apply = { m: 'POST', fn: async ({ body, user }) => {
 } };
 
 // ---------- Ações: pedidos ----------
+// 'completed' também inclui o valor antigo 'delivered'.
+const statusGroup = f => (f === 'completed' || f === 'delivered' ? ['completed', 'delivered'] : [f]);
+
+// Lista do painel: só pedidos com menos de 24 h (todos os status). Os mais antigos ficam no histórico (order_history).
 A.orders = { m: 'GET', fn: async ({ query }) => {
   const f = String(query.get('f') || '');
-  const fulfillment = FULFILLMENT.includes(f) ? f : '';
+  const status = FILTER_STATUSES.includes(f) ? statusGroup(f) : null;
   const search = String(query.get('s') || '').trim().toLowerCase().slice(0, 60);
+  await ordersLib.sweepOrders(getSql()); // pronto há mais de 1 h vira concluído (sem cron)
   const rows = await q(
-    `select id, code, customer_name, customer_phone, delivery_method, address, items, subtotal_cents, delivery_fee_cents,
-            total_cents, payment_method, payment_status, fulfillment_status, notes, created_at
-       from orders
-      where ($1::text = '' or fulfillment_status = $1)
+    `select ${ordersLib.ADMIN_COLUMNS} from orders
+      where created_at > now() - interval '24 hours'
+        and ($1::text[] is null or fulfillment_status = any($1::text[]))
         and ($2::boolean = false or payment_status = 'approved')
-        and ($3::text = '' or strpos(lower(code), $3) > 0 or strpos(lower(customer_name), $3) > 0)
-      order by created_at desc limit 100`, [fulfillment, f === 'paid', search]);
-  return { orders: rows };
+        and ($3::text = '' or strpos(lower(code), $3) > 0 or strpos(lower(coalesce(public_code, '')), $3) > 0 or strpos(lower(customer_name), $3) > 0)
+      order by created_at desc limit 200`, [status, f === 'paid', search]);
+  return { orders: rows.map(ordersLib.adminView), window_hours: 24 };
 } };
 
+const vDate = (v, label) => {
+  if (v === '' || v === null || v === undefined) return null;
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v + 'T00:00:00Z'))) bad(`${label}: use o formato AAAA-MM-DD.`);
+  return v;
+};
+// Histórico: pedidos com mais de 24 h. Filtros: from/to (datas no horário de São Paulo), f (status), s (busca), page, page_size.
+A.order_history = { m: 'GET', fn: async ({ query }) => {
+  const from = vDate(query.get('from'), 'Data inicial'), to = vDate(query.get('to'), 'Data final');
+  const f = String(query.get('f') || '');
+  const status = FILTER_STATUSES.includes(f) ? statusGroup(f) : null;
+  const search = String(query.get('s') || '').trim().toLowerCase().slice(0, 60);
+  const pageSize = Math.min(Math.max(Number.parseInt(query.get('page_size'), 10) || 20, 1), HISTORY_PAGE_MAX);
+  const page = Math.min(Math.max(Number.parseInt(query.get('page'), 10) || 1, 1), 100000);
+  await ordersLib.sweepOrders(getSql());
+  const rows = await q(
+    `select ${ordersLib.ADMIN_COLUMNS}, count(*) over ()::int as total_rows from orders
+      where created_at <= now() - interval '24 hours'
+        and ($1::date is null or created_at >= ($1::date)::timestamp at time zone 'America/Sao_Paulo')
+        and ($2::date is null or created_at < (($2::date + 1))::timestamp at time zone 'America/Sao_Paulo')
+        and ($3::text[] is null or fulfillment_status = any($3::text[]))
+        and ($4::boolean = false or payment_status = 'approved')
+        and ($5::text = '' or strpos(lower(code), $5) > 0 or strpos(lower(coalesce(public_code, '')), $5) > 0 or strpos(lower(customer_name), $5) > 0)
+      order by created_at desc, id desc limit $6 offset $7`,
+    [from, to, status, f === 'paid', search, pageSize, (page - 1) * pageSize]);
+  let total = rows.length ? rows[0].total_rows : 0;
+  if (!rows.length && page > 1) { // página além do fim: o total real ainda precisa ser informado
+    total = (await q(
+      `select count(*)::int as n from orders where created_at <= now() - interval '24 hours'
+        and ($1::date is null or created_at >= ($1::date)::timestamp at time zone 'America/Sao_Paulo')
+        and ($2::date is null or created_at < (($2::date + 1))::timestamp at time zone 'America/Sao_Paulo')
+        and ($3::text[] is null or fulfillment_status = any($3::text[]))
+        and ($4::boolean = false or payment_status = 'approved')
+        and ($5::text = '' or strpos(lower(code), $5) > 0 or strpos(lower(coalesce(public_code, '')), $5) > 0 or strpos(lower(customer_name), $5) > 0)`,
+      [from, to, status, f === 'paid', search]))[0].n;
+  }
+  return { orders: rows.map(({ total_rows, ...r }) => ordersLib.adminView(r)), page, page_size: pageSize, total, total_pages: Math.max(1, Math.ceil(total / pageSize)) };
+} };
+
+// Status: new -> accepted -> preparing -> ready -> awaiting_delivery -> completed (+ cancelled). Só avança; cancelar vale até concluir.
 A.order_status = { m: 'POST', fn: async ({ body, user }) => {
-  const id = vId(body.id, 'Pedido'), status = vEnum(body.status, FULFILLMENT, 'Status');
-  const row = own(await q('update orders set fulfillment_status = $2 where id = $1 returning id, code, fulfillment_status', [id, status]), 'Pedido não encontrado.');
-  await audit(user.username, 'pedido_status', `${row.code} -> ${status}`);
-  return { ok: true, order: row };
+  const id = vId(body.id, 'Pedido');
+  let status = vEnum(body.status, FILTER_STATUSES, 'Status');
+  if (status === 'delivered') status = 'completed';
+  const reason = body.reason === undefined || body.reason === null || body.reason === '' ? null : vStr(body.reason, 1, 200, 'Motivo');
+  const row = await ordersLib.changeStatus(getSql(), { id, to: status, reason });
+  if (status === 'cancelled' && row.changed) await loyalty.releaseReserve(getSql(), id, 'pedido cancelado'); // devolve os pontos reservados (se não foi pago)
+  if (row.changed) await audit(user.username, 'pedido_status', `${row.public_code || row.code} -> ${status}`);
+  return { ok: true, order: { id: row.id, code: row.code, public_code: row.public_code, fulfillment_status: row.fulfillment_status, fulfillment_label: ordersLib.statusLabel(row.fulfillment_status, row.delivery_method) } };
 } };
 
 // ---------- Ações: conta e usuários ----------
@@ -788,6 +842,313 @@ A.user_reset = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   return { ok: true };
 } };
 
+// ---------- Segurança da conta: pergunta/resposta, códigos de recuperação e recuperação de senha (O9) ----------
+const RECOVERY_MAX_FAILS = 3;
+const RECOVERY_LOCK_MS = 3600 * 1000;
+const MSG_RECOVERY_LOCKED = 'Muitas tentativas. Tente novamente em 1 hora.';
+const MSG_RECOVERY_FAIL = 'Não foi possível recuperar com esses dados.';
+
+async function recoveryLocked(username, ip) {
+  const [byUser, byIp, nowRows] = await Promise.all([
+    q(`select (extract(epoch from at) * 1000)::float8 as ms from admin_recovery_attempts
+        where username = $1 and ok = false and at > now() - interval '1 hour'
+          and at > coalesce((select max(at) from admin_recovery_attempts where username = $1 and ok = true), '-infinity'::timestamptz)
+        order by at desc limit 10`, [username]),
+    q(`select (extract(epoch from at) * 1000)::float8 as ms from admin_recovery_attempts
+        where ip = $1 and ok = false and at > now() - interval '1 hour' order by at desc limit 10`, [ip]),
+    q(`select (extract(epoch from now()) * 1000)::float8 as ms`)
+  ]);
+  const nowMs = Number(nowRows[0].ms), ms = rows => rows.map(r => Number(r.ms));
+  const p = { nowMs, max: RECOVERY_MAX_FAILS, lockMs: RECOVERY_LOCK_MS };
+  return auth.evaluateAttemptLock({ failsMs: ms(byUser), ...p }).locked || auth.evaluateAttemptLock({ failsMs: ms(byIp), ...p }).locked;
+}
+const recordRecovery = (username, ip, ok) => q('insert into admin_recovery_attempts (username, ip, ok) values ($1, $2, $3)', [username.slice(0, 64), ip, ok]);
+
+// Pública: pergunta de segurança do usuário. Usuário inexistente (ou sem pergunta) recebe uma pergunta falsa estável.
+async function doRecoverQuestion(req, res, body) {
+  const username = typeof body.username === 'string' ? body.username.trim().toLowerCase().slice(0, 64) : '';
+  if (!username) return send(res, 400, { error: 'Informe o usuário.' });
+  const user = (await q('select security_question, active from admin_users where username = $1', [username]))[0];
+  const id = user && user.active && user.security_question ? user.security_question : auth.fakeQuestionFor('admin', username);
+  return send(res, 200, { question_id: id, question: auth.questionText(id) });
+}
+
+// Pública: usuário + resposta + código de recuperação (uso único) + nova senha. 3 erros = bloqueio de 1 h (usuário e IP).
+async function doRecover(req, res, body) {
+  const username = typeof body.username === 'string' ? body.username.trim().toLowerCase().slice(0, 64) : '';
+  if (!username || typeof body.answer !== 'string' || typeof body.code !== 'string') return send(res, 400, { error: 'Informe usuário, resposta e código de recuperação.' });
+  let next;
+  try { next = auth.validatePassword(body.new_password, 'Nova senha'); } catch (e) { return send(res, 400, { error: e.message }); }
+  const ip = clientIp(req);
+  const dummy = await dummyHash();
+  if (await recoveryLocked(username, ip)) return send(res, 429, { error: MSG_RECOVERY_LOCKED });
+  const user = (await q('select id, username, security_answer_hash, active from admin_users where username = $1', [username]))[0];
+  const usable = !!(user && user.active && user.security_answer_hash);
+  const answerOk = await auth.verifyAnswer(body.answer, usable ? user.security_answer_hash : dummy); // gasta o mesmo tempo sem usuário
+  let codeId = null;
+  if (usable && answerOk) {
+    const codes = await q('select id, code_hash from admin_recovery_codes where user_id = $1 and used_at is null', [user.id]);
+    codeId = await auth.matchRecoveryCode(body.code, codes);
+  }
+  if (!(usable && answerOk && codeId)) {
+    await recordRecovery(username, ip, false);
+    await audit(username, 'recuperacao_falhou', 'ip ' + ip);
+    if (await recoveryLocked(username, ip)) return send(res, 429, { error: MSG_RECOVERY_LOCKED });
+    return send(res, 400, { error: MSG_RECOVERY_FAIL });
+  }
+  const used = await q('update admin_recovery_codes set used_at = now() where id = $1 and used_at is null returning id', [codeId]);
+  if (!used.length) { // outro pedido usou o mesmo código ao mesmo tempo
+    await recordRecovery(username, ip, false);
+    return send(res, 400, { error: MSG_RECOVERY_FAIL });
+  }
+  await recordRecovery(username, ip, true);
+  await q('update admin_users set password_hash = $2, weak_password = false where id = $1', [user.id, await hashPassword(next)]);
+  await killSessions(user.id, '');
+  await q('delete from login_attempts where username = $1', [username]);
+  await audit(username, 'senha_recuperada', 'ip ' + ip);
+  return send(res, 200, { ok: true });
+}
+
+// Estas ações funcionam mesmo antes de a pessoa cadastrar a pergunta de segurança; as outras ficam bloqueadas.
+const ALLOWED_WITHOUT_SECURITY = new Set(['me', 'security_questions', 'security_setup', 'logout']);
+
+A.security_questions = { m: 'GET', fn: async () => ({ questions: auth.SECURITY_QUESTIONS }) };
+
+A.security_status = { m: 'GET', fn: async ({ user }) => {
+  const row = own(await q('select security_question, security_set_at from admin_users where id = $1', [user.id]), 'Usuário não encontrado.');
+  const left = (await q('select count(*)::int as n from admin_recovery_codes where user_id = $1 and used_at is null', [user.id]))[0].n;
+  return { security: { set: !!row.security_question, question_id: row.security_question, question: auth.questionText(row.security_question), set_at: row.security_set_at, codes_left: left } };
+} };
+
+// Gera 10 códigos novos (apaga os antigos) e devolve o texto UMA vez. No banco só vão os hashes.
+async function replaceRecoveryCodes(userId) {
+  const gen = await auth.generateRecoveryCodes();
+  await getSql().transaction([
+    getSql().query('delete from admin_recovery_codes where user_id = $1', [userId]),
+    getSql().query('insert into admin_recovery_codes (user_id, code_hash) select $1::int, unnest($2::text[])', [userId, gen.map(c => c.hash)])
+  ]);
+  return gen.map(c => c.code);
+}
+
+A.security_setup = { m: 'POST', fn: async ({ body, user }) => {
+  const questionId = auth.validateQuestionId(body.question_id);
+  const answerHash = await auth.hashAnswer(body.answer);
+  const row = own(await q('select password_hash, security_answer_hash from admin_users where id = $1', [user.id]), 'Usuário não encontrado.');
+  const had = !!row.security_answer_hash;
+  if (had) { // trocar pergunta já cadastrada exige a senha atual
+    const current = typeof body.current_password === 'string' ? body.current_password.slice(0, 256) : '';
+    if (!(await verifyPassword(current, row.password_hash))) {
+      await audit(user.username, 'troca_pergunta_falhou', null);
+      throw new HttpError(400, 'A senha atual está incorreta.');
+    }
+  }
+  await q('update admin_users set security_question = $2, security_answer_hash = $3, security_set_at = now() where id = $1', [user.id, questionId, answerHash]);
+  const codes = await replaceRecoveryCodes(user.id);
+  await audit(user.username, had ? 'pergunta_trocada' : 'pergunta_cadastrada', `${codes.length} códigos novos`);
+  return { ok: true, codes, codes_notice: 'Guarde estes códigos agora: eles não serão mostrados de novo. Cada um vale uma vez.' };
+} };
+
+A.recovery_codes_new = { m: 'POST', fn: async ({ body, user }) => {
+  const row = own(await q('select password_hash from admin_users where id = $1', [user.id]), 'Usuário não encontrado.');
+  const current = typeof body.current_password === 'string' ? body.current_password.slice(0, 256) : '';
+  if (!(await verifyPassword(current, row.password_hash))) throw new HttpError(400, 'A senha atual está incorreta.');
+  const codes = await replaceRecoveryCodes(user.id);
+  await audit(user.username, 'codigos_recuperacao_novos', `${codes.length} códigos`);
+  return { ok: true, codes, codes_notice: 'Guarde estes códigos agora: eles não serão mostrados de novo. Cada um vale uma vez.' };
+} };
+
+// ---------- Pausa de produtos (O2) ----------
+// "paused" (volto logo) é diferente de "active" (ativo/oculto): produto pausado continua aparecendo no cardápio, sem poder ser pedido.
+A.product_pause = { m: 'POST', fn: async ({ body, user }) => {
+  const id = vId(body.id), paused = vBool(body.paused, 'Pausado');
+  let label;
+  if (Object.prototype.hasOwnProperty.call(body, 'pause_label')) label = body.pause_label === null || body.pause_label === '' ? null : vStr(body.pause_label, 1, 60, 'Etiqueta');
+  const row = own(await q(
+    `update products set paused = $2, pause_label = case when $3::boolean then $4::text else pause_label end where id = $1
+     returning id, name, paused, pause_label`, [id, paused, label !== undefined, label === undefined ? null : label]), 'Produto não encontrado.');
+  await audit(user.username, paused ? 'produto_em_pausa' : 'produto_retomado', `#${row.id} ${row.name}`);
+  return { ok: true, product: row };
+} };
+
+A.pause_default_label = { m: 'POST', fn: async ({ body, user }) => {
+  const label = vStr(body.label, 1, 60, 'Etiqueta padrão');
+  await setSetting('default_pause_label', label);
+  await audit(user.username, 'etiqueta_padrao_alterada', label);
+  return { ok: true, defaultPauseLabel: label };
+} };
+
+// ---------- Horários e estado da loja (O3, O4) ----------
+A.store_hours = { m: 'GET', fn: async () => ({ hours: await storeHours.loadHours(getSql()), timezone: storeHours.TZ }) };
+
+A.store_hours_save = { m: 'POST', fn: async ({ body, user }) => {
+  const rows = await storeHours.saveHours(getSql(), body.hours);
+  await audit(user.username, 'horarios_salvos', `${rows.length} faixas`);
+  return { ok: true, hours: rows };
+} };
+
+A.store_state = { m: 'GET', fn: async () => {
+  const state = await storeHours.getStoreState(getSql());
+  const manual = await storeHours.loadManual(getSql());
+  return { state, manual: manual && { closed_until: manual.closed_until && manual.closed_until.toISOString(), closed_indefinitely: manual.closed_indefinitely, closed_message: manual.closed_message, updated_by: manual.updated_by, updated_at: manual.updated_at } };
+} };
+
+A.store_close = { m: 'POST', fn: async ({ body, user }) => {
+  await storeHours.closeStore(getSql(), { minutes: body.minutes, indefinite: body.indefinite === true, message: body.message, user: user.username });
+  await audit(user.username, 'loja_fechada', body.indefinite === true ? 'até reabrir' : `${body.minutes} min`);
+  return { ok: true, state: await storeHours.getStoreState(getSql()) };
+} };
+
+A.store_reopen = { m: 'POST', fn: async ({ user }) => {
+  await storeHours.reopenStore(getSql(), user.username);
+  await audit(user.username, 'loja_reaberta', null);
+  return { ok: true, state: await storeHours.getStoreState(getSql()) };
+} };
+
+// ---------- Frete por faixas (O5) ----------
+async function shippingInfo() {
+  const [bands, rows] = await Promise.all([shipping.getBands(getSql()),
+    q(`select key, value from settings where key in ('store_origin_address', 'store_origin_lat', 'store_origin_lon')`)]);
+  const st = {};
+  for (const r of rows) st[r.key] = r.value;
+  const lat = Number(st.store_origin_lat), lon = Number(st.store_origin_lon);
+  return {
+    bands, max_km: shipping.maxKmOf(bands), pickup_fee_cents: 0,
+    origin_address: st.store_origin_address || shipping.DEFAULT_ORIGIN_ADDRESS,
+    origin: st.store_origin_lat && Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null
+  };
+}
+A.shipping_get = { m: 'GET', fn: async () => ({ shipping: await shippingInfo() }) };
+
+A.shipping_save = { m: 'POST', fn: async ({ body, user }) => {
+  let warning = null;
+  if (body.bands === undefined && body.origin_address === undefined) bad('Nada para alterar.');
+  if (body.bands !== undefined) {
+    await shipping.saveBands(getSql(), body.bands);
+    await audit(user.username, 'frete_faixas_salvas', JSON.stringify(await shipping.getBands(getSql())).slice(0, 400));
+  }
+  if (body.origin_address !== undefined) {
+    const address = vStr(body.origin_address, 5, 200, 'Endereço de origem');
+    await setSetting('store_origin_address', address);
+    await q(`delete from settings where key in ('store_origin_lat', 'store_origin_lon')`);
+    try { await shipping.getOrigin(getSql(), { refresh: true }); }
+    catch (e) { warning = 'Endereço salvo, mas não foi possível localizá-lo agora. Ele será localizado no próximo cálculo de frete.'; }
+    await audit(user.username, 'frete_origem_alterada', address);
+  }
+  return { ok: true, shipping: await shippingInfo(), ...(warning ? { warning } : {}) };
+} };
+
+// ---------- Sinônimos de ingredientes e pausa em lote com prévia (O8) ----------
+const SYN_SPEC = { canonical: v => vStr(v, 2, 60, 'Nome principal'), synonym: v => vStr(v, 2, 60, 'Sinônimo') };
+
+A.synonyms = { m: 'GET', fn: async () => ({ synonyms: await q('select id, canonical, synonym from ingredient_synonyms order by canonical_norm, synonym_norm') }) };
+
+A.synonym_save = { m: 'POST', fn: async ({ body, user }) => {
+  const { out, missing } = pickFields(body, SYN_SPEC, ['canonical', 'synonym']);
+  if (missing.length) bad('Informe o nome principal e o sinônimo.');
+  const cn = norm(out.canonical), sn = norm(out.synonym);
+  if (cn.length < 2 || sn.length < 2) bad('Use letras ou números no nome e no sinônimo.');
+  if (cn === sn) bad('O sinônimo precisa ser diferente do nome principal.');
+  let row;
+  if (body.id === undefined || body.id === null) {
+    row = (await q(`insert into ingredient_synonyms (canonical, synonym, canonical_norm, synonym_norm) values ($1, $2, $3, $4) returning id, canonical, synonym`, [out.canonical, out.synonym, cn, sn]))[0];
+  } else {
+    row = own(await q(`update ingredient_synonyms set canonical = $2, synonym = $3, canonical_norm = $4, synonym_norm = $5 where id = $1 returning id, canonical, synonym`,
+      [vId(body.id), out.canonical, out.synonym, cn, sn]), 'Sinônimo não encontrado.');
+  }
+  await audit(user.username, 'sinonimo_salvo', `${row.canonical} = ${row.synonym}`);
+  return { ok: true, synonym: row };
+} };
+
+A.synonym_delete = { m: 'POST', fn: async ({ body, user }) => {
+  const row = own(await q('delete from ingredient_synonyms where id = $1 returning id, canonical, synonym', [vId(body.id)]), 'Sinônimo não encontrado.');
+  await audit(user.username, 'sinonimo_excluido', `${row.canonical} = ${row.synonym}`);
+  return { ok: true };
+} };
+
+// Termos de busca = o digitado + os sinônimos (um nível de fechamento: oreo <-> biscoito oreo).
+function expandTerms(term, synRows) {
+  const set = new Set([norm(term)]);
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const r of synRows) {
+      if ((set.has(r.canonical_norm) || set.has(r.synonym_norm)) && !(set.has(r.canonical_norm) && set.has(r.synonym_norm))) {
+        set.add(r.canonical_norm); set.add(r.synonym_norm); changed = true;
+      }
+    }
+  }
+  return [...set].filter(Boolean);
+}
+// Casamento por palavras inteiras (com plural tolerado): o termo precisa aparecer em sequência no texto.
+function textMatches(text, termList) {
+  const tokens = words(text).map(stem);
+  if (!tokens.length) return null;
+  for (const term of termList) {
+    const t = words(term).map(stem);
+    if (!t.length) continue;
+    for (let i = 0; i + t.length <= tokens.length; i++) if (t.every((w, j) => tokens[i + j] === w)) return term;
+  }
+  return null;
+}
+function searchByTerms(termList, { products, complements, links }) {
+  const foundProducts = [];
+  for (const p of products) {
+    const inName = textMatches(p.name, termList);
+    const inDesc = inName ? null : textMatches(p.description || '', termList);
+    if (inName || inDesc) foundProducts.push({ id: p.id, name: p.name, matched_in: inName ? 'nome' : 'descrição', matched_term: inName || inDesc, active: p.active, paused: p.paused, pause_label: p.pause_label });
+  }
+  const foundComplements = [];
+  for (const c of complements) {
+    const hit = textMatches(c.name, termList);
+    if (!hit) continue;
+    foundComplements.push({
+      id: c.id, name: c.name, matched_term: hit, active: c.active,
+      links: links.filter(l => l.complement_id === c.id).map(l => ({ product_id: l.product_id, product_name: l.product_name, paused: l.paused }))
+    });
+  }
+  return { products: foundProducts, complements: foundComplements };
+}
+
+// PRÉVIA: só lê. Mostra o que seria afetado; nada muda até pause_apply (com confirmação).
+A.pause_preview = { m: 'POST', fn: async ({ body }) => {
+  const term = vStr(body.term, 2, 60, 'Ingrediente');
+  if (norm(term).length < 2) bad('Escreva o nome do ingrediente.');
+  const [syn, products, complements, links] = await Promise.all([
+    q('select canonical_norm, synonym_norm from ingredient_synonyms'),
+    q('select id, name, description, active, paused, pause_label from products order by name'),
+    q('select id, name, active from complements order by name'),
+    q(`select pc.product_id, pc.complement_id, pc.paused, p.name as product_name from product_complements pc join products p on p.id = pc.product_id`)
+  ]);
+  const terms = expandTerms(term, syn);
+  const found = searchByTerms(terms, { products, complements, links });
+  const linkCount = found.complements.reduce((n, c) => n + c.links.length, 0);
+  return { ok: true, term, terms, ...found, summary: { products: found.products.length, complements: found.complements.length, links: linkCount } };
+} };
+
+// APLICA depois da confirmação: pausa (ou retoma) em lote os produtos e os vínculos produto-complemento escolhidos na prévia.
+A.pause_apply = { m: 'POST', fn: async ({ body, user }) => {
+  if (body.confirm !== true) bad('Confirme para aplicar a pausa.');
+  const paused = vBool(body.paused, 'Pausado');
+  const productIds = body.product_ids === undefined ? [] : body.product_ids;
+  const linkList = body.links === undefined ? [] : body.links;
+  if (!Array.isArray(productIds) || !Array.isArray(linkList) || productIds.length > 300 || linkList.length > 600) bad('Lista inválida.');
+  if (!productIds.length && !linkList.length) bad('Nada para aplicar.');
+  const pids = productIds.map(v => vId(v, 'Produto'));
+  const pairs = linkList.map(l => { if (!l || typeof l !== 'object') bad('Vínculo inválido.'); return [vId(l.product_id, 'Produto'), vId(l.complement_id, 'Complemento')]; });
+  let label = null, setLabel = false;
+  if (body.pause_label !== undefined) { setLabel = true; label = body.pause_label === null || body.pause_label === '' ? null : vStr(body.pause_label, 1, 60, 'Etiqueta'); }
+  const queries = [];
+  if (pids.length) queries.push(getSql().query(
+    `update products set paused = $2, pause_label = case when $3::boolean then $4::text else pause_label end where id = any($1::int[]) returning id`,
+    [pids, paused, setLabel, label]));
+  if (pairs.length) queries.push(getSql().query(
+    `update product_complements pc set paused = $3 from unnest($1::int[], $2::int[]) as t(pid, cid)
+      where pc.product_id = t.pid and pc.complement_id = t.cid returning pc.product_id`, [pairs.map(p => p[0]), pairs.map(p => p[1]), paused]));
+  const results = await getSql().transaction(queries);
+  const productsChanged = pids.length ? results[0].length : 0, linksChanged = pairs.length ? results[results.length - 1].length : 0;
+  await audit(user.username, paused ? 'pausa_em_lote' : 'retomada_em_lote', `${productsChanged} produtos, ${linksChanged} vínculos`);
+  return { ok: true, products_changed: productsChanged, links_changed: linksChanged };
+} };
+
 // ---------- Roteador ----------
 function readBody(req) {
   let b = req.body;
@@ -816,17 +1177,29 @@ async function handler(req, res) {
       return await doLogin(req, res, body);
     }
 
+    if (name === 'recover_question' || name === 'recover') {
+      if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return send(res, 405, { error: 'Método não permitido.' }); }
+      return await (name === 'recover' ? doRecover : doRecoverQuestion)(req, res, body);
+    }
+
     const user = await authenticate(req);
     if (!user) return send(res, 401, { error: 'Sessão expirada. Entre novamente.' });
+    if (user.needsSecurity && !ALLOWED_WITHOUT_SECURITY.has(name)) {
+      return send(res, 403, { error: 'Cadastre sua pergunta de segurança para continuar.', code: 'security_setup_required' });
+    }
     const action = Object.prototype.hasOwnProperty.call(A, name) ? A[name] : null;
     if (!action) return send(res, 404, { error: 'Ação não encontrada.' });
     if (action.m !== req.method) { res.setHeader('Allow', action.m); return send(res, 405, { error: 'Método não permitido.' }); }
     if (action.role && user.role !== action.role) return send(res, 403, { error: 'Sem permissão para esta ação.' });
 
     const result = await action.fn({ req, res, body, query, user });
-    return send(res, 200, { ...result, user: { username: user.username, role: user.role, weakPassword: name === 'password_change' ? false : user.weak } });
+    const stillNeeds = user.needsSecurity && name !== 'security_setup';
+    return send(res, 200, { ...result, user: { username: user.username, role: user.role, weakPassword: name === 'password_change' ? false : user.weak, needsSecurity: stillNeeds } });
   } catch (error) {
     if (error instanceof HttpError) return send(res, error.status, { error: error.message });
+    if ([auth.AuthError, ordersLib.OrderError, storeHours.StoreError, shipping.ShippingError, loyalty.LoyaltyError].some(C => error instanceof C)) {
+      return send(res, error.status, { error: error.message, ...(error.code ? { code: error.code } : {}) });
+    }
     if (error && error.code === '23505') return send(res, 400, { error: 'Já existe um item com esse nome ou chave.' });
     if (error && error.code === '23503') return send(res, 400, { error: 'Referência inválida ou item em uso.' });
     console.error('Erro no admin:', error && error.message);
@@ -837,5 +1210,5 @@ async function handler(req, res) {
 module.exports = handler;
 module.exports._internal = {
   hashPassword, verifyPassword, evaluateLock, parseCommand, norm, detectImage, decodeImage, sameOrigin, isJsonType,
-  vId, vInt, vStr, vBool, vCents, vEnum, vUsername, vPassword, vKey, HttpError, FULFILLMENT, DEFAULT_SETTINGS, SESSION_COOKIE
+  vId, vInt, vStr, vBool, vCents, vEnum, vUsername, vPassword, vKey, HttpError, FILTER_STATUSES, DEFAULT_SETTINGS, SESSION_COOKIE, expandTerms, textMatches, searchByTerms
 };
