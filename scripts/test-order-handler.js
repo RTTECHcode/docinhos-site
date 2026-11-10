@@ -114,6 +114,7 @@ async function cleanup() {
   const orders = await sql.query('delete from orders where customer_name = $1 returning id', [NAME]);
   await sql.query(`delete from customers where name like 'ZZ-TESTE%'`);
   await sql.query(`delete from customer_login_attempts where ip like '203.0.113.%' or ip like '198.51.100.%'`);
+  await sql.query(`delete from order_attempts where ip like '192.0.2.%'`); // tentativas de pedido (limite por IP, A2)
   await sql.query(`delete from products where name like 'ZZ-TESTE%'`);
   await sql.query(`delete from categories where name like 'ZZ-TESTE%'`);
   await sql.query(`delete from geocode_cache where addr_key like '%zz teste%'`);
@@ -598,7 +599,7 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
     const ip = '192.0.2.250.' + rnd(4);
     for (let i = 0; i < MAX_ORDERS_PER_IP; i++) assert.equal((await call(fresh(), null, 'POST', { 'x-real-ip': ip })).status, 201, 'pedido ' + (i + 1));
     const r = await call(fresh(), null, 'POST', { 'x-real-ip': ip });
-    assert.equal(r.status, 429);
+    assert.equal(r.status, 429); assert.equal(r.body.code, 'rate_limited');
     assert.equal((await call(fresh(), null, 'POST', { 'x-real-ip': ip, 'x-forwarded-for': randomIp() })).status, 429, 'x-forwarded-for forjado não escapa');
     assert.equal((await call(fresh())).status, 201, 'outro IP segue livre');
     const [row] = await sql.query('select client_ip from orders where customer_name = $1 and client_ip = $2 limit 1', [NAME, ip]);
