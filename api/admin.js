@@ -522,7 +522,29 @@ A.category_save = { m: 'POST', fn: async ({ body, user }) => {
   return { ok: true, category: r.row };
 } };
 
+// Produto ATIVO precisa de preço ou de pelo menos um tamanho (complemento kind = 'size' ativo e vinculado). Sem isso a loja
+// mostrava "Consulte", deixava pôr no carrinho por R$ 0,00 e o pedido só era recusado no fim (bug do QA, A2 rodada 3).
+// Produto desligado pode ficar sem preço: é o caminho para criar um item com preço só pelo tamanho (criar desligado,
+// vincular os tamanhos e depois ativar).
+const MSG_ACTIVE_NEEDS_PRICE = 'Produto ativo precisa de preço ou de pelo menos um tamanho. Informe o preço, ou deixe o item desligado, vincule os tamanhos e depois ative.';
+async function assertSellable(productId, active, priceCents) {
+  if (!active || (priceCents !== null && priceCents !== undefined)) return;
+  if (productId) {
+    const [r] = await q(`select exists (select 1 from product_complements pc join complements c on c.id = pc.complement_id
+                                        where pc.product_id = $1 and c.kind = 'size' and c.active) as ok`, [productId]);
+    if (r.ok) return;
+  }
+  bad(MSG_ACTIVE_NEEDS_PRICE);
+}
+const sent = (body, field) => Object.prototype.hasOwnProperty.call(body, field) && body[field] !== undefined;
+
 A.product_save = { m: 'POST', fn: async ({ body, user }) => {
+  // Estado final do produto (o que veio no corpo, senão o que já está no banco; produto novo nasce ativo e sem preço).
+  const isNew = body.id === undefined || body.id === null;
+  const id = isNew ? null : vId(body.id);
+  const cur = isNew ? { active: true, price_cents: null } : own(await q('select active, price_cents from products where id = $1', [id]), 'Produto não encontrado.');
+  await assertSellable(id, sent(body, 'active') ? PRODUCT_SPEC.active(body.active) : cur.active,
+    sent(body, 'price_cents') ? PRODUCT_SPEC.price_cents(body.price_cents) : cur.price_cents);
   const r = await saveEntity({ table: 'products', spec: PRODUCT_SPEC, required: ['name', 'category_id'], body, label: 'Produto' });
   await audit(user.username, r.created ? 'produto_criado' : 'produto_editado', `#${r.row.id} ${r.row.name}`);
   return { ok: true, product: r.row };
@@ -530,6 +552,7 @@ A.product_save = { m: 'POST', fn: async ({ body, user }) => {
 
 A.product_toggle = { m: 'POST', fn: async ({ body, user }) => {
   const id = vId(body.id), active = vBool(body.active, 'Ativo');
+  if (active) await assertSellable(id, true, own(await q('select price_cents from products where id = $1', [id]), 'Produto não encontrado.').price_cents);
   const row = own(await q('update products set active = $2 where id = $1 returning id, name, active', [id, active]), 'Produto não encontrado.');
   await audit(user.username, active ? 'produto_ativado' : 'produto_pausado', `#${row.id} ${row.name}`);
   return { ok: true, product: row };
@@ -703,6 +726,14 @@ A.command_apply = { m: 'POST', fn: async ({ body, user }) => {
     if (!groups[t.type]) bad('Tipo de alvo inválido.');
     const id = vId(t.id);
     groups[t.type][to ? 'on' : 'off'].push(t.type === 'link' ? [vId(t.productId, 'Produto'), id] : id);
+  }
+  // Ativar por comando segue a mesma regra do product_toggle: produto sem preço e sem tamanho não liga.
+  if (groups.product.on.length) {
+    const unsellable = await q(`select p.name from products p where p.id = any($1::int[]) and p.price_cents is null
+                                  and not exists (select 1 from product_complements pc join complements c on c.id = pc.complement_id
+                                                   where pc.product_id = p.id and c.kind = 'size' and c.active)
+                                order by p.name limit 5`, [groups.product.on]);
+    if (unsellable.length) bad(`${MSG_ACTIVE_NEEDS_PRICE} Sem preço: ${unsellable.map(r => r.name).join(', ')}.`);
   }
   const queries = [];
   const tables = { product: 'products', complement: 'complements', category: 'categories' };
@@ -1414,5 +1445,5 @@ async function handler(req, res) {
 module.exports = handler;
 module.exports._internal = {
   hashPassword, verifyPassword, evaluateLock, parseCommand, norm, detectImage, decodeImage, sameOrigin, isJsonType,
-  vId, vInt, vStr, vBool, vCents, vEnum, vUsername, vPassword, vKey, HttpError, FILTER_STATUSES, DEFAULT_SETTINGS, SESSION_COOKIE, expandTerms, textMatches, searchByTerms
+  vId, vInt, vStr, vBool, vCents, vEnum, vUsername, vPassword, vKey, HttpError, MSG_ACTIVE_NEEDS_PRICE, FILTER_STATUSES, DEFAULT_SETTINGS, SESSION_COOKIE, expandTerms, textMatches, searchByTerms
 };

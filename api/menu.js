@@ -1,6 +1,8 @@
 const sql = require('./_lib/db');
 const { getStoreState } = require('./_lib/store-hours');
 const { getBands, maxKmOf } = require('./_lib/shipping');
+// Produto sem preço e sem tamanho disponível: aparece, mas não pode ir para o carrinho (o pedido recusaria no fim).
+const NO_PRICE_LABEL = 'Consulte pelo WhatsApp';
 module.exports = async (req, res) => {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Método não permitido' });
   try {
@@ -49,6 +51,7 @@ module.exports = async (req, res) => {
       if (!category) { category = { id: row.category_id, name: row.category_name, products: [] }; categories.push(category); }
       const product = { id: row.id, name: row.name, description: row.description, priceCents: row.price_cents, imagePath: row.image_path, complements: byProduct[row.id] || [], groups: groupsByProduct[row.id] || [] };
       if (row.paused) { product.unavailable = true; product.label = row.pause_label || defaultPauseLabel; } // pausado: aparece, mas não pode ser pedido
+      else if (row.price_cents === null && !product.complements.some(c => c.kind === 'size')) { product.unavailable = true; product.label = NO_PRICE_LABEL; }
       category.products.push(product);
     }
     const shipping = { bands, maxKm: maxKmOf(bands), pickupFeeCents: 0 };
@@ -56,3 +59,4 @@ module.exports = async (req, res) => {
     res.status(200).json({ categories, settings, store: storeState, shipping });
   } catch (error) { res.status(500).json({ error: 'Não foi possível carregar o cardápio' }); }
 };
+module.exports.NO_PRICE_LABEL = NO_PRICE_LABEL;

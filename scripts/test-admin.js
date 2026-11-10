@@ -437,11 +437,25 @@ async function catalogTests() {
     assert.equal(p.status, 200, JSON.stringify(p.json)); ctx.prod = p.json.product.id;
     assert.equal(p.json.product.price_cents, 1250); assert.match(p.json.product.description, /drop table/);
     assert.ok((await Q('select count(*)::int n from products'))[0].n > 30);
+    // A2 rodada 3: produto ATIVO sem preço e sem tamanho é recusado (a loja mostraria "Consulte" e o pedido falharia no fim)
+    const MSG = admin._internal.MSG_ACTIVE_NEEDS_PRICE;
     const e = await post(S.adm, 'product_save', { id: ctx.prod, name: 'ZZ-TESTE Fatia Alfa 2', price_cents: null });
-    assert.equal(e.json.product.price_cents, null); assert.equal(e.json.product.name, 'ZZ-TESTE Fatia Alfa 2');
-    assert.equal((await post(S.adm, 'product_save', { id: ctx.prod, name: 'ZZ-TESTE Fatia Alfa' })).status, 200);
+    assert.equal(e.status, 400); assert.equal(e.json.error, MSG);
+    assert.deepEqual(Object.values((await Q('select name, price_cents from products where id = $1', [ctx.prod]))[0]), ['ZZ-TESTE Fatia Alfa', 1250], 'nada mudou');
+    const novo = await post(S.adm, 'product_save', { name: 'ZZ-TESTE Sem Preco', price_cents: null, category_id: ctx.cat });
+    assert.equal(novo.status, 400, 'novo nasce ativo: sem preço recusa'); assert.equal(novo.json.error, MSG);
+    const novoOff = await post(S.adm, 'product_save', { name: 'ZZ-TESTE Sem Preco', price_cents: null, category_id: ctx.cat, active: false });
+    assert.equal(novoOff.status, 200, 'desligado pode ficar sem preço (para vincular tamanhos depois)');
+    const ligar = await post(S.adm, 'product_toggle', { id: novoOff.json.product.id, active: true });
+    assert.equal(ligar.status, 400); assert.equal(ligar.json.error, MSG);
+    assert.equal((await Q('select active from products where id = $1', [novoOff.json.product.id]))[0].active, false);
+    assert.equal((await post(S.adm, 'product_save', { id: novoOff.json.product.id, active: true, price_cents: 500 })).status, 200, 'com preço liga');
     const off = await post(S.adm, 'product_toggle', { id: ctx.prod, active: false });
     assert.equal(off.json.product.active, false);
+    const e2 = await post(S.adm, 'product_save', { id: ctx.prod, name: 'ZZ-TESTE Fatia Alfa 2', price_cents: null });
+    assert.equal(e2.status, 200); assert.equal(e2.json.product.price_cents, null); assert.equal(e2.json.product.name, 'ZZ-TESTE Fatia Alfa 2');
+    assert.equal((await post(S.adm, 'product_toggle', { id: ctx.prod, active: true })).status, 400, 'ligar sem preço e sem tamanho');
+    assert.equal((await post(S.adm, 'product_save', { id: ctx.prod, name: 'ZZ-TESTE Fatia Alfa', price_cents: 1250 })).status, 200);
     assert.equal((await post(S.adm, 'product_toggle', { id: ctx.prod, active: true })).json.product.active, true);
     assert.equal((await post(S.adm, 'product_toggle', { id: ctx.prod, active: 'sim' })).status, 400);
     assert.equal((await post(S.adm, 'product_toggle', { id: 2147483000, active: true })).status, 404);
@@ -499,8 +513,15 @@ async function catalogTests() {
     assert.equal((await post(S.adm, 'link_save', { product_id: ctx.prod, complement_id: ctx.comp, max_quantity: 51 })).status, 400);
     assert.equal((await post(S.adm, 'link_save', { product_id: ctx.prod, complement_id: ctx.comp, group_id: 2147483000 })).status, 404);
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: 2147483000, paused: true })).status, 404);
+    // A2 rodada 3: com um tamanho vinculado, o produto pode ficar ativo sem preço (preço pelo tamanho) e aparece normal no cardápio
+    assert.equal((await post(S.adm, 'product_save', { id: ctx.prod, price_cents: null })).status, 200, 'tem tamanho: preço nulo aceito');
+    m = await menuCall(); assert.notEqual(find(m).unavailable, true);
     assert.equal((await post(S.adm, 'link_delete', { product_id: ctx.prod, complement_id: ctx.size })).status, 200);
     assert.equal((await post(S.adm, 'link_delete', { product_id: ctx.prod, complement_id: ctx.size })).status, 404);
+    // sem preço e sem tamanho: o cardápio marca como indisponível (a loja não deixa pôr no carrinho)
+    m = await menuCall(); assert.equal(find(m).unavailable, true); assert.equal(find(m).label, require('../api/menu').NO_PRICE_LABEL);
+    assert.equal((await post(S.adm, 'product_save', { id: ctx.prod, price_cents: 1250 })).status, 200);
+    m = await menuCall(); assert.notEqual(find(m).unavailable, true);
   });
   await t('foto: PNG minúsculo grava em images, image_path vira /api/img?id=N e api/img serve com cache imutável', async () => {
     const r = await post(S.adm, 'product_image', { product_id: ctx.prod, data: PNG_B64 });
@@ -591,6 +612,16 @@ async function commandTests() {
     assert.equal(back.json.targets[0].to, true); assert.equal(back.json.targets[0].from, false);
     await post(S.staff, 'command_apply', { targets: back.json.targets });
     assert.equal((await state()).comp, true);
+  });
+  await t('A2 rodada 3: ativar por comando produto sem preço e sem tamanho = 400 (nada muda); com preço liga', async () => {
+    const [p] = await Q(`insert into products (category_id, name, price_cents, active) values ($1, 'ZZ-TESTE Cmd Sem Preco', null, false) returning id`, [ctx.cat]);
+    const r = await post(S.adm, 'command_apply', { targets: [{ type: 'product', id: p.id, to: true }, { type: 'complement', id: ctx.comp, to: true }] });
+    assert.equal(r.status, 400); assert.ok(r.json.error.startsWith(admin._internal.MSG_ACTIVE_NEEDS_PRICE)); assert.match(r.json.error, /ZZ-TESTE Cmd Sem Preco/);
+    assert.equal((await Q('select active from products where id = $1', [p.id]))[0].active, false);
+    await Q('update products set price_cents = 300 where id = $1', [p.id]);
+    assert.equal((await post(S.adm, 'command_apply', { targets: [{ type: 'product', id: p.id, to: true }] })).status, 200);
+    assert.equal((await Q('select active from products where id = $1', [p.id]))[0].active, true);
+    await Q('delete from products where id = $1', [p.id]);
   });
   await t('comando: complemento só em um produto (vínculo) e produto, com prévia antes/depois', async () => {
     const p = await post(S.adm, 'command', { text: 'acabou zz teste calda beta no zz teste fatia alfa' });
@@ -687,6 +718,9 @@ async function commandTests() {
     const s2 = await loginAs(S.names.fresh, pw2, S.ips.b); assert.equal(s2.r.status, 200);
     // senha redefinida pelo admin é provisória: obriga a troca no próximo login
     assert.equal(s2.r.json.user.weakPassword, true, 'user_reset grava weak_password = true');
+    // usuário recém-criado ainda não tem pergunta de segurança (esse portão vem antes); cadastra para testar o da senha
+    await Q(`update admin_users set security_question = 'prof_favorito', security_answer_hash = $2, security_set_at = now() where id = $1`,
+      [id, await require('../api/_lib/auth').hashAnswer('resposta teste')]);
     { const c = await get(s2.cookie, 'catalog'); assert.equal(c.status, 403); assert.equal(c.json.code, 'password_change_required'); }
     assert.equal((await Q('select weak_password from admin_users where id = $1', [id]))[0].weak_password, true);
     assert.equal((await post(S.adm, 'user_reset', { id, new_password: 'curta' })).status, 400);
