@@ -36,10 +36,15 @@ const get = (action, o) => run(req('GET', action, o));
 const post = (action, body, o = {}) => run(req('POST', action, { ...o, body }));
 const cookieOf = r => { const sc = r.headers['set-cookie']; return sc ? sc.split(';')[0] : null; };
 const reg = (over = {}, o = {}) => post('register', { name: 'ZZ-a10 Cliente', phone: newPhone(), password: PASS, security_question: 'prof_favorito', security_answer: ANS, consent_version: customerLib.CONSENT_VERSION, ...over }, o);
-// Falhas antigas inseridas direto no banco, espaçadas de 2 h (nunca 5 em 30 min): testa a regra de 10 erros em 24 h.
-const oldFails = (scope, phoneE164, n) => Q(
+// Falhas antigas inseridas direto no banco, espaçadas de 2 h (nunca 5 em 30 min): testa a regra de 10 erros em 24 h (do par telefone+IP).
+const OLD_IP = '198.19.249.1';
+const oldFails = (scope, phoneE164, n, ip = OLD_IP) => Q(
   `insert into customer_login_attempts (scope, phone, ip, ok, at)
-   select $1, $2, '198.19.249.1', false, now() - interval '1 minute' - (g * interval '2 hours') from generate_series(0, $3::int - 1) g`, [scope, phoneE164, n]);
+   select $1, $2, $4, false, now() - interval '1 minute' - (g * interval '2 hours') from generate_series(0, $3::int - 1) g`, [scope, phoneE164, n, ip]);
+// Ataque espalhado: n erros recentes (5 min atrás) no telefone, cada um de um IP diferente.
+const spreadFails = (scope, phoneE164, n) => Q(
+  `insert into customer_login_attempts (scope, phone, ip, ok, at)
+   select $1, $2, '198.19.248.' || g, false, now() - interval '5 minutes' from generate_series(1, $3::int) g`, [scope, phoneE164, n]);
 
 let passed = 0;
 async function t(name, fn) {
@@ -206,15 +211,37 @@ async function cleanup() {
   });
 
   console.log('\nBloqueio de login');
-  await t('5 erros de senha = bloqueio 429 (30 min) por telefone; senha certa também fica bloqueada; outro telefone/IP não é afetado', async () => {
+  await t('[A2] 5 erros de senha = bloqueio 429 (30 min) do PAR telefone+IP; senha certa também barrada nesse IP; outro IP e outra conta livres', async () => {
     const phone = newPhone(); const ip = nextIp();
     assert.equal((await reg({ phone, name: 'ZZ-a10 Lock' })).status, 201);
     let last;
     for (let i = 0; i < 5; i++) last = await post('login', { phone, password: 'errada-123' }, { ip });
     assert.equal(last.status, 429); assert.match(last.body.error, /30 minutos/); assert.equal(last.body.code, 'locked');
     assert.equal((await post('login', { phone, password: PASS }, { ip })).status, 429, 'certa mas bloqueada (mesmo IP)');
-    assert.equal((await post('login', { phone, password: PASS }, { ip: nextIp() })).status, 429, 'bloqueio por conta vale em outro IP');
+    assert.equal((await post('login', { phone, password: PASS }, { ip: nextIp() })).status, 200, 'par diferente: o dono entra de outro IP');
+    assert.equal((await post('login', { phone, password: PASS }, { ip })).status, 429, 'o acerto em outro IP não solta o par travado');
     assert.equal((await post('login', { phone: A.phone, password: PASS })).status, 200, 'outra conta livre');
+  });
+  await t('[A2] ataque espalhado: 10 erros no telefone em 1 h (IPs variados) barram IPs que nunca entraram; IP onde o cliente já entrou segue livre', async () => {
+    const phone = newPhone(), home = nextIp();
+    assert.equal((await reg({ phone, name: 'ZZ-a10 Spread' })).status, 201);
+    assert.equal((await post('login', { phone, password: PASS }, { ip: home })).status, 200, 'login certo: IP conhecido');
+    await spreadFails('login', '+55' + phone, customerLib.SPREAD_MAX_FAILS);
+    const fresh = await post('login', { phone, password: PASS }, { ip: nextIp() });
+    assert.equal(fresh.status, 429, 'IP novo barrado mesmo com a senha certa'); assert.equal(fresh.body.error, customerLib.MSG_LOCKED_LONG);
+    assert.equal((await post('login', { phone, password: PASS }, { ip: home })).status, 200, 'IP conhecido entra');
+    // recuperação: mesma regra, com a contagem própria do scope recover
+    const pr = newPhone();
+    assert.equal((await reg({ phone: pr, name: 'ZZ-a10 SpreadRec' })).status, 201);
+    await spreadFails('recover', '+55' + pr, customerLib.SPREAD_MAX_FAILS);
+    assert.equal((await post('recover', { phone: pr, answer: ANS, new_password: 'NovaSenha-123' }, { ip: nextIp() })).status, 429, 'recuperação: IP novo barrado');
+    const p9 = newPhone();
+    assert.equal((await reg({ phone: p9, name: 'ZZ-a10 Spread9' })).status, 201);
+    await spreadFails('login', '+55' + p9, customerLib.SPREAD_MAX_FAILS - 1);
+    assert.equal((await post('login', { phone: p9, password: PASS }, { ip: nextIp() })).status, 200, '9 erros espalhados: IP novo ainda entra');
+    // telefone inexistente: mesma resposta (não revela existência)
+    const ghost = newPhone(); await spreadFails('login', '+55' + ghost, customerLib.SPREAD_MAX_FAILS);
+    assert.deepEqual((await post('login', { phone: ghost, password: 'errada-123' }, { ip: nextIp() })).body, fresh.body);
   });
   await t('bloqueio por IP: 5 erros em telefones diferentes = 429 para o IP', async () => {
     const ip = nextIp(); let last;
@@ -222,22 +249,22 @@ async function cleanup() {
     assert.equal(last.status, 429);
     assert.equal((await post('login', { phone: A.phone, password: PASS }, { ip })).status, 429);
   });
-  await t('[item 2] login: 10 erros em 24 h = bloqueio de 24 h por conta (mensagem genérica, vale em outro IP); 9 erros não bloqueiam', async () => {
+  await t('[item 2/A2] login: 10 erros em 24 h no par telefone+IP = bloqueio de 24 h (mensagem genérica); 9 erros não bloqueiam; outro IP livre', async () => {
     const p9 = newPhone();
     assert.equal((await reg({ phone: p9, name: 'ZZ-a10 Long9' })).status, 201);
     await oldFails('login', '+55' + p9, 9);
-    assert.equal((await post('login', { phone: p9, password: PASS })).status, 200, '9 erros em 24 h: entra');
+    assert.equal((await post('login', { phone: p9, password: PASS }, { ip: OLD_IP })).status, 200, '9 erros em 24 h: entra');
     const p10 = newPhone();
     assert.equal((await reg({ phone: p10, name: 'ZZ-a10 Long10' })).status, 201);
     await oldFails('login', '+55' + p10, 9);
-    const tenth = await post('login', { phone: p10, password: 'errada-123' });
+    const tenth = await post('login', { phone: p10, password: 'errada-123' }, { ip: OLD_IP });
     assert.equal(tenth.status, 429); assert.equal(tenth.body.code, 'locked');
     assert.equal(tenth.body.error, customerLib.MSG_LOCKED_LONG); assert.ok(!/30 minutos|24|hora/.test(tenth.body.error), 'genérica');
-    assert.equal((await post('login', { phone: p10, password: PASS })).status, 429, 'senha certa bloqueada');
-    assert.equal((await post('login', { phone: p10, password: PASS }, { ip: nextIp() })).status, 429, 'outro IP');
+    assert.equal((await post('login', { phone: p10, password: PASS }, { ip: OLD_IP })).status, 429, 'senha certa bloqueada no par');
+    assert.equal((await post('login', { phone: p10, password: PASS }, { ip: nextIp() })).status, 200, 'outro IP: par diferente, entra');
     // telefone inexistente bloqueia do mesmo jeito (não revela existência)
     const ghost = newPhone(); await oldFails('login', '+55' + ghost, 9);
-    const g = await post('login', { phone: ghost, password: 'errada-123' });
+    const g = await post('login', { phone: ghost, password: 'errada-123' }, { ip: OLD_IP });
     assert.deepEqual(g.body, tenth.body);
   });
 
@@ -277,29 +304,29 @@ async function cleanup() {
     const p = await get('points', { cookie: cookieOf(l) });
     assert.ok(p.body.locked_until);
   });
-  await t('recuperação: 5 erros = bloqueio 429 (por conta e IP), mesmo com a resposta certa depois', async () => {
+  await t('[A2] recuperação: 5 erros = bloqueio 429 do par telefone+IP, mesmo com a resposta certa depois; outro IP livre', async () => {
     const phone = newPhone(), ip = nextIp();
     assert.equal((await reg({ phone, name: 'ZZ-a10 RecLock' })).status, 201);
     let last;
     for (let i = 0; i < 5; i++) last = await post('recover', { phone, answer: 'errada ' + i, new_password: 'NovaSenha-123' }, { ip });
     assert.equal(last.status, 429); assert.match(last.body.error, /30 minutos/);
     assert.equal((await post('recover', { phone, answer: ANS, new_password: 'NovaSenha-123' }, { ip })).status, 429);
-    assert.equal((await post('recover', { phone, answer: ANS, new_password: 'NovaSenha-123' }, { ip: nextIp() })).status, 429, 'vale em outro IP (por conta)');
     assert.equal((await Q('select points_locked_until from customers where phone = $1', ['+55' + phone]))[0].points_locked_until, null);
+    assert.equal((await post('recover', { phone, answer: ANS, new_password: 'NovaSenha-123' }, { ip: nextIp() })).status, 200, 'par diferente: outro IP recupera');
     // telefone inexistente também bloqueia do mesmo jeito (não revela existência)
     const ghost = newPhone(), ip2 = nextIp(); let g;
     for (let i = 0; i < 5; i++) g = await post('recover', { phone: ghost, answer: 'errada ' + i, new_password: 'NovaSenha-123' }, { ip: ip2 });
     assert.equal(g.status, 429);
   });
-  await t('[item 2] recuperação: 10 erros em 24 h = bloqueio de 24 h por conta, mesmo com a resposta certa', async () => {
-    const phone = newPhone();
+  await t('[item 2/A2] recuperação: 10 erros em 24 h no par telefone+IP = bloqueio de 24 h, mesmo com a resposta certa', async () => {
+    const phone = newPhone(), ip = nextIp();
     assert.equal((await reg({ phone, name: 'ZZ-a10 RecLong' })).status, 201);
-    await oldFails('recover', '+55' + phone, 9);
-    const tenth = await post('recover', { phone, answer: 'errada', new_password: 'NovaSenha-123' });
+    await oldFails('recover', '+55' + phone, 9, ip);
+    const tenth = await post('recover', { phone, answer: 'errada', new_password: 'NovaSenha-123' }, { ip });
     assert.equal(tenth.status, 429); assert.equal(tenth.body.error, customerLib.MSG_LOCKED_LONG);
-    assert.equal((await post('recover', { phone, answer: ANS, new_password: 'NovaSenha-123' }, { ip: nextIp() })).status, 429);
+    assert.equal((await post('recover', { phone, answer: ANS, new_password: 'NovaSenha-123' }, { ip })).status, 429);
     assert.equal((await Q('select points_locked_until from customers where phone = $1', ['+55' + phone]))[0].points_locked_until, null);
-    assert.equal((await post('login', { phone, password: PASS })).status, 200, 'login tem contagem própria');
+    assert.equal((await post('login', { phone, password: PASS }, { ip })).status, 200, 'login tem contagem própria');
   });
   await t('recuperação: senha nova curta = 400 sem gastar tentativa de resposta', async () => {
     const r = await post('recover', { phone: A.phone, answer: ANS, new_password: '123' });
@@ -372,8 +399,9 @@ async function cleanup() {
     assert.equal((await Q(`select count(*)::int n from customer_login_attempts where scope = 'login' and phone = $1 and ok = false`, ['+55' + p1]))[0].n, 0, 'nada no login');
     assert.equal((await Q(`select count(*)::int n from customer_login_attempts where scope = 'password' and phone = $1 and ok = false`, ['+55' + p1]))[0].n, 5, 'falhas no scope password');
     const p2 = newPhone(); const ck2 = cookieOf(await reg({ phone: p2, name: 'ZZ-a10 Sep2' }));
-    for (let i = 0; i < 5; i++) await post('login', { phone: p2, password: 'errada-123' });
-    assert.equal((await post('login', { phone: p2, password: PASS })).status, 429, 'login bloqueado');
+    const ip2 = nextIp();
+    for (let i = 0; i < 5; i++) await post('login', { phone: p2, password: 'errada-123' }, { ip: ip2 });
+    assert.equal((await post('login', { phone: p2, password: PASS }, { ip: ip2 })).status, 429, 'login bloqueado (par telefone+IP)');
     assert.equal((await post('password', { current_password: PASS, new_password: 'Outra-Senha-2' }, { cookie: ck2 })).status, 200, 'troca livre');
   });
   await t('[F5 scopes] linhas antigas (#cadastro e #senha:) continuam contando: bloqueios em curso não se perdem', async () => {
