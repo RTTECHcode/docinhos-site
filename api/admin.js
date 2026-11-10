@@ -11,8 +11,6 @@
  * (normalização, verbos, casamento aproximado por tokens/prefixo/Levenshtein). Custo zero de tokens.
  */
 const crypto = require('node:crypto');
-const { promisify } = require('node:util');
-const scryptAsync = promisify(crypto.scrypt);
 
 const SESSION_COOKIE = '__Host-dg_admin';
 const SESSION_TTL_MS = 12 * 3600 * 1000;
@@ -21,7 +19,6 @@ const MAX_INT4 = 2147483647;
 const MAX_CENTS = 1000000; // R$ 10.000,00
 const MAX_IMAGE_BYTES = 2000000;
 const MAX_IMAGE_B64 = 2800000;
-const SCRYPT_PARAMS = { N: 32768, r: 8, p: 1, keylen: 64 };
 const FULFILLMENT = ['new', 'preparing', 'ready', 'delivered', 'cancelled'];
 const DEFAULT_SETTINGS = {
   store_address: 'Manoel Hare Peralta, 101',
@@ -35,30 +32,10 @@ const bad = message => { throw new HttpError(400, message); };
 const { hasControlChars } = require('./_lib/validate');
 const getSql = () => require('./_lib/db'); // carregado sob demanda: funções puras testáveis sem DATABASE_URL
 const q = (text, params = []) => getSql().query(text, params);
-const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
 
-// ---------- Senhas (scrypt) ----------
-async function derive(password, salt, N, r, p, keylen) {
-  return scryptAsync(String(password).normalize('NFKC'), salt, keylen, { N, r, p, maxmem: 128 * N * r * 2 + 1048576 });
-}
-async function hashPassword(password) {
-  const { N, r, p, keylen } = SCRYPT_PARAMS;
-  const salt = crypto.randomBytes(16);
-  const dk = await derive(password, salt, N, r, p, keylen);
-  return `scrypt$${N}$${r}$${p}$${salt.toString('base64')}$${dk.toString('base64')}`;
-}
-async function verifyPassword(password, stored) {
-  const parts = String(stored || '').split('$');
-  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
-  const N = Number(parts[1]), r = Number(parts[2]), p = Number(parts[3]);
-  if (![N, r, p].every(Number.isInteger) || N < 1024 || N > 131072 || (N & (N - 1)) !== 0 || r < 1 || r > 16 || p < 1 || p > 4) return false;
-  const expected = Buffer.from(parts[5], 'base64');
-  if (!expected.length) return false;
-  const dk = await derive(password, Buffer.from(parts[4], 'base64'), N, r, p, expected.length);
-  return dk.length === expected.length && crypto.timingSafeEqual(dk, expected);
-}
-let dummyHashPromise = null; // usado para gastar o mesmo tempo quando o usuário não existe
-const dummyHash = () => (dummyHashPromise ||= hashPassword(crypto.randomBytes(12).toString('hex')));
+// ---------- Senhas (scrypt): vivem em api/_lib/auth.js, compartilhadas com a conta do cliente ----------
+const auth = require('./_lib/auth');
+const { hashPassword, verifyPassword, dummyHash, sha256 } = auth;
 
 // ---------- Anti força bruta (função pura) ----------
 // failsMs: instantes (ms) das falhas do usuário desde o último login ok, da mais nova para a mais antiga (até 10).
@@ -162,18 +139,7 @@ const KIND_WORD = { product: 'produto', complement: 'complemento', category: 'ca
 const KIND_LABEL = { product: 'Produto', complement: 'Complemento', category: 'Categoria', link: 'Complemento no produto', store: 'Loja' };
 const HELP_EXAMPLES = ['pausar nutella', 'acabou o kitkat no monte seu copo', 'pausar todos os geladinhos', 'reativar brigadeiro de oreo', 'fechar a loja', 'abrir a loja'];
 
-function norm(s) {
-  return String(s).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-}
-const words = s => { const n = norm(s); return n ? n.split(' ') : []; };
-function stem(w) {
-  if (w.length > 4 && (w.endsWith('oes') || w.endsWith('aes'))) return w.slice(0, -3) + 'ao';
-  if (w.length > 4 && w.endsWith('ais')) return w.slice(0, -3) + 'al';
-  if (w.length > 4 && w.endsWith('eis')) return w.slice(0, -3) + 'el';
-  if (w.length > 3 && w.endsWith('ns')) return w.slice(0, -2) + 'm';
-  if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
-  return w;
-}
+const { norm, words, stem } = require('./_lib/text');
 const nameTokens = name => words(name).filter(w => !STOP.has(w)).map(stem);
 
 // Distância de edição com troca de letras vizinhas contando 1 ("pasuar" -> "pausar").
