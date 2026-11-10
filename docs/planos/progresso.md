@@ -1,3 +1,9 @@
+| Preview | feito | painel-v2 | F1 publicada; republicar ao fim de F3 |
+| U1-U6 | andamento | a10-account | F3; revisão A1 antes do merge |
+| C2-C8 | andamento | a6-store | F3; inclui privacidade.html e pedido.html |
+| M1-M5 | andamento | a5-settings | F3; aba Loja vira Ajustes, nova aba Histórico |
+| K1-K5 | andamento | a3-orders | F3 |
+| O1-O13 | feito | a2-base | merge; contrato em docs/planos/api-contrato.md; migração só no banco dev |
 # Progresso — Painel Gigi
 
 Retomada: ler este arquivo, continuar da primeira tarefa não concluída. Tarefa em andamento recomeça do início na própria branch.
