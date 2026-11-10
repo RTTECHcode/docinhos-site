@@ -68,6 +68,7 @@
       const err = new Error(data.error || 'Algo deu errado. Tente de novo.');
       err.status = res.status; err.code = data.code;
       if (res.status === 403 && data.code === 'security_setup_required' && DG.forceSecurity) DG.forceSecurity();
+      else if (res.status === 403 && data.code === 'password_change_required') DG.forcePasswordChange();
       throw err;
     }
     if (data.user) setUser(data.user);
@@ -190,6 +191,7 @@
     try { await DG.api('me'); } catch { return; }
     $('#login-view').hidden = true;
     if (DG.state.user && DG.state.user.needsSecurity && DG.forceSecurity) { DG.forceSecurity(); return; }
+    if (DG.state.user && DG.state.user.weakPassword) { DG.forcePasswordChange(); return; }
     $('#app').hidden = false;
     DG.go(DG.state.tab);
   }
@@ -230,6 +232,48 @@
     msg, el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar nova senha' }));
     return form;
   }
+
+  // Tela obrigatória de troca de senha (F5, A1-06): o servidor bloqueia tudo com 403 password_change_required
+  // enquanto a senha for fraca. Mesmo padrão da tela da pergunta de segurança; ao trocar, recarrega o painel.
+  let pwLock = null;
+  DG.forcePasswordChange = function () {
+    if (pwLock) return;
+    stopTab();
+    $('#app').hidden = true;
+    $('#login-view').hidden = true;
+    $('#overlay-root').replaceChildren();
+    sheetStack.length = 0;
+    const cur = el('input', { type: 'password', autocomplete: 'current-password', maxlength: 256, required: true });
+    const nw = el('input', { type: 'password', autocomplete: 'new-password', maxlength: 128, minlength: 8, required: true });
+    const again = el('input', { type: 'password', autocomplete: 'new-password', maxlength: 128, required: true });
+    const err = el('p', { class: 'error wrap', role: 'alert', hidden: true });
+    const save = el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar nova senha' });
+    const show = t => { err.textContent = t; err.hidden = false; };
+    const form = el('form', { class: 'stack', novalidate: true, on: { submit: async e => {
+      e.preventDefault();
+      err.hidden = true;
+      if (!cur.value) return show('Digite a sua senha atual.');
+      if (nw.value.length < 8) return show('A nova senha precisa ter pelo menos 8 caracteres.');
+      if (nw.value !== again.value) return show('As duas senhas novas não são iguais.');
+      save.disabled = true;
+      try {
+        await DG.api('password_change', { body: { current_password: cur.value, new_password: nw.value } });
+        DG.toast('Senha alterada.');
+        location.reload();
+      } catch (ex) { show(ex.message); save.disabled = false; }
+    } } },
+    el('label', { class: 'field' }, el('span', { text: 'Senha atual' }), cur),
+    el('label', { class: 'field' }, el('span', { text: 'Nova senha (mínimo 8 caracteres)' }), nw),
+    el('label', { class: 'field' }, el('span', { text: 'Repita a nova senha' }), again),
+    err, save);
+    const card = el('div', { class: 'login-card' }, el('h1', { text: 'Troque a sua senha' }),
+      el('p', { class: 'muted wrap', text: 'Sua senha atual é fraca. Para continuar usando o painel, escolha uma senha nova.' }),
+      form,
+      el('button', { class: 'btn block', type: 'button', text: 'Sair', on: { click: async () => { await DG.run(() => DG.api('logout', { body: {} })); location.reload(); } } }));
+    pwLock = el('main', { class: 'login a5-lock', 'aria-label': 'Troca de senha obrigatória' }, card);
+    document.body.append(pwLock);
+    cur.focus();
+  };
 
   async function loadUsers() {
     const box = $('#users-box');

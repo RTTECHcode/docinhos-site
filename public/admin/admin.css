@@ -359,4 +359,6 @@ p.error:not(:empty) { padding: 10px 12px; border-radius: var(--radius-sm); backg
 }
 .card > .empty-state:only-child { padding: 8px 4px; border: 0; background: none; }
 .stack > .empty-state, .card > .empty-state { margin: 0; }
+/* Fora de .stack/.card (ex.: busca sem resultado no Cardápio) a caixa não pode colar no botão de baixo. */
+div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 /* fim A9 */
