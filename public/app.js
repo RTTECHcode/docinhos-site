@@ -1073,6 +1073,10 @@ function handleOrderError(status, d) {
   if (code === 'login_required') { account = null; usePoints = 0; renderAccount(); renderPoints(); renderSummary(); toast('Sua sessão acabou. Entre na sua conta para usar pontos, ou faça o pedido sem pontos.', 6000); return; }
   if (code === 'insufficient_points') { usePoints = 0; loadAccount(); toast('Você não tem pontos suficientes. Atualizamos seu saldo; confira e tente de novo.', 6000); return; }
   if (code === 'points_locked') { usePoints = 0; loadAccount(); toast('Seus pontos estão bloqueados por segurança após a recuperação da conta. Faça o pedido sem usar pontos.', 6000); return; }
+  // F5 (A1-05): origem/tipo barrados pelo servidor. O site manda os dois certos; isso só acontece com página antiga, extensão ou proxy.
+  if (code === 'forbidden_origin' || status === 403 && !code) { toast('Não conseguimos confirmar de onde veio o pedido. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
+  if (code === 'unsupported_type' || status === 415) { toast('O pedido chegou num formato que não reconhecemos. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
+  if (status === 429) { toast('Recebemos muitos pedidos seguidos desta conexão ou deste telefone. Aguarde uns 10 minutos e tente de novo, ou chame a gente no WhatsApp.', 8000); return; }
   if (code === 'invalid_block') { toast('Os pontos são usados em blocos de 100. Escolha de novo.', 5000); return; }
   if (code === 'invalid_points') { toast('Quantidade de pontos inválida. Escolha de novo.', 5000); return; }
   if (code === 'discount_too_big') { toast('O desconto não pode ser maior que o valor dos itens. Use menos pontos.', 5000); return; }
