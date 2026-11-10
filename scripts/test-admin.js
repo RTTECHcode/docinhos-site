@@ -248,8 +248,9 @@ async function snapshot() {
   return out;
 }
 async function mkUser(username, role, password, weak) {
-  return (await Q('insert into admin_users (username, password_hash, role, weak_password) values ($1,$2,$3,$4) returning id',
-    [username, await I.hashPassword(password), role, !!weak]))[0].id;
+  const ah = await require('../api/_lib/auth').hashAnswer('resposta teste');
+  return (await Q('insert into admin_users (username, password_hash, role, weak_password, security_question, security_answer_hash, security_set_at) values ($1,$2,$3,$4,$5,$6, now()) returning id',
+    [username, await I.hashPassword(password), role, !!weak, 'prof_favorito', ah]))[0].id;
 }
 async function loginAs(username, password, ip) {
   const r = await post(null, 'login', { username, password }, { ip });
@@ -438,7 +439,7 @@ async function catalogTests() {
     const find = m => m.body.categories.flatMap(c => c.products).find(p => p.id === ctx.prod);
     let m = await menuCall();
     assert.equal(m.code, 200); assert.ok(find(m).complements.some(c => c.id === ctx.comp));
-    assert.deepEqual(Object.keys(m.body.settings).sort(), ['deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
+    assert.deepEqual(Object.keys(m.body.settings).sort(), ['defaultPauseLabel', 'deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: ctx.comp, paused: true })).status, 200);
     m = await menuCall(); assert.ok(!find(m).complements.some(c => c.id === ctx.comp));
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: ctx.comp, paused: false })).status, 200);
@@ -483,7 +484,7 @@ async function catalogTests() {
     assert.equal(c.status, 200);
     assert.ok(c.json.products.some(p => p.id === S.ctx.prod)); assert.ok(c.json.complements.some(x => x.id === S.ctx.comp && x.uses === 1));
     assert.ok(c.json.groups.some(g => g.id === S.ctx.group)); assert.ok(c.json.links.some(l => l.complement_id === S.ctx.comp && l.paused === false));
-    assert.deepEqual(Object.keys(c.json.settings).sort(), ['deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
+    assert.deepEqual(Object.keys(c.json.settings).sort(), ['defaultPauseLabel', 'deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
   });
 }
 
@@ -499,15 +500,18 @@ async function orderTests() {
     assert.equal((await get(S.adm, 'orders', { s: 'zz-teste cliente' })).json.orders.length, 1);
     assert.equal((await get(S.adm, 'orders', { s: code, f: 'paid' })).json.orders.length, 1);
     assert.equal((await get(S.adm, 'orders', { s: code, f: 'ready' })).json.orders.length, 0);
-    assert.ok((await get(S.adm, 'orders')).json.orders.length <= 100);
+    assert.ok((await get(S.adm, 'orders')).json.orders.length <= 200);
     assert.equal((await get(S.adm, 'orders', { s: "'; drop table orders; --" })).status, 200);
   });
   await t('status: new -> preparing -> ready -> delivered -> cancelled; inválidos => 400/404', async () => {
-    for (const s of ['preparing', 'ready', 'delivered', 'cancelled']) {
+    for (const s of ['accepted', 'preparing', 'ready', 'awaiting_delivery']) {
       const r = await post(S.adm, 'order_status', { id: row.id, status: s });
       assert.equal(r.status, 200); assert.equal(r.json.order.fulfillment_status, s);
       assert.equal((await Q('select fulfillment_status from orders where id=$1', [row.id]))[0].fulfillment_status, s);
     }
+    assert.equal((await post(S.adm, 'order_status', { id: row.id, status: 'preparing' })).status, 409); // não volta
+    assert.equal((await post(S.adm, 'order_status', { id: row.id, status: 'cancelled', reason: 'teste' })).status, 200);
+    assert.equal((await post(S.adm, 'order_status', { id: row.id, status: 'new' })).status, 409);
     assert.equal((await get(S.adm, 'orders', { f: 'cancelled', s: code })).json.orders.length, 1);
     for (const bad of ['pronto', '', null, 5]) assert.equal((await post(S.adm, 'order_status', { id: row.id, status: bad })).status, 400);
     assert.equal((await post(S.adm, 'order_status', { id: 'x', status: 'new' })).status, 400);
@@ -642,7 +646,7 @@ async function commandTests() {
     assert.equal(a.status, 200); assert.ok(a.json.rows.length > 0 && a.json.rows.length <= 50);
     const blob = JSON.stringify(a.json.rows);
     assert.ok(!blob.includes(S.pw.adm) && !blob.includes(S.pw.staff) && !/scrypt\$/.test(blob));
-    assert.ok(a.json.rows.some(r => r.action === 'login_falhou')); assert.ok(a.json.rows.some(r => r.action === 'produto_criado'));
+    assert.ok(a.json.rows.some(r => r.action === 'login_falhou')); assert.ok(a.json.rows.some(r => r.action === 'produto_editado'));
     const l = await loginAs(S.names.adm, S.pw.adm, S.ips.a);
     const out = await post(l.cookie, 'logout', {});
     assert.equal(out.status, 200); assert.ok(String(out.headers['set-cookie']).includes('Max-Age=0'));
