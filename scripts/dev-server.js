@@ -76,7 +76,8 @@ async function handleApi(req, res, url) {
 }
 
 function handleStatic(req, res, url) {
-  let rel = decodeURIComponent(url.pathname);
+  let rel;
+  try { rel = decodeURIComponent(url.pathname); } catch { res.statusCode = 400; return res.end('URL inválida'); }
   const base = path.join(ROOT, 'public');
   let file = path.normalize(path.join(base, rel));
   if (!file.startsWith(base)) { res.statusCode = 403; return res.end(); }
