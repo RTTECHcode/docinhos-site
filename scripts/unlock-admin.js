@@ -7,7 +7,7 @@
 // Para limpar também o bloqueio por IP, passe --ip <endereco>:
 //   node scripts/unlock-admin.js gigi --ip 203.0.113.7
 // Para limpar TODOS os bloqueios (todos os usuários e IPs): node scripts/unlock-admin.js --all
-const sql = require('../api/db');
+const sql = require('../api/_lib/db');
 
 (async () => {
   const args = process.argv.slice(2);

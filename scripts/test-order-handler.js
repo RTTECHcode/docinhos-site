@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const WITH_MP = process.argv.includes('--mp');
 if (!WITH_MP) delete process.env.MERCADOPAGO_ACCESS_TOKEN;
 
-const sql = require('../api/db');
+const sql = require('../api/_lib/db');
 const handler = require('../api/order');
 const { STORE_ADDRESS } = handler._internal;
 

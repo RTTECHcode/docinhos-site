@@ -7,7 +7,7 @@ module.exports = async (req, res) => {
   const code = req.query && typeof req.query.code === 'string' ? req.query.code : '';
   if (!CODE_RE.test(code)) return res.status(404).json({ error: 'Pedido não encontrado' });
   try {
-    const sql = require('./db');
+    const sql = require('./_lib/db');
     const [row] = await sql.query('select code, payment_status from orders where code = $1', [code]);
     if (!row) return res.status(404).json({ error: 'Pedido não encontrado' });
     return res.status(200).json({ code: row.code, payment_status: row.payment_status });
