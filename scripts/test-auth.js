@@ -104,6 +104,10 @@ async function test(name, fn) {
     assert.equal(auth.clientIp({ headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' } }), '203.0.113.9');
     assert.equal(auth.clientIp({ headers: {}, socket: { remoteAddress: '::1' } }), '::1');
     assert.equal(auth.clientIp({ headers: {} }), 'unknown');
+    // x-real-ip (preenchido pela Vercel) vale mais que o x-forwarded-for, que o cliente pode forjar
+    assert.equal(auth.clientIp({ headers: { 'x-real-ip': '198.51.100.7', 'x-forwarded-for': '203.0.113.9, 10.0.0.1' } }), '198.51.100.7');
+    assert.equal(auth.clientIp({ headers: { 'x-real-ip': '  ', 'x-forwarded-for': '203.0.113.9' } }), '203.0.113.9');
+    assert.equal(auth.clientIp(undefined), 'unknown');
     const c = auth.buildCookie('__Host-dg_cliente', 'tok', { maxAge: 60, sameSite: 'Lax' });
     assert.equal(c, '__Host-dg_cliente=tok; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=60');
     assert.ok(/SameSite=Strict/.test(auth.buildCookie('s', 't', { maxAge: 1 })));
