@@ -63,7 +63,7 @@ Corpo:
 Sucesso 201:
 
 ```json
-{ "id": 41, "code": "DG1A2B3C4D5E", "public_code": "DG-4821", "tracking_token": "<32 hex>",
+{ "id": 41, "code": "DG1A2B3C4D5E", "public_code": "DG-4821", "tracking_token": "<22 caracteres base64url (16 bytes)>",
   "subtotal_cents": 2000, "delivery_fee_cents": 900, "discount_cents": 1000, "points_redeemed": 100, "total_cents": 1900,
   "distance_km": 4.2, "delivery_method": "delivery", "address": "...", "items": [], "payment": { "type": "pix", "id": "...", "qr_code": "...", "qr_code_base64": "...", "expires_at": "..." } }
 ```
