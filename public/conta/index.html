@@ -165,13 +165,14 @@
         <strong id="pontos-saldo" class="points-balance">0</strong>
         <span id="pontos-valor" class="points-worth"></span>
       </div>
+      <p id="pontos-pausado" class="notice warn" hidden>O programa de pontos está pausado no momento: as compras não somam pontos novos e não dá para usar pontos. Seu saldo continua guardado.</p>
       <p id="pontos-bloqueio" class="notice warn" hidden></p>
       <p id="pontos-reservados" class="notice info" hidden></p>
       <div class="rules">
         <h2>Como funciona</h2>
         <ul>
-          <li>Você ganha 1 ponto a cada R$ 1 em produtos.</li>
-          <li>Cada 100 pontos valem R$ 10 de desconto no pedido.</li>
+          <li id="pontos-regra-ganho">Você ganha 1 ponto a cada R$ 1 em produtos.</li>
+          <li id="pontos-regra-resgate">Cada 100 pontos valem R$ 10 de desconto no pedido.</li>
           <li>Os pontos entram só depois que o pagamento é aprovado.</li>
           <li>Para usar, escolha os pontos na hora de finalizar o pedido, estando com a conta aberta.</li>
         </ul>

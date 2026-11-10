@@ -191,6 +191,7 @@ fetch('/api/menu').then(r => { if (!r.ok) throw 0; return r.json(); }).then(data
   statusEl.remove();
   menu = data.categories;
   setStoreState(data.store);
+  setPointsRules(data.points);
   renderCats();
   renderMenu();
   observeCats();
@@ -774,24 +775,44 @@ function currentFee() { return isPickup() ? 0 : (quote && quote.key === quoteKey
 function renderSummary() {
   const sub = cartTotal();
   const fee = currentFee();
-  const discount = usePoints / 100 * 1000;
+  const discount = usePoints / pointsRules.blockPoints * pointsRules.blockValueCents;
   fillSummary(document.querySelector('#payment-summary'), { subtotal: sub, fee, pickup: isPickup(), discount, total: sub + (fee || 0) - discount });
 }
 
-/* Pontos (C8/U5): só logado, blocos de 100 (= R$ 10), limitado pelo subtotal; o servidor confere tudo */
+/* Pontos (C8/U5): só logado, em blocos (padrão 100 pontos = R$ 10), limitado pelo subtotal; o servidor confere tudo.
+   A regra vem de /api/menu (Ajustes do painel); aqui só serve para montar a lista e o resumo. */
+let pointsRules = { enabled: true, pointsPerReal: 1, blockPoints: 100, blockValueCents: 1000 };
+function setPointsRules(r) {
+  const ok = n => Number.isInteger(n) && n > 0;
+  if (!r || typeof r.enabled !== 'boolean' || !ok(r.pointsPerReal) || !ok(r.blockPoints) || !ok(r.blockValueCents)) return;
+  pointsRules = { enabled: r.enabled, pointsPerReal: r.pointsPerReal, blockPoints: r.blockPoints, blockValueCents: r.blockValueCents };
+  renderPoints();
+  renderSummary();
+}
+// Recarrega a regra (ex.: o pedido foi recusado porque a regra mudou depois que a página abriu).
+function refreshPointsRules() {
+  fetch('/api/menu', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => { if (d) setPointsRules(d.points); }).catch(() => {});
+}
 function maxPointBlocks() {
   if (!account) return 0;
   const bal = Number(account.points && account.points.balance) || 0;
   const fee = currentFee() || 0;
   const maxDiscount = Math.min(cartTotal(), cartTotal() + fee - 100); // não passa do subtotal; sobra pelo menos R$ 1,00
-  return Math.max(0, Math.min(Math.floor(bal / 100), Math.floor(maxDiscount / 1000)));
+  return Math.max(0, Math.min(Math.floor(bal / pointsRules.blockPoints), Math.floor(maxDiscount / pointsRules.blockValueCents)));
 }
 function renderPoints() {
   pointsBoxEl.replaceChildren();
   const p = (text, cls) => { const e = document.createElement('p'); e.className = 'points-note' + (cls ? ' ' + cls : ''); e.textContent = text; return e; };
+  const BP = pointsRules.blockPoints, BV = brl(pointsRules.blockValueCents);
+  if (!pointsRules.enabled) {
+    usePoints = 0;
+    pointsBoxEl.hidden = !account;
+    if (account) pointsBoxEl.append(p('O programa de pontos está pausado no momento. Você pode comprar normalmente; seu saldo continua guardado.'));
+    return;
+  }
   if (!account) {
     usePoints = 0;
-    const note = p('Tem conta? Entre para usar seus pontos (100 pontos = R$ 10,00). ');
+    const note = p(`Tem conta? Entre para usar seus pontos (${BP} pontos = ${BV}). `);
     const a = document.createElement('a'); a.href = '/conta/'; a.textContent = 'Entrar';
     note.append(a);
     pointsBoxEl.append(note);
@@ -806,18 +827,19 @@ function renderPoints() {
     pointsBoxEl.append(p(`Seus pontos estão bloqueados por segurança até ${fmtWhen(lockedUntil)} (depois da recuperação da conta). Você pode comprar normalmente, sem usar pontos.`, 'warn'));
     return;
   }
-  if (bal < 100) {
+  if (bal < BP) {
     usePoints = 0;
-    pointsBoxEl.append(p(`Você tem ${bal} pontos. A partir de 100 pontos você troca por R$ 10,00 de desconto.`));
+    pointsBoxEl.append(p(`Você tem ${bal} pontos. A partir de ${BP} pontos você troca por ${BV} de desconto.`));
     return;
   }
   const max = maxPointBlocks();
   if (max < 1) {
     usePoints = 0;
-    pointsBoxEl.append(p(`Você tem ${bal} pontos, mas este pedido é pequeno para usar um bloco de 100 pontos (o desconto não pode passar do valor dos itens e o total mínimo é R$ 1,00).`));
+    pointsBoxEl.append(p(`Você tem ${bal} pontos, mas este pedido é pequeno para usar um bloco de ${BP} pontos (o desconto não pode passar do valor dos itens e o total mínimo é R$ 1,00).`));
     return;
   }
-  if (usePoints / 100 > max) usePoints = max * 100;
+  if (usePoints % BP !== 0) usePoints = 0; // a regra mudou: escolhe de novo
+  if (usePoints / BP > max) usePoints = max * BP;
   const label = document.createElement('label');
   label.textContent = `Usar pontos (você tem ${bal})`;
   const sel = document.createElement('select');
@@ -825,8 +847,8 @@ function renderPoints() {
   sel.name = 'use_points_ui';
   for (let b = 0; b <= max; b++) {
     const o = document.createElement('option');
-    o.value = String(b * 100);
-    o.textContent = b === 0 ? 'Não usar pontos' : `${b * 100} pontos (− ${brl(b * 1000)})`;
+    o.value = String(b * BP);
+    o.textContent = b === 0 ? 'Não usar pontos' : `${b * BP} pontos (− ${brl(b * pointsRules.blockValueCents)})`;
     sel.append(o);
   }
   sel.value = String(usePoints);
@@ -1099,9 +1121,11 @@ function handleOrderError(status, d) {
   if (code === 'forbidden_origin' || status === 403 && !code) { toast('Não conseguimos confirmar de onde veio o pedido. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
   if (code === 'unsupported_type' || status === 415) { toast('O pedido chegou num formato que não reconhecemos. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
   if (status === 429) { toast('Recebemos muitos pedidos seguidos desta conexão ou deste telefone. Aguarde uns 10 minutos e tente de novo, ou chame a gente no WhatsApp.', 8000); return; }
-  if (code === 'invalid_block') { toast('Os pontos são usados em blocos de 100. Escolha de novo.', 5000); return; }
+  // Regra de pontos pode ter mudado depois que a página abriu: recarrega a regra e mostra a mensagem do servidor.
+  if (code === 'points_disabled') { usePoints = 0; refreshPointsRules(); toast('O programa de pontos está pausado no momento. Faça o pedido sem usar pontos.', 6000); return; }
+  if (code === 'invalid_block') { usePoints = 0; refreshPointsRules(); toast((d && d.error) || 'Quantidade de pontos fora da regra. Escolha de novo.', 6000); return; }
   if (code === 'invalid_points') { toast('Quantidade de pontos inválida. Escolha de novo.', 5000); return; }
-  if (code === 'discount_too_big') { toast('O desconto não pode ser maior que o valor dos itens. Use menos pontos.', 5000); return; }
+  if (code === 'discount_too_big') { refreshPointsRules(); toast('O desconto não pode ser maior que o valor dos itens. Use menos pontos.', 5000); return; }
   if (['out_of_area', 'cep_not_found', 'address_not_found', 'origin_unavailable', 'invalid_cep', 'invalid_address'].includes(code)) {
     quote = null;
     const msg = quoteErrorText(status, d);

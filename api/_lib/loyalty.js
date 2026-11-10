@@ -2,10 +2,12 @@
 /*
  * Pontos de fidelidade (O11). Tudo calculado no servidor; o saldo é SEMPRE a soma de loyalty_ledger.
  *
- * Regras:
- *  - Ganho: 1 ponto por R$ 1,00 do subtotal pago, sem frete, depois do desconto, arredondado para baixo.
- *  - Resgate: blocos de 100 pontos; 100 pontos = R$ 10,00 de desconto; desconto nunca passa do subtotal.
- *  - Crédito só quando o pagamento é aprovado (webhook do Mercado Pago, valor conferido).
+ * Regras (editáveis na aba Ajustes do painel e guardadas na tabela settings; padrão em DEFAULT_RULES):
+ *  - Ganho: N pontos por R$ 1,00 do subtotal pago (padrão 1), sem frete, depois do desconto, arredondado para baixo.
+ *  - Resgate: blocos de B pontos (padrão 100) valem R$ V de desconto (padrão R$ 10,00); desconto nunca passa do subtotal.
+ *  - Programa desligado: não credita pontos novos e não aceita resgate (o saldo continua guardado).
+ *  - Crédito só quando o pagamento é aprovado (webhook do Mercado Pago, valor conferido), pela regra em vigor nesse momento.
+ *    O que já foi creditado ou reservado não muda quando a regra muda (o ledger guarda os pontos, o pedido guarda o desconto).
  *
  * Linhas do ledger (unique (order_id, kind), então nenhuma operação por pedido se repete):
  *  earn            + pontos ganhos (pagamento aprovado)
@@ -15,42 +17,111 @@
  *  reversal        +/- estorno de pagamento (refunded/charged_back): tira o ganho e devolve o gasto, em uma linha só
  *  adjust          +/- ajuste manual ou correção (ex.: aprovação que chegou depois de a reserva ser liberada)
  */
-const BLOCK_POINTS = 100;
-const BLOCK_CENTS = 1000;           // 100 pontos = R$ 10,00
+const BLOCK_POINTS = 100;           // padrão: 100 pontos = R$ 10,00
+const BLOCK_CENTS = 1000;
 const RESERVE_TTL = '24 hours';     // reserva de pagamento não concluído é devolvida depois disso
 const MIN_CHARGE_CENTS = 100;       // o Mercado Pago não processa pedido de valor zero: mínimo R$ 1,00 a pagar
 const KINDS = ['earn', 'redeem_reserve', 'redeem_release', 'redeem_commit', 'reversal', 'adjust'];
 
 class LoyaltyError extends Error { constructor(status, message, code) { super(message); this.status = status; this.code = code || null; } }
 
+// ---------- Regra do programa (settings: points_enabled, points_per_real, points_block_points, points_block_value_cents) ----------
+const DEFAULT_RULES = Object.freeze({ enabled: true, points_per_real: 1, block_points: BLOCK_POINTS, block_value_cents: BLOCK_CENTS });
+const RULE_KEYS = Object.freeze({
+  enabled: 'points_enabled', points_per_real: 'points_per_real', block_points: 'points_block_points', block_value_cents: 'points_block_value_cents'
+});
+const RULE_LIMITS = Object.freeze({
+  points_per_real: [1, 10],          // pontos ganhos por R$ 1,00
+  block_points: [10, 10000],         // pontos por resgate
+  block_value_cents: [100, 10000],   // desconto por resgate: R$ 1,00 a R$ 100,00
+  max_return_pct: 50                 // o desconto devolvido nunca passa de 50% do valor gasto para juntar os pontos
+});
+const moneyBR = cents => 'R$ ' + (cents / 100).toFixed(2).replace('.', ',');
+// Quanto do valor gasto volta em desconto (em %). Padrão: 1 ponto por R$ 1 e 100 pontos = R$ 10 -> 10%.
+const returnPct = r => (r.points_per_real * r.block_value_cents) / r.block_points;
+
+function validateRules(input) {
+  const err = message => { throw new LoyaltyError(400, message, 'invalid_rules'); };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) err('Regra de pontos inválida.');
+  if (typeof input.enabled !== 'boolean') err('Informe se o programa de pontos está ligado ou desligado.');
+  const int = (v, [min, max], label) => {
+    if (!Number.isInteger(v) || v < min || v > max) err(`${label}: informe um número inteiro de ${min} a ${max}.`);
+    return v;
+  };
+  const out = {
+    enabled: input.enabled,
+    points_per_real: int(input.points_per_real, RULE_LIMITS.points_per_real, 'Pontos por R$ 1,00 gasto'),
+    block_points: int(input.block_points, RULE_LIMITS.block_points, 'Pontos necessários por resgate'),
+    block_value_cents: input.block_value_cents
+  };
+  const [vmin, vmax] = RULE_LIMITS.block_value_cents;
+  if (!Number.isInteger(out.block_value_cents) || out.block_value_cents < vmin || out.block_value_cents > vmax) {
+    err(`Desconto por resgate: informe um valor de ${moneyBR(vmin)} a ${moneyBR(vmax)}.`);
+  }
+  if (returnPct(out) > RULE_LIMITS.max_return_pct) {
+    err(`Com essa regra o cliente receberia mais de ${RULE_LIMITS.max_return_pct}% do valor gasto de volta em desconto. Aumente os pontos por resgate ou diminua o desconto.`);
+  }
+  return out;
+}
+
+// Regra em vigor. Chave ausente = padrão; valor estragado no banco = regra padrão inteira (nunca uma regra pela metade).
+async function getRules(sql) {
+  const rows = await sql.query('select key, value from settings where key = any($1::text[])', [Object.values(RULE_KEYS)]);
+  const st = {};
+  for (const r of rows) st[r.key] = r.value;
+  const num = (k, d) => (st[k] === undefined ? d : (/^\d{1,9}$/.test(String(st[k])) ? Number(st[k]) : NaN));
+  try {
+    return validateRules({
+      enabled: st[RULE_KEYS.enabled] === undefined ? DEFAULT_RULES.enabled : st[RULE_KEYS.enabled] === '1',
+      points_per_real: num(RULE_KEYS.points_per_real, DEFAULT_RULES.points_per_real),
+      block_points: num(RULE_KEYS.block_points, DEFAULT_RULES.block_points),
+      block_value_cents: num(RULE_KEYS.block_value_cents, DEFAULT_RULES.block_value_cents)
+    });
+  } catch { return { ...DEFAULT_RULES }; }
+}
+
+// Grava as 4 chaves numa instrução só (tudo ou nada). Lança LoyaltyError 400 se a regra for inválida.
+async function saveRules(sql, input) {
+  const r = validateRules(input);
+  await sql.query(
+    `insert into settings (key, value) values ($1, $2), ($3, $4), ($5, $6), ($7, $8)
+     on conflict (key) do update set value = excluded.value`,
+    [RULE_KEYS.enabled, r.enabled ? '1' : '0', RULE_KEYS.points_per_real, String(r.points_per_real),
+      RULE_KEYS.block_points, String(r.block_points), RULE_KEYS.block_value_cents, String(r.block_value_cents)]);
+  return r;
+}
+
 // ---------- Funções puras ----------
-const earnPoints = (subtotalCents, discountCents = 0) => Math.max(0, Math.floor((subtotalCents - discountCents) / 100));
-const discountForPoints = points => (points / BLOCK_POINTS) * BLOCK_CENTS;
-const maxRedeemablePoints = (subtotalCents, balance) =>
-  Math.max(0, Math.floor(Math.min(balance, Math.floor(subtotalCents / BLOCK_CENTS) * BLOCK_POINTS) / BLOCK_POINTS) * BLOCK_POINTS);
+const earnPoints = (subtotalCents, discountCents = 0, rules = DEFAULT_RULES) =>
+  Math.max(0, Math.floor(((subtotalCents - discountCents) * rules.points_per_real) / 100));
+const discountForPoints = (points, rules = DEFAULT_RULES) => (points / rules.block_points) * rules.block_value_cents;
+const maxRedeemablePoints = (subtotalCents, balance, rules = DEFAULT_RULES) =>
+  Math.max(0, Math.min(Math.floor(Math.max(0, balance) / rules.block_points), Math.floor(subtotalCents / rules.block_value_cents)) * rules.block_points);
 
 const fmtDateTimeBR = date => new Intl.DateTimeFormat('pt-BR', {
   timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
 }).format(date).replace(',', ' às');
 
 /**
- * Valida e calcula um resgate. points = o que o cliente pediu (inteiro, múltiplo de 100).
- * Lança LoyaltyError (mensagens em português). Retorna { points, discount_cents }.
+ * Valida e calcula um resgate. points = o que o cliente pediu (inteiro, múltiplo do bloco da regra).
+ * rules = regra em vigor (getRules). Lança LoyaltyError (mensagens em português). Retorna { points, discount_cents }.
  */
-function validateRedemption({ points, subtotalCents, balance, lockedUntil, now = new Date() }) {
+function validateRedemption({ points, subtotalCents, balance, lockedUntil, now = new Date(), rules = DEFAULT_RULES }) {
   if (points === undefined || points === null || points === 0) return { points: 0, discount_cents: 0 };
   if (!Number.isInteger(points) || points < 0) throw new LoyaltyError(400, 'Quantidade de pontos inválida.', 'invalid_points');
-  if (points % BLOCK_POINTS !== 0) throw new LoyaltyError(400, `Os pontos são usados em blocos de ${BLOCK_POINTS} (${BLOCK_POINTS} pontos = R$ 10,00).`, 'invalid_block');
+  if (!rules.enabled) throw new LoyaltyError(409, 'O programa de pontos está pausado no momento. Faça o pedido sem usar pontos; seu saldo continua guardado.', 'points_disabled');
+  const bp = rules.block_points, bv = moneyBR(rules.block_value_cents);
+  if (points % bp !== 0) throw new LoyaltyError(400, `Os pontos são usados em blocos de ${bp} (${bp} pontos = ${bv}).`, 'invalid_block');
   if (lockedUntil && new Date(lockedUntil).getTime() > now.getTime()) {
     throw new LoyaltyError(423, `O uso de pontos está bloqueado até ${fmtDateTimeBR(new Date(lockedUntil))} por segurança (recuperação de conta recente). Você pode fazer o pedido sem usar pontos.`, 'points_locked');
   }
   if (points > balance) throw new LoyaltyError(409, `Saldo de pontos insuficiente: você tem ${Math.max(0, balance)} pontos.`, 'insufficient_points');
-  const discount = discountForPoints(points);
+  const discount = discountForPoints(points, rules);
   if (discount > subtotalCents) {
-    const max = maxRedeemablePoints(subtotalCents, balance);
+    const max = maxRedeemablePoints(subtotalCents, balance, rules);
     throw new LoyaltyError(400, max > 0
       ? `O desconto não pode passar do valor dos produtos. Neste pedido você pode usar até ${max} pontos.`
-      : 'O valor dos produtos é menor que o desconto de 100 pontos (R$ 10,00).', 'discount_too_big');
+      : `O valor dos produtos é menor que o desconto de ${bp} pontos (${bv}).`, 'discount_too_big');
   }
   return { points, discount_cents: discount };
 }
@@ -72,6 +143,7 @@ async function releaseStaleReserves(sql, customerId = null) {
 // Saldo = soma do ledger. Reservas em aberto já estão descontadas (o cliente não pode gastar duas vezes).
 async function getBalance(sql, customerId) {
   await releaseStaleReserves(sql, customerId);
+  const rules = await getRules(sql);
   const [row] = await sql.query(
     `select coalesce(sum(points), 0)::int as balance,
             coalesce(sum(points) filter (where kind = 'earn'), 0)::int as earned_total,
@@ -83,7 +155,8 @@ async function getBalance(sql, customerId) {
   return {
     balance: row.balance, reserved: row.reserved, earned_total: row.earned_total,
     locked_until: lockedUntil && lockedUntil.getTime() > Date.now() ? lockedUntil.toISOString() : null,
-    points_per_real: 1, block_points: BLOCK_POINTS, block_value_cents: BLOCK_CENTS
+    points_enabled: rules.enabled, points_per_real: rules.points_per_real, block_points: rules.block_points, block_value_cents: rules.block_value_cents,
+    rules
   };
 }
 
@@ -156,7 +229,9 @@ async function onPaymentStatus(sql, orderId) {
       }
       if ((await insertRow(sql, { customerId, orderId, kind: 'redeem_commit', points: 0, note: 'resgate confirmado' })).length) applied.push('redeem_commit');
     }
-    const pts = earnPoints(o.subtotal_cents, o.discount_cents);
+    // Ganho pela regra em vigor na aprovação. Programa desligado: não credita (o resgate acima já foi confirmado).
+    const rules = await getRules(sql);
+    const pts = rules.enabled ? earnPoints(o.subtotal_cents, o.discount_cents, rules) : 0;
     if (pts > 0 && (await insertRow(sql, { customerId, orderId, kind: 'earn', points: pts, note: 'pontos do pedido pago' })).length) applied.push('earn');
   } else if (status === 'rejected' || status === 'cancelled' || status === 'expired') {
     if (await releaseReserve(sql, orderId, `pagamento ${status}`)) applied.push('redeem_release');
@@ -180,6 +255,7 @@ async function adjust(sql, { customerId, points, note }) {
 
 module.exports = {
   BLOCK_POINTS, BLOCK_CENTS, MIN_CHARGE_CENTS, KINDS, LoyaltyError,
+  DEFAULT_RULES, RULE_KEYS, RULE_LIMITS, validateRules, getRules, saveRules,
   earnPoints, discountForPoints, maxRedeemablePoints, validateRedemption,
   releaseStaleReserves, getBalance, listLedger, reserve, releaseReserve, onPaymentStatus, adjust
 };
