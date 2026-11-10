@@ -12,6 +12,13 @@
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<div class="topbar" id="topbar">
+  <span id="store-badge" class="store-badge" role="status" hidden></span>
+  <div class="topbar-actions">
+    <button type="button" id="recent-btn" class="topbar-btn" hidden>Pedidos recentes</button>
+    <span id="account-area" class="account-area"></span>
+  </div>
+</div>
 <header class="hero">
   <a class="hero-link" href="/quem-somos.html">Quem somos</a>
   <div class="hero-badge"><img src="/images/branding/logo.jpg" alt="Docinhos da Gigi" class="hero-logo"></div>
@@ -31,6 +38,7 @@
   <span>Docinhos da Gigi</span>
   <span class="footer-note">Peça fácil, receba feliz</span>
   <a class="footer-link" href="/quem-somos.html">Quem somos</a>
+  <a class="footer-link" href="/privacidade.html">Privacidade</a>
 </footer>
 
 <button id="cat-fab" class="cat-fab" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="cat-sheet">
@@ -65,6 +73,7 @@
   <div class="modal-panel" role="dialog" aria-modal="true">
     <button class="modal-close" data-close aria-label="Fechar">&times;</button>
     <h2>Seu carrinho</h2>
+    <div id="cart-notice" class="cart-notice" role="alert" hidden></div>
     <div id="cart-items"></div>
     <div id="cart-total" class="cart-total"></div>
     <button id="checkout-btn" class="button primary full">Finalizar pedido</button>
@@ -84,8 +93,17 @@
         <label class="radio"><input type="radio" name="delivery" value="delivery" checked> Entrega</label>
         <label class="radio"><input type="radio" name="delivery" value="pickup"> Retirada</label>
       </fieldset>
-      <label id="address-field">Endereço de entrega<input name="address" required autocomplete="street-address" placeholder="Rua, número, bairro, ponto de referência"></label>
-      <div id="pickup-info" class="pickup-info" hidden><strong>Retire em:</strong> <span id="store-address"></span></div>
+      <div id="address-field" class="address-field">
+        <label>CEP<input name="cep" required inputmode="numeric" maxlength="9" autocomplete="postal-code" placeholder="00000-000"></label>
+        <label>Rua e bairro<input name="address" required autocomplete="address-line1" placeholder="Ex.: Rua das Flores, Centro"></label>
+        <div class="field-row">
+          <label>Número<input name="address_number" required inputmode="numeric" maxlength="10" autocomplete="off" placeholder="100"></label>
+          <label>Complemento<input name="complement" maxlength="60" autocomplete="address-line2" placeholder="Apto, bloco, referência"></label>
+        </div>
+        <button type="button" id="quote-btn" class="button secondary full">Calcular frete</button>
+        <p id="quote-box" class="quote-box" role="status" aria-live="polite" hidden></p>
+      </div>
+      <div id="pickup-info" class="pickup-info" hidden><strong>Retire em:</strong> <span id="store-address"></span><br>Frete: R$ 0,00. Estamos preparando seu pedido e vamos avisar por aqui e pelo WhatsApp.</div>
       <label>Observações<textarea name="notes" rows="2" placeholder="Ex.: sem açúcar, entregar às 15h"></textarea></label>
       <fieldset class="pay-choice">
         <legend>Forma de pagamento</legend>
@@ -98,13 +116,17 @@
           <span class="pay-option-text"><strong>Cartão de crédito ou débito</strong><small>Você paga em uma página segura do Mercado Pago</small></span>
         </label>
       </fieldset>
-      <div id="payment-summary" class="cart-total"></div>
+      <div id="points-box" class="points-box" hidden></div>
+      <div id="payment-summary" class="order-summary"></div>
+      <p id="store-closed-note" class="store-closed-note" role="alert" hidden></p>
       <button type="submit" class="button primary full">Enviar pedido</button>
       <p class="checkout-note">Você paga com Pix, crédito ou débito. Depois, é só avisar a Gigi pelo WhatsApp.</p>
     </form>
     <div id="payment-step" class="payment-step" hidden>
       <p class="payment-code" id="payment-code-row" hidden>Pedido <strong id="payment-code"></strong></p>
       <p class="payment-text" id="payment-text"></p>
+      <div id="pay-summary" class="order-summary" hidden></div>
+      <p class="payment-track" id="pay-track" hidden><a id="pay-track-link" href="#">Acompanhar meu pedido</a></p>
       <p id="pay-status" class="pay-status" role="status" aria-live="polite" hidden></p>
       <section id="pix-box" class="pix-box" aria-label="Pagamento por Pix" hidden>
         <p class="pix-instr">Abra o app do seu banco &gt; Pix &gt; Pix Copia e Cola</p>
@@ -120,7 +142,17 @@
       <p class="payment-support" id="pay-support" hidden>Você paga com segurança no Mercado Pago</p>
       <button type="button" id="pay-retry" class="button secondary full" hidden>Refazer pedido</button>
       <a id="pay-wa" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Enviar pedido no WhatsApp</a>
+      <a id="pay-help" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Falar com a Gigi no WhatsApp</a>
     </div>
+  </div>
+</div>
+
+<div id="recent-modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="recent-title">
+    <button class="modal-close" data-close aria-label="Fechar">&times;</button>
+    <h2 id="recent-title">Seus pedidos recentes</h2>
+    <ul id="recent-list" class="recent-list"></ul>
   </div>
 </div>
 
