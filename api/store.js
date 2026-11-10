@@ -18,10 +18,7 @@ function throttled(ip, now = Date.now()) {
   if (hits.size > 2000) for (const [k, v] of hits) if (!v.some(t => now - t < QUOTE_WINDOW_MS)) hits.delete(k);
   return list.length > QUOTE_MAX_PER_IP;
 }
-const clientIp = req => {
-  const xf = req.headers && req.headers['x-forwarded-for'];
-  return (typeof xf === 'string' && xf.split(',')[0].trim()) || (req.socket && req.socket.remoteAddress) || 'unknown';
-};
+const { clientIp } = require('./_lib/auth'); // x-real-ip (Vercel) primeiro; x-forwarded-for só como reserva
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');

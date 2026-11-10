@@ -132,11 +132,14 @@ function evaluateAttemptLock({ failsMs, nowMs, max, lockMs }) {
 }
 
 // ---------- HTTP ----------
+// IP do cliente. Na Vercel, x-real-ip é preenchido pela própria plataforma (o cliente não consegue forjar);
+// o primeiro valor do x-forwarded-for fica só como reserva (fora da Vercel, ex.: servidor local).
 function clientIp(req) {
   const h = (req && req.headers) || {};
+  const real = typeof h['x-real-ip'] === 'string' ? h['x-real-ip'].trim() : '';
   const xf = h['x-forwarded-for'];
   const first = typeof xf === 'string' ? xf.split(',')[0].trim() : '';
-  return (first || (req && req.socket && req.socket.remoteAddress) || 'unknown').slice(0, 64);
+  return (real || first || (req && req.socket && req.socket.remoteAddress) || 'unknown').slice(0, 64);
 }
 function parseCookies(header) {
   const out = {};

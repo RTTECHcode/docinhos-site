@@ -5,6 +5,7 @@ const storeHours = require('./_lib/store-hours');
 const ordersLib = require('./_lib/orders');
 const loyalty = require('./_lib/loyalty');
 const customerLib = require('./_lib/customer');
+const auth = require('./_lib/auth');
 
 const SITE_URL = 'https://docinhos-site.vercel.app';
 const MP_PREFERENCES_URL = 'https://api.mercadopago.com/checkout/preferences';
@@ -19,6 +20,7 @@ const DEFAULT_PAUSE_LABEL = 'volto logo <3';
 const MAX_ITEMS = 30;
 const MAX_ITEM_QTY = 20;
 const MAX_ORDERS_PER_PHONE = 5; // por janela de 10 minutos
+const MAX_ORDERS_PER_IP = 10;   // por janela de 10 minutos (A1-05: trocar o telefone não burla o limite)
 const MAX_INT4 = 2147483647;
 
 // Decisões de pagamento:
@@ -331,6 +333,10 @@ const send = (res, status, payload) => res.status(status).json(payload);
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
+  // A1-05: só o próprio site cria pedido. Origin igual ao Host (e Sec-Fetch-Site same-origin quando vier) e corpo JSON
+  // (text/plain dispensaria o preflight de CORS e deixaria outro site postar pedidos).
+  if (!auth.sameOrigin(req)) return res.status(403).json({ error: 'Origem não permitida.', code: 'forbidden_origin' });
+  if (!auth.isJsonType(req)) return res.status(415).json({ error: 'Envie os dados como JSON.', code: 'unsupported_type' });
   try {
     const sql = require('./_lib/db'); // carregado aqui para testar a função pura sem DATABASE_URL
     let b = req.body;
@@ -387,29 +393,33 @@ module.exports = async (req, res) => {
       fail('O valor a pagar precisa ser de pelo menos R$ 1,00. Use menos pontos neste pedido.');
     }
 
-    // Limite de abuso: o insert só acontece se o telefone tiver < 5 pedidos nos últimos 10 min e se o DG-#### não
-    // existir entre os pedidos dos últimos 90 dias (checagem e inserção na mesma instrução, para reduzir corridas).
+    // Limite de abuso: o insert só acontece se o telefone tiver < 5 pedidos e o IP < 10 pedidos nos últimos 10 min, e se o
+    // DG-#### não existir entre os pedidos dos últimos 90 dias (checagem e inserção na mesma instrução, para reduzir corridas).
+    const ip = auth.clientIp(req);
     const tracking = ordersLib.newTrackingToken();
     let order = null;
     for (let attempt = 0; attempt < MAX_CODE_TRIES && !order; attempt++) {
       const publicCode = ordersLib.newPublicCode();
       const rows = await sql.query(
         `insert into orders (code, public_code, tracking_token_hash, customer_id, customer_name, customer_phone, delivery_method, address, items,
-                             subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, total_cents, distance_km, notes, payment_status)
+                             subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, total_cents, distance_km, notes, payment_status, client_ip)
          select $1::text, $2::text, $3::text, $4::int, $5::text, $6::text, $7::text, $8::text, $9::jsonb,
-                $10::int, $11::int, $12::int, $13::int, $14::int, $15::numeric, $16::text, 'pending'
+                $10::int, $11::int, $12::int, $13::int, $14::int, $15::numeric, $16::text, 'pending', $18::text
           where (select count(*) from orders
                   where regexp_replace(customer_phone, '\\D', '', 'g') = $6::text
                     and created_at > now() - interval '10 minutes') < $17::int
+            and (select count(*) from orders where client_ip = $18::text and created_at > now() - interval '10 minutes') < $19::int
             and not exists (select 1 from orders where public_code = $2::text and created_at > now() - interval '${ordersLib.PUBLIC_CODE_WINDOW}')
          returning id, code, public_code, total_cents`,
         [newCode(), publicCode, tracking.hash, session ? session.customer.id : null, customer.name, customer.phone, customer.method, customer.address,
-          JSON.stringify(priced.items), priced.subtotal_cents, deliveryFee, discount, pointsRedeemed, total, distanceKm, customer.notes, MAX_ORDERS_PER_PHONE]
+          JSON.stringify(priced.items), priced.subtotal_cents, deliveryFee, discount, pointsRedeemed, total, distanceKm, customer.notes, MAX_ORDERS_PER_PHONE,
+          ip, MAX_ORDERS_PER_IP]
       );
       if (rows.length) { order = rows[0]; break; }
-      const [{ n }] = await sql.query(
-        `select count(*)::int n from orders where regexp_replace(customer_phone, '\\D', '', 'g') = $1 and created_at > now() - interval '10 minutes'`, [customer.phone]);
-      if (n >= MAX_ORDERS_PER_PHONE) return res.status(429).json({ error: 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.' });
+      const [{ n, by_ip }] = await sql.query(
+        `select count(*) filter (where regexp_replace(customer_phone, '\\D', '', 'g') = $1)::int n, count(*) filter (where client_ip = $2)::int by_ip
+           from orders where created_at > now() - interval '10 minutes'`, [customer.phone, ip]);
+      if (n >= MAX_ORDERS_PER_PHONE || by_ip >= MAX_ORDERS_PER_IP) return res.status(429).json({ error: 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.' });
       // senão foi colisão do DG-####: sorteia outro
     }
     if (!order) throw new Error('não foi possível gerar um código de pedido único');
@@ -472,4 +482,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };
+module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };

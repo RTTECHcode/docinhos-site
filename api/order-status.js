@@ -3,10 +3,24 @@
 // O DG-#### (public_code) NÃO serve de chave de consulta: tem só 9000 combinações e seria adivinhável.
 const CODE_RE = /^DG[0-9A-F]{10}$/;
 const { TRACKING_RE, hashTrackingToken, trackingView, TRACKING_COLUMNS, sweepOrders } = require('./_lib/orders');
+const { clientIp } = require('./_lib/auth');
+
+// A1-12: limite simples por IP, em memória (por instância). A página do pedido consulta a cada 5 s (120 em 10 min por aba).
+const WINDOW_MS = 10 * 60 * 1000;
+const MAX_PER_IP = 300;
+const hits = new Map();
+function throttled(ip, now = Date.now()) {
+  const list = (hits.get(ip) || []).filter(t => now - t < WINDOW_MS);
+  list.push(now);
+  hits.set(ip, list);
+  if (hits.size > 2000) for (const [k, v] of hits) if (!v.some(t => now - t < WINDOW_MS)) hits.delete(k);
+  return list.length > MAX_PER_IP;
+}
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET') return res.status(405).json({ error: 'Método não permitido' });
+  if (throttled(clientIp(req))) return res.status(429).json({ error: 'Muitas consultas em pouco tempo. Aguarde alguns minutos.', code: 'rate_limited' });
   const query = req.query || {};
   const token = typeof query.t === 'string' ? query.t : '';
   const code = typeof query.code === 'string' ? query.code : '';
@@ -31,4 +45,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { CODE_RE };
+module.exports._internal = { CODE_RE, throttled, MAX_PER_IP };

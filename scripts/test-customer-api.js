@@ -160,7 +160,8 @@ async function cleanup() {
     const r = await reg({}, { ip });
     assert.equal(r.status, 429); assert.equal(r.body.code, 'locked');
     assert.equal((await reg({ phone: A.phone }, { ip })).status, 429, 'duplicado também barrado');
-    assert.equal((await Q(`select count(*)::int n from customer_login_attempts where phone = '#cadastro' and ip = $1`, [ip]))[0].n, 15);
+    assert.equal((await Q(`select count(*)::int n from customer_login_attempts where scope = 'register' and ip = $1`, [ip]))[0].n, 15);
+    assert.equal((await Q(`select count(*)::int n from customer_login_attempts where phone like '#%' and ip = $1`, [ip]))[0].n, 0, 'sem chave falsa nova');
     assert.equal((await reg({}, { ip: nextIp() })).status, 201, 'outro IP segue livre');
   });
   await t('[item 1] tentativas de cadastro não contam como erro de login do IP', async () => {
@@ -368,11 +369,22 @@ async function cleanup() {
     for (let i = 0; i < 5; i++) await post('password', { current_password: 'errada-' + i + 'xx', new_password: 'Outra-Senha-1' }, { cookie: ck1 });
     assert.equal((await post('password', { current_password: PASS, new_password: 'Outra-Senha-1' }, { cookie: ck1 })).status, 429);
     assert.equal((await post('login', { phone: p1, password: PASS })).status, 200, 'login livre');
-    assert.equal((await Q(`select count(*)::int n from customer_login_attempts where phone = $1 and ok = false`, ['+55' + p1]))[0].n, 0, 'nada no login');
+    assert.equal((await Q(`select count(*)::int n from customer_login_attempts where scope = 'login' and phone = $1 and ok = false`, ['+55' + p1]))[0].n, 0, 'nada no login');
+    assert.equal((await Q(`select count(*)::int n from customer_login_attempts where scope = 'password' and phone = $1 and ok = false`, ['+55' + p1]))[0].n, 5, 'falhas no scope password');
     const p2 = newPhone(); const ck2 = cookieOf(await reg({ phone: p2, name: 'ZZ-a10 Sep2' }));
     for (let i = 0; i < 5; i++) await post('login', { phone: p2, password: 'errada-123' });
     assert.equal((await post('login', { phone: p2, password: PASS })).status, 429, 'login bloqueado');
     assert.equal((await post('password', { current_password: PASS, new_password: 'Outra-Senha-2' }, { cookie: ck2 })).status, 200, 'troca livre');
+  });
+  await t('[F5 scopes] linhas antigas (#cadastro e #senha:) continuam contando: bloqueios em curso não se perdem', async () => {
+    const ip = nextIp();
+    await Q(`insert into customer_login_attempts (scope, phone, ip, ok) select 'login', '#cadastro', $1, true from generate_series(1, 15)`, [ip]);
+    const r = await reg({}, { ip });
+    assert.equal(r.status, 429, 'cadastro barrado pelas linhas antigas');
+    const p = newPhone(); const ck = cookieOf(await reg({ phone: p, name: 'ZZ-a10 Legado' }));
+    await Q(`insert into customer_login_attempts (scope, phone, ip, ok) select 'login', $1, '198.19.249.2', false from generate_series(1, 5)`, ['#senha:+55' + p]);
+    assert.equal((await post('password', { current_password: PASS, new_password: 'Outra-Senha-3' }, { cookie: ck })).status, 429, 'troca barrada pelas linhas antigas');
+    assert.equal((await post('login', { phone: p, password: PASS })).status, 200, 'login segue livre');
   });
 
   console.log('\nPedidos e pontos (isolamento entre clientes)');

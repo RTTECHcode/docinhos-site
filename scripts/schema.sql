@@ -168,7 +168,7 @@ create index if not exists customer_sessions_customer_idx on customer_sessions(c
 create index if not exists customer_sessions_exp_idx on customer_sessions(expires_at);
 create table if not exists customer_login_attempts (
      id bigserial primary key,
-     scope text not null check (scope in ('login','recover')),
+     scope text not null check (scope in ('login','recover','register','password')),
      phone text not null,
      ip text,
      ok boolean not null default false,
@@ -204,6 +204,9 @@ create index if not exists orders_public_code_idx on orders(public_code, created
 create unique index if not exists orders_tracking_token_uq on orders(tracking_token_hash) where tracking_token_hash is not null;
 create index if not exists orders_created_idx on orders(created_at desc);
 create index if not exists orders_customer_idx on orders(customer_id, created_at desc);
+-- 2026-11-10 (scripts/migrate-2026-11-10-scopes.js): IP do pedido, para o limite por IP (A1-05)
+alter table orders add column if not exists client_ip text;
+create index if not exists orders_client_ip_idx on orders (client_ip, created_at) where client_ip is not null;
 create table if not exists loyalty_ledger (
      id bigserial primary key,
      customer_id integer not null references customers(id) on delete cascade,

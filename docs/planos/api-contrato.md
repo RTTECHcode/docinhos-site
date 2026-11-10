@@ -6,8 +6,9 @@ Quem usa: A3 (admin), A4 (admin), A5 (admin), A9 (loja), A10 (conta do cliente).
 
 - Erros: `{ "error": "mensagem para mostrar à pessoa", "code": "codigo_opcional" }` com o status HTTP certo. Mensagens já são para o cliente final (pt-BR).
 - Todas as respostas de `/api/admin`, `/api/order`, `/api/order-status` e `/api/store` vêm com `Cache-Control: no-store`.
-- `POST` do admin: cabeçalho `Content-Type: application/json` e `Origin` igual ao host (senão 415 e 403).
-- Limite de funções: 8 arquivos em `api/` hoje (`admin`, `health`, `img`, `menu`, `mp-webhook`, `order`, `order-status`, `store`). `api/customer.js` é reservado ao A10 (máximo de 12 no total).
+- `POST` do admin, da conta do cliente e de `/api/order`: cabeçalho `Content-Type: application/json` e `Origin` igual ao host (senão 415 e 403). O `fetch` do próprio site já manda os dois.
+- IP do cliente (limites e bloqueios): `x-real-ip` (preenchido pela Vercel); o primeiro valor do `x-forwarded-for` é só reserva (`auth.clientIp`).
+- Limite de funções: 9 arquivos em `api/` hoje (`admin`, `customer`, `health`, `img`, `menu`, `mp-webhook`, `order`, `order-status`, `store`); máximo de 12 no total.
 
 ## 1. Cardápio público: GET /api/menu
 
@@ -79,7 +80,9 @@ Erros:
 - 409 `insufficient_points`.
 - 422 `out_of_area` (com `max_km`), `cep_not_found`, `address_not_found`.
 - 423 `points_locked` (recuperação de conta recente: pontos bloqueados 48 h).
-- 429: mais de 5 pedidos do mesmo telefone em 10 min.
+- 403 `forbidden_origin`: `Origin` ausente ou diferente do host, ou `Sec-Fetch-Site` de outro site (F5, A1-05). Nenhum pedido é criado.
+- 415 `unsupported_type`: corpo sem `Content-Type: application/json` (ex.: `text/plain`) (F5, A1-05).
+- 429: mais de 5 pedidos do mesmo telefone OU mais de 10 pedidos do mesmo IP em 10 min (o limite por IP é novo na F5; trocar o telefone não burla).
 - 503 `store_closed`: `{ error, code, store: { open:false, reason, reopens_at, next_open_at, message } }`. 503 `origin_unavailable` (frete indisponível agora).
 
 ## 4. Acompanhamento: GET /api/order-status
@@ -94,6 +97,7 @@ Erros:
 
 - `?code=DGxxxxxxxxxx` (formato antigo) retorna `{ code, payment_status }`. O `public_code` NÃO serve de chave (adivinhável).
 - Token ou código malformado/desconhecido: 404. Outros métodos: 405.
+- 429 `rate_limited` (F5, A1-12): mais de 300 consultas do mesmo IP em 10 min (por instância). A tela deve esperar e tentar de novo mais tarde, sem martelar (a consulta a cada 5 s de uma aba fica em 120).
 - Fluxo: `new -> accepted -> preparing -> ready -> awaiting_delivery -> completed`, mais `cancelled`. Rótulos: novo, aceito, em preparo, pronto, aguardando entrega (retirada: "aguardando retirada"), concluído, cancelado. Pronto há mais de 1 h vira concluído sozinho na próxima leitura (sem cron). O valor antigo `delivered` é lido como `completed`.
 
 ## 5. Admin: /api/admin?a=<ação>
@@ -105,6 +109,10 @@ Autenticação e perfis:
 - Sem sessão: 401 `Sessão expirada...`. Método errado: 405 (com `Allow`). Ação inexistente: 404.
 - `role: admin` só em: `shipping_save`, `users`, `user_create`, `user_toggle`, `user_reset`. Staff recebe 403. O resto vale para admin e staff.
 - Portão de segurança: enquanto `needsSecurity` for true (usuário sem pergunta de segurança), TUDO é bloqueado com 403 `{ code: "security_setup_required" }`, exceto `me`, `security_questions`, `security_setup`, `logout`. A tela deve mandar a pessoa cadastrar a pergunta.
+- Portão de senha fraca (F5, A1-06): enquanto `weakPassword` for true, TUDO é bloqueado com 403 `{ error: "Troque a sua senha para continuar.", code: "password_change_required" }`, exceto `me`, `password_change`, `logout`, `security_questions`, `security_status`, `security_setup`, `recovery_codes_new`. O portão de segurança vem antes (sem pergunta: primeiro cadastra a pergunta, depois troca a senha). **Pendente no front (admin):** ao receber `password_change_required`, abrir a tela de troca de senha em vez de só mostrar o banner.
+- Bloqueio de login (F5, A1-04): 5 erros em 15 min ou 10 em 24 h travam o PAR usuário+IP (o mesmo usuário em outro IP segue livre). 20 erros de um IP em 15 min travam o IP para qualquer usuário. Contra ataque espalhado: 30 erros do usuário em 1 h (somando todos os IPs) barram só IPs sem login certo desse usuário nos últimos 7 dias. Resposta: 429 `Muitas tentativas. Tente mais tarde.` (mesmo com a senha certa).
+- Senha atual errada em `password_change`, `security_setup` (troca) e `recovery_codes_new` conta no mesmo bloqueio do login (par usuário+IP): ao travar, 429 `Muitas tentativas. Tente mais tarde.` (F5, A1-07).
+- `audit`: para `staff`, os eventos `login_falhou` e `recuperacao_falhou` (têm IP e o usuário digitado) não aparecem; o `admin` vê tudo (F5, A1-08).
 
 ### 5.1 Ações novas por tema
 
@@ -116,9 +124,9 @@ Ações antigas (login, me, catalog, category_*, product_*, complement_*, link_*
 |---|---|---|---|---|
 | `security_questions` | GET | - | `{ questions: [{ id, text }] }` | - |
 | `security_status` | GET | - | `{ security: { set, question_id, question, set_at, codes_left } }` | - |
-| `security_setup` | POST | `{ question_id, answer, current_password? }` | `{ ok, codes: ["ABCD-EFGH-JKMN", ...10], codes_notice }` | 400 pergunta fora da lista, resposta curta (mínimo 3), senha atual incorreta (exigida só ao TROCAR uma pergunta já cadastrada) |
-| `recovery_codes_new` | POST | `{ current_password }` | `{ ok, codes: [10], codes_notice }` | 400 senha incorreta |
-| `password_change` | POST | `{ current_password, new_password }` | `{ ok }` (mantém a sessão atual, derruba as outras) | 400 |
+| `security_setup` | POST | `{ question_id, answer, current_password? }` | `{ ok, codes: ["ABCD-EFGH-JKMN", ...10], codes_notice }` | 400 pergunta fora da lista, resposta curta (mínimo 3), senha atual incorreta (exigida só ao TROCAR uma pergunta já cadastrada); 429 bloqueio |
+| `recovery_codes_new` | POST | `{ current_password }` | `{ ok, codes: [10], codes_notice }` | 400 senha incorreta; 429 bloqueio |
+| `password_change` | POST | `{ current_password, new_password }` | `{ ok }` (mantém a sessão atual, derruba as outras) | 400; 429 bloqueio (5 senhas atuais erradas) |
 
 Os 10 códigos aparecem UMA vez; o banco guarda só hash. Gerar códigos novos apaga os antigos.
 
@@ -270,7 +278,9 @@ Cookie: `__Host-dg_cliente` (HttpOnly, Secure, SameSite=Lax, Path=/, 30 dias). A
 
 ## 7. Banco (aditivo; `scripts/schema.sql` é o estado final)
 
-Migração: `node scripts/migrate-2026-11-10-painel-v2.js` (idempotente; nada é apagado ou renomeado). Novas tabelas: `store_hours`, `store_state`, `ingredient_synonyms`, `ingredient_pause_batches`, `ingredient_pause_items`, `geocode_cache`, `route_cache`, `customers` e tabelas de sessão/pontos/consentimento, `admin_recovery_codes`, `admin_recovery_attempts`. Colunas novas: `products.paused/pause_label`, `product_complements.paused`, `orders.public_code/tracking_token_hash/…_at/discount_cents/points_redeemed/distance_km/customer_id`, `admin_users.security_*`.
+Migração: `node scripts/migrate-2026-11-10-painel-v2.js` (idempotente; nada é apagado ou renomeado).
+
+F5: `node scripts/migrate-2026-11-10-scopes.js` (idempotente, aditiva; rodar ANTES do deploy do código da F5): amplia o CHECK de `customer_login_attempts.scope` para `login`, `recover`, `register` (cadastro, por IP) e `password` (senha atual errada na troca); cria `orders.client_ip` (limite de pedidos por IP; não aparece em nenhuma resposta). Linhas antigas com chave falsa na coluna `phone` (`#cadastro`, `#senha:+55...`) continuam sendo lidas nas mesmas janelas (até 48 h) e depois deixam de importar. Novas tabelas: `store_hours`, `store_state`, `ingredient_synonyms`, `ingredient_pause_batches`, `ingredient_pause_items`, `geocode_cache`, `route_cache`, `customers` e tabelas de sessão/pontos/consentimento, `admin_recovery_codes`, `admin_recovery_attempts`. Colunas novas: `products.paused/pause_label`, `product_complements.paused`, `orders.public_code/tracking_token_hash/…_at/discount_cents/points_redeemed/distance_km/customer_id`, `admin_users.security_*`.
 
 ## 8. Decisões e pontos de atenção
 
