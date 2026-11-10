@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Docinhos da Gigi — Feito para adoçar seu dia</title>
-<meta name="description" content="Doces artesanais: copos da felicidade, geladinhos gourmet, açaí, brigadeiros e sobremesas. Peça pelo site e receba no WhatsApp.">
+<meta name="description" content="Doces artesanais em Osasco/SP: copos da felicidade, geladinhos gourmet, açaí, brigadeiros e sobremesas. Peça pelo site, pague com Pix ou cartão e receba em casa ou retire na loja.">
+<meta name="theme-color" content="#3b1a12">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -89,7 +90,7 @@
       <label>Seu nome<input name="name" required autocomplete="name" placeholder="Ex.: Maria Souza"></label>
       <label>WhatsApp<input name="phone" required inputmode="tel" placeholder="(11) 90000-0000" autocomplete="tel"></label>
       <fieldset>
-        <legend>Retirada ou entrega?</legend>
+        <legend>Entrega ou retirada?</legend>
         <label class="radio"><input type="radio" name="delivery" value="delivery" checked> Entrega</label>
         <label class="radio"><input type="radio" name="delivery" value="pickup"> Retirada</label>
       </fieldset>
@@ -103,7 +104,7 @@
         <button type="button" id="quote-btn" class="button secondary full">Calcular frete</button>
         <p id="quote-box" class="quote-box" role="status" aria-live="polite" hidden></p>
       </div>
-      <div id="pickup-info" class="pickup-info" hidden><strong>Retire em:</strong> <span id="store-address"></span><br>Frete: R$ 0,00. Estamos preparando seu pedido e vamos avisar por aqui e pelo WhatsApp.</div>
+      <div id="pickup-info" class="pickup-info" hidden><strong>Retire em:</strong> <span id="store-address"></span><br>Frete: R$ 0,00. Avisamos por aqui e pelo WhatsApp quando o pedido estiver pronto para retirar.</div>
       <label>Observações<textarea name="notes" rows="2" placeholder="Ex.: sem açúcar, entregar às 15h"></textarea></label>
       <fieldset class="pay-choice">
         <legend>Forma de pagamento</legend>
@@ -120,7 +121,7 @@
       <div id="payment-summary" class="order-summary"></div>
       <p id="store-closed-note" class="store-closed-note" role="alert" hidden></p>
       <button type="submit" class="button primary full">Enviar pedido</button>
-      <p class="checkout-note">Você paga com Pix, crédito ou débito. Depois, é só avisar a Gigi pelo WhatsApp.</p>
+      <p class="checkout-note">Você paga aqui no site, com Pix ou cartão de crédito ou débito. Depois do pagamento, você também pode enviar o pedido para a Gigi pelo WhatsApp.</p>
     </form>
     <div id="payment-step" class="payment-step" hidden>
       <p class="payment-code" id="payment-code-row" hidden>Pedido <strong id="payment-code"></strong></p>
