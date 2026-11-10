@@ -29,6 +29,7 @@ Campos novos (os antigos continuam):
 ```
 
 - Produto pausado: aparece com `unavailable: true` e `label` (a etiqueta própria ou a padrão). Não pode ser pedido (o pedido recusa com 400).
+- Produto sem preço (`priceCents: null`) e sem nenhum tamanho disponível (A2 rodada 3): também vem com `unavailable: true` e `label: "Consulte pelo WhatsApp"`. Antes aparecia como "Consulte", entrava no carrinho por R$ 0,00 e o pedido recusava só no fim.
 - Complemento pausado em um produto (vínculo pausado, inclui as opções do "Monte seu copo" e do "Monte seu açaí") NÃO aparece em `complements` daquele produto.
 - `store.reason`: `null` (aberta), `"schedule"` (fora do horário) ou `"manual"` (fechada pelo painel ou pausa antiga). `settings.storePaused` continua existindo (true quando fechada por qualquer motivo) por compatibilidade.
 - `settings.deliveryFeeCents` é legado: o frete real vem de `shipping.bands`.
@@ -119,7 +120,7 @@ Autenticação e perfis:
 
 ### 5.1 Ações novas por tema
 
-Ações antigas (login, me, catalog, category_*, product_*, complement_*, link_*, group_*, pin_toggle, store_save, command, command_apply, logout, password_change, audit, users, user_*) continuam como estavam. `catalog` agora devolve também `paused` e `pause_label` nos produtos, `paused` nos vínculos, `settings.defaultPauseLabel` e `storeState`.
+Ações antigas (login, me, catalog, category_*, product_*, complement_*, link_*, group_*, pin_toggle, store_save, command, command_apply, logout, password_change, audit, users, user_*) continuam como estavam, com uma regra nova (A2 rodada 3): produto ATIVO precisa de preço ou de pelo menos um tamanho (complemento `size` ativo vinculado). `product_save` (criar ou editar, considerando o estado final), `product_toggle` (ligar) e `command_apply` (ligar produto) recusam com 400 `Produto ativo precisa de preço ou de pelo menos um tamanho. Informe o preço, ou deixe o item desligado, vincule os tamanhos e depois ative.` (no `command_apply`, seguido de `Sem preço: <nomes>.`). Produto novo nasce ativo: para criar item com preço só pelo tamanho, crie com `active: false`, vincule os tamanhos e depois ligue. **Sugestão para o front (admin):** produto novo sem preço já vir com "ativo" desligado. `catalog` agora devolve também `paused` e `pause_label` nos produtos, `paused` nos vínculos, `settings.defaultPauseLabel` e `storeState`.
 
 #### Segurança da conta (O9)
 
