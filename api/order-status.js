@@ -4,29 +4,26 @@
 const CODE_RE = /^DG[0-9A-F]{10}$/;
 const { TRACKING_RE, hashTrackingToken, trackingView, TRACKING_COLUMNS, sweepOrders } = require('./_lib/orders');
 const { clientIp } = require('./_lib/auth');
+const { hitExceeded } = require('./_lib/rate-limit');
 
-// A1-12: limite simples por IP, em memória (por instância). A página do pedido consulta a cada 5 s (120 em 10 min por aba).
-const WINDOW_MS = 10 * 60 * 1000;
+// A1-12: limite por IP, guardado no banco (tabela rate_hits, vale para todas as instâncias da Vercel).
+// A página do pedido consulta a cada 5 s (120 em 10 min por aba).
+const WINDOW_MINUTES = 10;
 const MAX_PER_IP = 300;
-const hits = new Map();
-function throttled(ip, now = Date.now()) {
-  const list = (hits.get(ip) || []).filter(t => now - t < WINDOW_MS);
-  list.push(now);
-  hits.set(ip, list);
-  if (hits.size > 2000) for (const [k, v] of hits) if (!v.some(t => now - t < WINDOW_MS)) hits.delete(k);
-  return list.length > MAX_PER_IP;
-}
+const MSG_RATE_LIMITED = 'Muitas consultas em pouco tempo. Aguarde alguns minutos.';
+const throttled = (sql, ip) => hitExceeded(sql, 'order_status', ip, { windowMinutes: WINDOW_MINUTES, max: MAX_PER_IP });
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET') return res.status(405).json({ error: 'Método não permitido' });
-  if (throttled(clientIp(req))) return res.status(429).json({ error: 'Muitas consultas em pouco tempo. Aguarde alguns minutos.', code: 'rate_limited' });
   const query = req.query || {};
   const token = typeof query.t === 'string' ? query.t : '';
   const code = typeof query.code === 'string' ? query.code : '';
   const notFound = () => res.status(404).json({ error: 'Pedido não encontrado' });
   try {
     const sql = require('./_lib/db');
+    // Limite antes de qualquer consulta ao pedido. Toda chamada conta (até 404 e as já barradas).
+    if (await throttled(sql, clientIp(req))) return res.status(429).json({ error: MSG_RATE_LIMITED, code: 'rate_limited' });
     if (token) {
       if (!TRACKING_RE.test(token)) return notFound();
       const [found] = await sql.query('select id from orders where tracking_token_hash = $1', [hashTrackingToken(token)]);

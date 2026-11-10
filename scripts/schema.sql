@@ -214,6 +214,15 @@ create table if not exists order_attempts (
      at timestamptz not null default now()
    );
 create index if not exists order_attempts_ip_idx on order_attempts (ip, at);
+-- 2026-11-10 (scripts/migrate-2026-11-10-rate-limits.js): consultas por IP e por minuto (acompanhamento do pedido e cotação de frete)
+create table if not exists rate_hits (
+     scope text not null,
+     ip text not null,
+     minute timestamptz not null,
+     n integer not null default 1,
+     primary key (scope, ip, minute)
+   );
+create index if not exists rate_hits_minute_idx on rate_hits (minute);
 create table if not exists loyalty_ledger (
      id bigserial primary key,
      customer_id integer not null references customers(id) on delete cascade,

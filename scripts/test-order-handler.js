@@ -116,6 +116,7 @@ async function cleanup() {
   await sql.query(`delete from customers where name like 'ZZ-TESTE%'`);
   await sql.query(`delete from customer_login_attempts where ip like '203.0.113.%' or ip like '198.51.100.%'`);
   await sql.query(`delete from order_attempts where ip like '192.0.2.%'`); // tentativas de pedido (limite por IP, A2)
+  await sql.query(`delete from rate_hits where ip like '192.0.2.%'`); // consultas do acompanhamento (limite por IP no banco)
   await sql.query(`delete from products where name like 'ZZ-TESTE%'`);
   await sql.query(`delete from categories where name like 'ZZ-TESTE%'`);
   await sql.query(`delete from geocode_cache where addr_key like '%zz teste%'`);

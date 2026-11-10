@@ -5,18 +5,12 @@
 // Nada aqui altera dados. O pedido (api/order.js) recalcula o frete por conta própria: a cotação é só informativa.
 const { getStoreState } = require('./_lib/store-hours');
 const shipping = require('./_lib/shipping');
+const { hitExceeded } = require('./_lib/rate-limit');
 
-const QUOTE_WINDOW_MS = 10 * 60 * 1000;
-const QUOTE_MAX_PER_IP = 30;      // por IP em 10 min (por instância)
-const hits = new Map();
-
-function throttled(ip, now = Date.now()) {
-  const list = (hits.get(ip) || []).filter(t => now - t < QUOTE_WINDOW_MS);
-  list.push(now);
-  hits.set(ip, list);
-  if (hits.size > 2000) for (const [k, v] of hits) if (!v.some(t => now - t < QUOTE_WINDOW_MS)) hits.delete(k);
-  return list.length > QUOTE_MAX_PER_IP;
-}
+// Limite de cotações por IP, guardado no banco (tabela rate_hits, vale para todas as instâncias da Vercel).
+const QUOTE_WINDOW_MINUTES = 10;
+const QUOTE_MAX_PER_IP = 30;      // por IP em 10 min
+const throttled = (sql, ip) => hitExceeded(sql, 'shipping_quote', ip, { windowMinutes: QUOTE_WINDOW_MINUTES, max: QUOTE_MAX_PER_IP });
 const { clientIp } = require('./_lib/auth'); // x-real-ip (Vercel) primeiro; x-forwarded-for só como reserva
 
 module.exports = async (req, res) => {
@@ -35,8 +29,8 @@ module.exports = async (req, res) => {
       return res.status(200).json({ bands, max_km: shipping.maxKmOf(bands), pickup_fee_cents: 0 });
     }
     if (action === 'quote') {
-      if (throttled(clientIp(req))) return res.status(429).json({ error: 'Muitas consultas de frete. Aguarde alguns minutos.' });
-      if (await shipping.tooManyNewLookups(sql)) return res.status(429).json({ error: 'Muitas consultas de frete agora. Tente de novo em instantes.' });
+      if (await throttled(sql, clientIp(req))) return res.status(429).json({ error: 'Muitas consultas de frete. Aguarde alguns minutos.', code: 'rate_limited' });
+      if (await shipping.tooManyNewLookups(sql)) return res.status(429).json({ error: 'Muitas consultas de frete agora. Tente de novo em instantes.', code: 'shipping_busy' });
       const q = await shipping.quoteDelivery(sql, { cep: query.cep, address: query.address, number: query.number });
       return res.status(200).json({ km: q.km, fee_cents: q.fee_cents, faixa: q.band, max_km: q.max_km });
     }
@@ -48,4 +42,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { throttled };
+module.exports._internal = { throttled, QUOTE_MAX_PER_IP };
