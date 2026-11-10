@@ -522,7 +522,7 @@ document.addEventListener('click', e => {
 const RECENT_MAX = 10;
 function loadRecent() {
   const raw = readStore(RECENT_KEY);
-  return Array.isArray(raw) ? raw.filter(r => r && typeof r.token === 'string' && /^[0-9a-f]{32}$/i.test(r.token)) : [];
+  return Array.isArray(raw) ? raw.filter(r => r && typeof r.token === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(r.token)) : [];
 }
 function addRecent(order) {
   if (!order.token) return;

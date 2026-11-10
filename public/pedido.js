@@ -28,7 +28,7 @@
   }
 
   function showRecent() {
-    var list = readRecent().filter(function (r) { return r && /^[0-9a-f]{32}$/i.test(r.token || ''); });
+    var list = readRecent().filter(function (r) { return r && /^[A-Za-z0-9_-]{16,64}$/.test(r.token || ''); });
     $('t-recent-box').hidden = !list.length;
     var ul = $('t-recent');
     ul.replaceChildren();
@@ -97,7 +97,7 @@
   }
 
   showRecent();
-  if (!/^[0-9a-f]{32}$/i.test(token)) {
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) {
     $('t-code').textContent = '';
     $('t-msg').textContent = token ? 'Link de acompanhamento inválido.' : 'Abra o link de acompanhamento que você recebeu, ou escolha um pedido recente abaixo.';
     return;
