@@ -86,6 +86,17 @@
     return changeStatus(o.id, 'cancelled', 'Pedido cancelado.');
   }
 
+  // Aceitar (ou avançar) um pedido novo sem pagamento aprovado (Pix ou cartão ainda não pago) pede confirmação.
+  // Pedido pago segue direto, como antes.
+  async function confirmUnpaid(o, to) {
+    if (!o || o.fulfillment_status !== 'new' || to === 'cancelled' || o.payment_status === 'approved') return true;
+    return DG.confirm('O pagamento deste pedido ainda não foi aprovado. Aceitar mesmo assim?', 'Aceitar mesmo assim');
+  }
+  async function advance(id, act) {
+    if (!(await confirmUnpaid(byId(id), act.to))) return false;
+    return changeStatus(id, act.to, act.msg);
+  }
+
   function nextAction(o) {
     switch (o.fulfillment_status) {
       case 'new': return { label: 'Aceitar', to: 'accepted', msg: 'Pedido aceito.' };
@@ -119,7 +130,7 @@
         badges(o),
         el('span', { class: 'muted small', text: o.fulfillment_status === 'awaiting_delivery' || o.fulfillment_status === 'ready' ? statusText(o) : '' })),
       el('div', { class: 'ord-actions' },
-        act ? el('button', { class: 'btn primary', type: 'button', text: act.label, disabled: busy, on: { click: () => changeStatus(o.id, act.to, act.msg) } }) : null,
+        act ? el('button', { class: 'btn primary', type: 'button', text: act.label, disabled: busy, on: { click: () => advance(o.id, act) } }) : null,
         el('a', { class: 'btn', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer', text: 'Chamar cliente no WhatsApp' }),
         el('button', { class: 'btn danger ord-cancel', type: 'button', text: 'Cancelar pedido', disabled: busy, on: { click: () => { const c = byId(o.id); if (c) cancelOrder(c); } } })));
   }
@@ -149,13 +160,13 @@
         el('span', { text: g.c.title }), el('b', { class: 'ord-count', text: String(g.list.length) }))));
     const board = el('div', { class: 'ord-board' }, ...groups.map(g => el('section', { class: 'ord-col ord-' + g.c.key + (st.col === g.c.key ? ' is-active' : ''), 'aria-label': g.c.title },
       el('h3', { class: 'ord-col-h' }, el('span', { text: g.c.title }), el('b', { class: 'ord-count', text: String(g.list.length) })),
-      ...(g.list.length ? g.list.map(o => kanbanCard(o, fresh && fresh.has(o.id))) : [el('p', { class: 'muted small ord-empty', text: 'Nenhum pedido aqui.' })]))));
+      ...(g.list.length ? g.list.map(o => kanbanCard(o, fresh && fresh.has(o.id))) : [el('p', { class: 'empty-state ord-empty', text: 'Nenhum pedido aqui.' })]))));
     const actHead = el('button', { class: 'ord-act-toggle', type: 'button', 'aria-expanded': String(st.actOpen),
       on: { click: () => { st.actOpen = !st.actOpen; lsSet(st.actOpen); renderAll(); } } },
       el('span', { text: 'Atividade recente (24 h)' }),
       el('span', { class: 'muted small', text: st.orders.length + (st.orders.length === 1 ? ' pedido ' : ' pedidos ') + (st.actOpen ? '▲' : '▼') }));
     const act = el('div', { class: 'ord-activity' }, actHead,
-      ...(st.actOpen ? (st.orders.length ? st.orders.map(activityRow) : [el('p', { class: 'muted', text: 'Nenhum pedido nas últimas 24 horas.' })]) : []));
+      ...(st.actOpen ? (st.orders.length ? st.orders.map(activityRow) : [DG.empty('Nenhum pedido nas últimas 24 horas.')]) : []));
     st.box.replaceChildren(seg, board, act);
   }
 
@@ -172,7 +183,8 @@
           disabled: st.busy.has(o.id),
           on: { click: async () => {
             if (k === now) return;
-            const ok = k === 'cancelled' ? await cancelOrder(byId(o.id) || o) : await changeStatus(o.id, k, 'Status atualizado.');
+            const ok = k === 'cancelled' ? await cancelOrder(byId(o.id) || o)
+              : (await confirmUnpaid(byId(o.id) || o, k)) && await changeStatus(o.id, k, 'Status atualizado.');
             if (ok) paintStatus();
           } }
         })));
@@ -215,7 +227,7 @@
         clearTimeout(debounce);
         debounce = setTimeout(async () => { st.search = searchInput.value.trim(); try { await refresh(false); } catch (e) { DG.toast(e.message, true); } }, 350);
       });
-      st.box = el('div', {}, el('p', { class: 'muted', text: 'Carregando...' }));
+      st.box = el('div', {}, DG.loading('Carregando pedidos...'));
       view.replaceChildren(searchInput, st.box);
       await refresh(false);
       const dot = $('#orders-dot'); if (dot) dot.hidden = true;

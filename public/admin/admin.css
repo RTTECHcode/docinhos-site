@@ -341,3 +341,22 @@ p.error:not(:empty) { padding: 10px 12px; border-radius: var(--radius-sm); backg
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 /* fim A7 */
+
+/* A9: estados padrão de carregando e vazio (DG.loading / DG.empty em admin.js) */
+.is-loading {
+  display: flex; align-items: center; justify-content: center; gap: 10px; padding: 16px 8px;
+  color: var(--soft); font-size: 14px; font-weight: 700; text-align: center;
+}
+.is-loading::before {
+  content: ""; flex: none; width: 20px; height: 20px; border-radius: 50%;
+  border: 3px solid var(--brand-soft); border-top-color: var(--brand); animation: a7-spin .8s linear infinite;
+}
+.view > .is-loading:only-child { flex-direction: column; gap: 12px; padding: 48px 0; }
+.view > .is-loading:only-child::before { width: 30px; height: 30px; }
+.empty-state {
+  padding: 18px 12px; text-align: center; color: var(--soft); font-size: 14px; font-weight: 700;
+  border: 1.5px dashed rgba(59, 26, 18, .2); border-radius: var(--radius-sm); background: rgba(255, 255, 255, .55);
+}
+.card > .empty-state:only-child { padding: 8px 4px; border: 0; background: none; }
+.stack > .empty-state, .card > .empty-state { margin: 0; }
+/* fim A9 */

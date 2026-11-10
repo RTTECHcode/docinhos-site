@@ -23,7 +23,7 @@ let activeProduct = null;
 let sel = { size: null, extras: {} };
 let pmGroups = []; // grupos de escolha do produto aberto: { id, label, min, max, opts[] }
 
-const brl = cents => 'R$ ' + (cents / 100).toFixed(2).replace('.', ',');
+const brl = cents => 'R$ ' + (cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' };
 const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ESC_MAP[c]);
 const waLink = text => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
@@ -257,7 +257,7 @@ function renderMenu() {
       <h2>${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
         <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
-          ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true">🍬</span>'}
+          ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
           <span class="body">
             <span class="name">${esc(p.name)}</span>
             ${p.description ? `<span class="desc">${esc(p.description)}</span>` : ''}
@@ -492,7 +492,7 @@ function renderCart() {
     : '';
   const itemsEl = document.querySelector('#cart-items');
   if (!cart.length) {
-    itemsEl.innerHTML = '<div class="cart-empty">Seu carrinho está vazio 🍬</div>';
+    itemsEl.innerHTML = '<div class="cart-empty">Seu carrinho está vazio. Escolha um docinho no cardápio!</div>';
     document.querySelector('#checkout-btn').hidden = true;
     document.querySelector('#cart-total').innerHTML = '';
     return;
@@ -1144,7 +1144,7 @@ checkoutFormEl.addEventListener('submit', async e => {
     addRecent({ public_code: data.public_code, code: data.code, token: data.tracking_token });
     writeStore(LAST_ORDER_KEY, { code: data.code, public_code: data.public_code, token: data.tracking_token, whatsappText, summary, payment_choice: order.payment_choice, paymentUrl: payment && payment.type === 'card' ? payment.url : null });
     renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary });
-    toast(payment ? 'Pedido registrado! Agora é só pagar' : 'Pedido registrado!');
+    toast(payment ? 'Pedido registrado! Agora é só pagar.' : 'Pedido registrado!');
     if (account) loadAccount(); // saldo mudou (pontos reservados)
   } catch {
     toast('Sem conexão com o servidor. Confira a internet e tente de novo.', 4000);

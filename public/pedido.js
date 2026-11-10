@@ -5,7 +5,7 @@
   var TZ = 'America/Sao_Paulo';
   var token = new URLSearchParams(location.search).get('t') || '';
   var $ = function (id) { return document.getElementById(id); };
-  var brl = function (c) { return 'R$ ' + (c / 100).toFixed(2).replace('.', ','); };
+  var brl = function (c) { return 'R$ ' + (c / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
   var fmt = new Intl.DateTimeFormat('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   var when = function (iso) { var d = new Date(iso); return iso && !isNaN(d) ? fmt.format(d).replace(',', ' às') : ''; };
 
