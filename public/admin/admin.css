@@ -361,4 +361,8 @@ p.error:not(:empty) { padding: 10px 12px; border-radius: var(--radius-sm); backg
 .stack > .empty-state, .card > .empty-state { margin: 0; }
 /* Fora de .stack/.card (ex.: busca sem resultado no Cardápio) a caixa não pode colar no botão de baixo. */
 div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
+/* Atividade: evento que pede ação (ex.: pagamento após cancelamento) aparece como aviso. */
+.audit.warn { margin: 4px 0; padding: 10px 12px; border: 1.5px solid rgba(138, 90, 0, .3); border-left-width: 5px; border-radius: var(--radius-sm); background: var(--warn-soft); color: var(--warn); }
+.audit.warn strong::before { content: "⚠ "; }
+.audit.warn .muted { color: var(--warn); }
 /* fim A9 */
