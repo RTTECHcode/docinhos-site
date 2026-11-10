@@ -6,11 +6,11 @@ Status: pendente | andamento | feito | bloqueado
 
 | ID | Status | Branch | Nota |
 |---|---|---|---|
-| F0 | andamento | — | skill ui-ux-pro-max presente; D2 resolvida |
-| S1-S7 auditoria | andamento | — | A1 só leitura |
-| B2-B5, P1-P2 | pendente | a4-fixes-admin | F1 |
-| C1, C9 | pendente | a6-fix-cart | F1 |
-| S-fix Crítico/Alto | pendente | a2-security | F1 |
+| F0 | feito | painel-v2 | skill presente; D2 resolvida; commits locais ok; banco só .env.dev |
+| S1-S7 auditoria | feito | — | 13 achados: 2 Altos, 3 Médios, 8 Baixos; produção sem arquivos expostos |
+| B2-B5, P1-P2 | bloqueado | a4-fixes-admin | aguarda .env.dev para teste no navegador |
+| C1, C9 | bloqueado | a6-fix-cart | aguarda .env.dev para teste no navegador |
+| S-fix Crítico/Alto | andamento | a2-security | A1-01, A1-02, A1-03, A1-09, A1-10, A1-11 |
 | O1-O13 | pendente | a2-base | F2 |
 | K1-K5 | pendente | a3-orders | F3 |
 | M1-M5 | pendente | a5-settings | F3 |
