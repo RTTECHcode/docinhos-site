@@ -32,6 +32,7 @@ function loadEnvDev() {
     if (!m) continue;
     let v = m[2];
     if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    if (v.startsWith('<') && v.endsWith('>')) v = v.slice(1, -1); // tolera valor colado dentro de <...> do modelo
     process.env[m[1]] = v;
     names.push(m[1]);
   }
