@@ -45,13 +45,19 @@ const auth = require('./_lib/auth');
 const { hashPassword, verifyPassword, dummyHash, sha256 } = auth;
 
 // ---------- Anti força bruta (função pura) ----------
-// failsMs: instantes (ms) das falhas do usuário desde o último login ok, da mais nova para a mais antiga (até 10).
-function evaluateLock({ failsMs, ipFails, nowMs }) {
+// O bloqueio por conta vale para o PAR usuário+IP (A1-04): um IP estranho errando a senha da Gigi não trava a Gigi
+// no IP dela. Contra ataque espalhado em muitos IPs há um teto por usuário que só barra IPs DESCONHECIDOS
+// (IP sem login certo desse usuário nos últimos 7 dias); IP conhecido segue só com o limite do par.
+// failsMs: instantes (ms) das falhas do par usuário+IP desde o último acerto do par, da mais nova para a mais antiga (até 10).
+// ipFails: falhas do IP (qualquer usuário) em 15 min. userFails: falhas do usuário (qualquer IP) em 1 h. knownIp: boolean.
+const USER_SPREAD_MAX = 30;
+function evaluateLock({ failsMs, ipFails, userFails = 0, knownIp = false, nowMs }) {
   const MIN15 = 15 * 60 * 1000, H24 = 24 * 3600 * 1000;
   const f = failsMs || [];
   if (f.length >= 10 && nowMs - f[9] < H24) return { locked: true, reason: '24h', until: f[9] + H24 };
   if (f.length >= 5 && f[0] - f[4] <= MIN15 && nowMs - f[0] < MIN15) return { locked: true, reason: '15m', until: f[0] + MIN15 };
   if (ipFails >= 20) return { locked: true, reason: 'ip', until: null };
+  if (!knownIp && userFails >= USER_SPREAD_MAX) return { locked: true, reason: 'spread', until: null };
   return { locked: false, reason: null, until: null };
 }
 
@@ -338,11 +344,7 @@ function baseHeaders(res) {
   res.setHeader('X-Robots-Tag', 'noindex');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 }
-function clientIp(req) {
-  const xf = req.headers['x-forwarded-for'];
-  const first = typeof xf === 'string' ? xf.split(',')[0].trim() : '';
-  return (first || (req.socket && req.socket.remoteAddress) || 'unknown').slice(0, 64);
-}
+const clientIp = auth.clientIp; // x-real-ip (Vercel) primeiro; x-forwarded-for só como reserva
 function parseCookies(header) {
   const out = {};
   if (typeof header !== 'string') return out;
@@ -373,15 +375,19 @@ async function audit(username, action, detail) {
 }
 
 async function lockStatus(username, ip) {
-  const [fails, ipRows, nowRows] = await Promise.all([
+  const [fails, ipRows, userRows, nowRows] = await Promise.all([
     q(`select (extract(epoch from at) * 1000)::float8 as ms from login_attempts
-        where username = $1 and ok = false and at > now() - interval '24 hours'
-          and at > coalesce((select max(at) from login_attempts where username = $1 and ok = true), '-infinity'::timestamptz)
-        order by at desc limit 10`, [username]),
+        where username = $1 and ip = $2 and ok = false and at > now() - interval '24 hours'
+          and at > coalesce((select max(at) from login_attempts where username = $1 and ip = $2 and ok = true), '-infinity'::timestamptz)
+        order by at desc limit 10`, [username, ip]),
     q(`select count(*)::int as n from login_attempts where ip = $1 and ok = false and at > now() - interval '15 minutes'`, [ip]),
+    q(`select count(*) filter (where ok = false and at > now() - interval '1 hour')::int as fails,
+              bool_or(ok and ip = $2) as known
+         from login_attempts where username = $1`, [username, ip]),
     q(`select (extract(epoch from now()) * 1000)::float8 as ms`)
   ]);
-  return evaluateLock({ failsMs: fails.map(r => Number(r.ms)), ipFails: ipRows[0].n, nowMs: Number(nowRows[0].ms) });
+  return evaluateLock({ failsMs: fails.map(r => Number(r.ms)), ipFails: ipRows[0].n, userFails: userRows[0].fails,
+    knownIp: !!userRows[0].known, nowMs: Number(nowRows[0].ms) });
 }
 const recordAttempt = (username, ip, ok) =>
   q('insert into login_attempts (username, ip, ok) values ($1, $2, $3)', [String(username).slice(0, 64), ip, ok]);
@@ -801,14 +807,24 @@ A.logout = { m: 'POST', fn: async ({ user, res }) => {
   return { ok: true };
 } };
 
-A.password_change = { m: 'POST', fn: async ({ body, user }) => {
+// Confere a senha atual com sessão aberta (A1-07): a falha conta no mesmo bloqueio do login (par usuário+IP e IP).
+// Bloqueado: 429 mesmo com a senha certa. Retorna a senha atual digitada quando confere.
+async function checkCurrentPassword(user, body, failAction) {
   const current = typeof body.current_password === 'string' ? body.current_password.slice(0, 256) : '';
-  const next = vPassword(body.new_password, 'Nova senha');
+  if ((await lockStatus(user.username, user.ip)).locked) throw new HttpError(429, MSG_LOCKED);
   const row = own(await q('select password_hash from admin_users where id = $1', [user.id]), 'Usuário não encontrado.');
   if (!(await verifyPassword(current, row.password_hash))) {
-    await audit(user.username, 'troca_senha_falhou', null);
+    await recordAttempt(user.username, user.ip, false);
+    await audit(user.username, failAction, 'ip ' + user.ip);
+    if ((await lockStatus(user.username, user.ip)).locked) throw new HttpError(429, MSG_LOCKED);
     throw new HttpError(400, 'A senha atual está incorreta.');
   }
+  return current;
+}
+
+A.password_change = { m: 'POST', fn: async ({ body, user }) => {
+  const next = vPassword(body.new_password, 'Nova senha');
+  const current = await checkCurrentPassword(user, body, 'troca_senha_falhou');
   if (next === current) bad('A nova senha precisa ser diferente da atual.');
   await q('update admin_users set password_hash = $2, weak_password = false where id = $1', [user.id, await hashPassword(next)]);
   await killSessions(user.id, user.tokenHash);
@@ -816,8 +832,11 @@ A.password_change = { m: 'POST', fn: async ({ body, user }) => {
   return { ok: true };
 } };
 
-A.audit = { m: 'GET', fn: async () => ({
-  rows: await q('select id, username, action, detail, at from admin_audit order by at desc, id desc limit 50')
+// Eventos com IP e usuário DIGITADO (pode ser senha colada no campo errado) ficam só para o admin (A1-08).
+const ADMIN_ONLY_AUDIT = ['login_falhou', 'recuperacao_falhou'];
+A.audit = { m: 'GET', fn: async ({ user }) => ({
+  rows: await q(`select id, username, action, detail, at from admin_audit
+                  where $1::boolean or action <> all($2::text[]) order by at desc, id desc limit 50`, [user.role === 'admin', ADMIN_ONLY_AUDIT])
 }) };
 
 A.users = { m: 'GET', role: 'admin', fn: async () => ({
@@ -920,6 +939,8 @@ async function doRecover(req, res, body) {
 
 // Estas ações funcionam mesmo antes de a pessoa cadastrar a pergunta de segurança; as outras ficam bloqueadas.
 const ALLOWED_WITHOUT_SECURITY = new Set(['me', 'security_questions', 'security_setup', 'logout']);
+// Senha fraca (A1-06): só dá para trocar a senha, sair e cuidar da segurança da conta; o resto recebe 403 password_change_required.
+const ALLOWED_WITH_WEAK_PASSWORD = new Set(['me', 'password_change', 'logout', 'security_questions', 'security_status', 'security_setup', 'recovery_codes_new']);
 
 A.security_questions = { m: 'GET', fn: async () => ({ questions: auth.SECURITY_QUESTIONS }) };
 
@@ -942,15 +963,9 @@ async function replaceRecoveryCodes(userId) {
 A.security_setup = { m: 'POST', fn: async ({ body, user }) => {
   const questionId = auth.validateQuestionId(body.question_id);
   const answerHash = await auth.hashAnswer(body.answer);
-  const row = own(await q('select password_hash, security_answer_hash from admin_users where id = $1', [user.id]), 'Usuário não encontrado.');
+  const row = own(await q('select security_answer_hash from admin_users where id = $1', [user.id]), 'Usuário não encontrado.');
   const had = !!row.security_answer_hash;
-  if (had) { // trocar pergunta já cadastrada exige a senha atual
-    const current = typeof body.current_password === 'string' ? body.current_password.slice(0, 256) : '';
-    if (!(await verifyPassword(current, row.password_hash))) {
-      await audit(user.username, 'troca_pergunta_falhou', null);
-      throw new HttpError(400, 'A senha atual está incorreta.');
-    }
-  }
+  if (had) await checkCurrentPassword(user, body, 'troca_pergunta_falhou'); // trocar pergunta já cadastrada exige a senha atual
   await q('update admin_users set security_question = $2, security_answer_hash = $3, security_set_at = now() where id = $1', [user.id, questionId, answerHash]);
   const codes = await replaceRecoveryCodes(user.id);
   await audit(user.username, had ? 'pergunta_trocada' : 'pergunta_cadastrada', `${codes.length} códigos novos`);
@@ -958,9 +973,7 @@ A.security_setup = { m: 'POST', fn: async ({ body, user }) => {
 } };
 
 A.recovery_codes_new = { m: 'POST', fn: async ({ body, user }) => {
-  const row = own(await q('select password_hash from admin_users where id = $1', [user.id]), 'Usuário não encontrado.');
-  const current = typeof body.current_password === 'string' ? body.current_password.slice(0, 256) : '';
-  if (!(await verifyPassword(current, row.password_hash))) throw new HttpError(400, 'A senha atual está incorreta.');
+  await checkCurrentPassword(user, body, 'codigos_recuperacao_falhou');
   const codes = await replaceRecoveryCodes(user.id);
   await audit(user.username, 'codigos_recuperacao_novos', `${codes.length} códigos`);
   return { ok: true, codes, codes_notice: 'Guarde estes códigos agora: eles não serão mostrados de novo. Cada um vale uma vez.' };
@@ -1372,6 +1385,9 @@ async function handler(req, res) {
     if (!user) return send(res, 401, { error: 'Sessão expirada. Entre novamente.' });
     if (user.needsSecurity && !ALLOWED_WITHOUT_SECURITY.has(name)) {
       return send(res, 403, { error: 'Cadastre sua pergunta de segurança para continuar.', code: 'security_setup_required' });
+    }
+    if (user.weak && !ALLOWED_WITH_WEAK_PASSWORD.has(name)) {
+      return send(res, 403, { error: 'Troque a sua senha para continuar.', code: 'password_change_required' });
     }
     const action = Object.prototype.hasOwnProperty.call(A, name) ? A[name] : null;
     if (!action) return send(res, 404, { error: 'Ação não encontrada.' });
