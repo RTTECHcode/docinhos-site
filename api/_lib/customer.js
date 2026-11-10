@@ -120,21 +120,24 @@ async function logoutFromRequest(sql, req) {
 
 // ---------- Bloqueio por tentativas ----------
 // Login e recuperação: 5 erros = 30 min (por conta e por IP) e 10 erros em 24 h = 24 h (por conta). Acerto zera a contagem.
-// A coluna phone também guarda chaves que não são telefone, porque o CHECK de scope só aceita 'login' e 'recover':
-//   '#cadastro'       -> tentativas de cadastro por IP (scope 'login')
-//   '#senha:+55...'   -> senha atual errada na troca de senha (scope 'login'), contagem separada do login
-// Telefone real sempre começa com '+55', então essas chaves nunca colidem com uma conta.
-// A contagem por IP do login/recuperação só olha linhas de telefone real (phone like '+%').
-const ATTEMPT_REGISTER = '#cadastro';
-const passwordAttemptKey = phone => '#senha:' + phone;
+// Scopes (migração scripts/migrate-2026-11-10-scopes.js): 'login', 'recover', 'register' (cadastro, por IP; phone = '')
+// e 'password' (senha atual errada na troca de senha, phone = telefone da conta; contagem separada do login).
+// LEGADO: antes da migração, cadastro e troca de senha iam para scope 'login' com chaves falsas na coluna phone
+// ('#cadastro' e '#senha:+55...'). Essas linhas continuam sendo LIDAS (só lidas) dentro das mesmas janelas
+// (1 h no cadastro, até 48 h na troca de senha) para não perder bloqueios em curso. Depois de 48 h do deploy,
+// o código de legado pode sair. A contagem por IP do login/recuperação só olha telefone real (phone like '+%').
+const LEGACY_REGISTER_KEY = '#cadastro';
+const legacyPasswordKey = phone => '#senha:' + phone;
 
 // Retorna null (livre) ou a mensagem de bloqueio (genérica). ip === null: sem limite por IP.
-async function lockMessage(sql, scope, phone, ip) {
+// legacyKey: chave antiga (scope 'login') que também conta para esta contagem, ou null.
+async function lockMessage(sql, scope, phone, ip, legacyKey = null) {
   const [byPhone, byIp, now] = await Promise.all([
-    sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
-                where scope = $1 and phone = $2 and ok = false and at > now() - interval '48 hours'
-                  and at > coalesce((select max(at) from customer_login_attempts where scope = $1 and phone = $2 and ok = true), '-infinity'::timestamptz)
-                order by at desc limit ${LONG_MAX_FAILS}`, [scope, phone]),
+    sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts a
+                where ((scope = $1 and phone = $2) or (scope = 'login' and phone = $3::text)) and ok = false and at > now() - interval '48 hours'
+                  and at > coalesce((select max(at) from customer_login_attempts
+                                       where ((scope = $1 and phone = $2) or (scope = 'login' and phone = $3::text)) and ok = true), '-infinity'::timestamptz)
+                order by at desc limit ${LONG_MAX_FAILS}`, [scope, phone, legacyKey]),
     ip === null ? [] : sql.query(`select (extract(epoch from at) * 1000)::float8 as ms from customer_login_attempts
                 where scope = $1 and ip = $2 and phone like '+%' and ok = false and at > now() - interval '30 minutes'
                 order by at desc limit 10`, [scope, ip || 'unknown']),
@@ -147,25 +150,26 @@ async function lockMessage(sql, scope, phone, ip) {
     || auth.evaluateAttemptLock({ failsMs: f(byIp), nowMs, max: LOGIN_MAX_FAILS, lockMs: LOCK_MS }).locked) return MSG_LOCKED;
   return null;
 }
-async function assertNotLocked(sql, scope, phone, ip) {
-  const msg = await lockMessage(sql, scope, phone, ip);
+async function assertNotLocked(sql, scope, phone, ip, legacyKey = null) {
+  const msg = await lockMessage(sql, scope, phone, ip, legacyKey);
   if (msg) throw new CustomerError(429, msg, 'locked');
 }
 const recordAttempt = (sql, scope, phone, ip, ok) =>
   sql.query('insert into customer_login_attempts (scope, phone, ip, ok) values ($1, $2, $3, $4)', [scope, phone, ip || 'unknown', ok]);
 
-// Cadastro: tentativas deste IP na última hora (toda tentativa conta: 201, 400, 409...).
+// Cadastro: tentativas deste IP na última hora (toda tentativa conta: 201, 400, 409...). Inclui as linhas antigas ('#cadastro').
 async function registerAttemptsLastHour(sql, ip) {
   const [r] = await sql.query(
-    `select count(*)::int as n from customer_login_attempts where scope = 'login' and phone = $1 and ip = $2 and at > now() - interval '1 hour'`,
-    [ATTEMPT_REGISTER, ip || 'unknown']);
+    `select count(*)::int as n from customer_login_attempts
+      where ip = $2 and at > now() - interval '1 hour' and (scope = 'register' or (scope = 'login' and phone = $1))`,
+    [LEGACY_REGISTER_KEY, ip || 'unknown']);
   return r.n;
 }
-const recordRegisterAttempt = (sql, ip) => recordAttempt(sql, 'login', ATTEMPT_REGISTER, ip, true);
+const recordRegisterAttempt = (sql, ip) => recordAttempt(sql, 'register', '', ip, true);
 
 // Troca de senha: contagem própria (não soma com o login). 5 erros = 30 min, 10 em 24 h = 24 h. Sem limite por IP (já exige sessão).
-const assertPasswordNotLocked = (sql, phone) => assertNotLocked(sql, 'login', passwordAttemptKey(phone), null);
-const recordPasswordAttempt = (sql, phone, ip, ok) => recordAttempt(sql, 'login', passwordAttemptKey(phone), ip, ok);
+const assertPasswordNotLocked = (sql, phone) => assertNotLocked(sql, 'password', phone, null, legacyPasswordKey(phone));
+const recordPasswordAttempt = (sql, phone, ip, ok) => recordAttempt(sql, 'password', phone, ip, ok);
 
 // ---------- Consentimento ----------
 async function recordConsentEvent(sql, customerId, action, { ip, source }) {
