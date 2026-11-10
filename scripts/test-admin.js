@@ -685,6 +685,10 @@ async function commandTests() {
     assert.equal((await get(sess, 'me')).status, 401);
     assert.equal((await loginAs(S.names.fresh, pw, S.ips.b)).r.status, 401);
     const s2 = await loginAs(S.names.fresh, pw2, S.ips.b); assert.equal(s2.r.status, 200);
+    // senha redefinida pelo admin é provisória: obriga a troca no próximo login
+    assert.equal(s2.r.json.user.weakPassword, true, 'user_reset grava weak_password = true');
+    { const c = await get(s2.cookie, 'catalog'); assert.equal(c.status, 403); assert.equal(c.json.code, 'password_change_required'); }
+    assert.equal((await Q('select weak_password from admin_users where id = $1', [id]))[0].weak_password, true);
     assert.equal((await post(S.adm, 'user_reset', { id, new_password: 'curta' })).status, 400);
     assert.equal((await post(S.adm, 'user_toggle', { id, active: false })).status, 200);
     assert.equal((await get(s2.cookie, 'me')).status, 401);

@@ -861,10 +861,12 @@ A.user_toggle = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   return { ok: true, target: row };
 } };
 
+// A senha definida pelo admin é provisória: weak_password = true obriga a pessoa a trocar no próximo login
+// (403 password_change_required até trocar). Quem redefine a PRÓPRIA senha já escolheu a senha e não fica preso.
 A.user_reset = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   const id = vId(body.id, 'Usuário'), password = vPassword(body.new_password, 'Nova senha');
-  const row = own(await q('update admin_users set password_hash = $2, weak_password = false where id = $1 returning id, username',
-    [id, await hashPassword(password)]), 'Usuário não encontrado.');
+  const row = own(await q('update admin_users set password_hash = $2, weak_password = $3 where id = $1 returning id, username',
+    [id, await hashPassword(password), id !== user.id]), 'Usuário não encontrado.');
   await killSessions(id, id === user.id ? user.tokenHash : '');
   await audit(user.username, 'senha_redefinida', row.username);
   return { ok: true };
