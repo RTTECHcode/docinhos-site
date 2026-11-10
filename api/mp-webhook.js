@@ -104,7 +104,7 @@ module.exports = async (req, res) => {
     if (!code || !pay.status) return res.status(200).json({ ok: true });
 
     const sql = require('./_lib/db'); // carregado aqui para o parser poder ser testado sem DATABASE_URL
-    const [order] = await sql.query('select total_cents from orders where code = $1', [String(code)]);
+    const [order] = await sql.query('select id, total_cents from orders where code = $1', [String(code)]);
     if (!order) return res.status(200).json({ ok: true });
 
     // Só confirma se moeda e valor pago batem com o total gravado no servidor.
@@ -125,6 +125,9 @@ module.exports = async (req, res) => {
          and not (payment_status = 'approved' and payment_id is distinct from $3 and $2 <> 'approved')`,
       [String(code), String(pay.status), String(pay.id), paymentMethodOf(pay)]
     );
+    // Pontos (O11): só chega aqui com moeda e valor conferidos. Idempotente: aprovado credita e confirma o resgate;
+    // rejeitado/cancelado devolve a reserva; estornado reverte. Roda a cada notificação para consertar execução interrompida.
+    await require('./_lib/loyalty').onPaymentStatus(sql, order.id);
     return res.status(200).json({ ok: true });
   } catch (error) {
     console.error('Erro no webhook do Mercado Pago:', error.message);

@@ -238,7 +238,7 @@ async function quoteDelivery(sql, input) {
   const route = await routeKm(sql, origin, dest);
   const km = Math.round(route.km * 100) / 100;
   const band = bandForKm(bands, km);
-  if (!band) throw new ShippingError(422, `Fora da área de entrega (até ${kmLabel(maxKmOf(bands))} km).`, 'out_of_area');
+  if (!band) { const e = new ShippingError(422, `Fora da área de entrega (até ${kmLabel(maxKmOf(bands))} km).`, 'out_of_area'); e.max_km = maxKmOf(bands); throw e; }
   return { km, fee_cents: band.fee_cents, band: { max_km: band.max_km, fee_cents: band.fee_cents }, source: route.source, max_km: maxKmOf(bands) };
 }
 
