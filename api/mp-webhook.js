@@ -12,10 +12,25 @@ function parseSignature(header) {
   return out;
 }
 
+const MAX_SIGNATURE_AGE_S = 300; // recusa assinaturas com mais de 5 min de diferença (anti-replay)
+
+// ts do Mercado Pago pode vir em milissegundos (13 dígitos) ou segundos (10 dígitos).
+// Valores >= 1e11 são tratados como ms (1e11 s seria o ano 5138; 1e11 ms é março de 1973).
+// Retorna o instante em segundos, ou null se não for um número inteiro positivo.
+function tsToSeconds(ts) {
+  if (!/^\d{1,16}$/.test(String(ts))) return null;
+  const n = Number(ts);
+  if (!(n > 0)) return null;
+  return n >= 1e11 ? n / 1000 : n;
+}
+
 // Valida x-signature: HMAC-SHA256 de "id:{data.id};request-id:{x-request-id};ts:{ts};".
-function verifySignature({ secret, signatureHeader, requestId, dataId }) {
+// nowMs injetável para teste.
+function verifySignature({ secret, signatureHeader, requestId, dataId, nowMs = Date.now() }) {
   const { ts, v1 } = parseSignature(signatureHeader);
   if (!ts || !v1 || !requestId || !dataId) return false;
+  const tsSec = tsToSeconds(ts);
+  if (tsSec === null || Math.abs(nowMs / 1000 - tsSec) > MAX_SIGNATURE_AGE_S) return false;
   const expected = crypto.createHmac('sha256', secret)
     .update(`id:${dataId};request-id:${requestId};ts:${ts};`)
     .digest('hex');
@@ -29,7 +44,8 @@ function parseNotification(query, body) {
   const q = query || {};
   const bd = body && typeof body === 'object' ? body : {};
   const type = String(bd.type || q.type || q.topic || '');
-  let dataId = String((bd.data && bd.data.id) ?? q['data.id'] ?? '');
+  // O manifest assinado usa o data.id da query; o corpo só serve de reserva.
+  let dataId = String(q['data.id'] ?? (bd.data && bd.data.id) ?? '');
   if (/^[a-z0-9]+$/i.test(dataId)) dataId = dataId.toLowerCase();
   return { type, dataId };
 }
@@ -46,6 +62,11 @@ module.exports = async (req, res) => {
   const { type, dataId } = parseNotification(req.query, req.body);
 
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+  if (!secret && process.env.VERCEL_ENV === 'production') {
+    // Fail-closed: em produção, sem segredo não há como validar a origem da notificação.
+    console.error('MERCADOPAGO_WEBHOOK_SECRET não definido em produção: notificação recusada.');
+    return res.status(500).json({ error: 'Configuração ausente' });
+  }
   if (secret) {
     const ok = verifySignature({
       secret,
@@ -82,8 +103,8 @@ module.exports = async (req, res) => {
     const code = pay.external_reference;
     if (!code || !pay.status) return res.status(200).json({ ok: true });
 
-    const sql = require('./db'); // carregado aqui para o parser poder ser testado sem DATABASE_URL
-    const [order] = await sql.query('select total_cents from orders where code = $1', [String(code)]);
+    const sql = require('./_lib/db'); // carregado aqui para o parser poder ser testado sem DATABASE_URL
+    const [order] = await sql.query('select id, total_cents from orders where code = $1', [String(code)]);
     if (!order) return res.status(200).json({ ok: true });
 
     // Só confirma se moeda e valor pago batem com o total gravado no servidor.
@@ -104,6 +125,12 @@ module.exports = async (req, res) => {
          and not (payment_status = 'approved' and payment_id is distinct from $3 and $2 <> 'approved')`,
       [String(code), String(pay.status), String(pay.id), paymentMethodOf(pay)]
     );
+    // Pontos (O11): só chega aqui com moeda e valor conferidos. Idempotente: aprovado credita e confirma o resgate;
+    // rejeitado/cancelado devolve a reserva; estornado reverte. Roda a cada notificação para consertar execução interrompida.
+    // Pedido já cancelado e pagamento aprovado depois: os pontos não são creditados (loyalty.onPaymentStatus) e o admin
+    // recebe um aviso na auditoria (Atividade) para estornar à mão. Nada é estornado automaticamente no Mercado Pago.
+    await noteCancelledPaid(sql, order.id, String(pay.id));
+    await require('./_lib/loyalty').onPaymentStatus(sql, order.id);
     return res.status(200).json({ ok: true });
   } catch (error) {
     console.error('Erro no webhook do Mercado Pago:', error.message);
@@ -111,4 +138,18 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { parseSignature, verifySignature, parseNotification, paymentMethodOf };
+// Grava no máximo um aviso por pedido + pagamento (o Mercado Pago reenvia a mesma notificação várias vezes).
+const CANCELLED_PAID_ACTION = 'pagamento_apos_cancelamento';
+async function noteCancelledPaid(sql, orderId, paymentId) {
+  await sql.query(
+    `insert into admin_audit (username, action, detail)
+     select 'mercadopago', $2::text,
+            'Pedido ' || public_code || ' estava cancelado e recebeu pagamento aprovado (pagamento ' || $3::text || '). '
+            || 'Pontos não creditados. Estorne o valor manualmente no Mercado Pago.'
+       from orders
+      where id = $1 and fulfillment_status = 'cancelled' and payment_status = 'approved'
+        and not exists (select 1 from admin_audit where action = $2::text and detail like 'Pedido ' || orders.public_code || ' %(pagamento ' || $3::text || ')%')`,
+    [orderId, CANCELLED_PAID_ACTION, paymentId]);
+}
+
+module.exports._internal = { CANCELLED_PAID_ACTION, noteCancelledPaid, parseSignature, verifySignature, tsToSeconds, parseNotification, paymentMethodOf };

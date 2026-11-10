@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Docinho">
+  <path d="M19 32 5 19v26z" fill="#ff7ab3" stroke="#9c2a40" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M45 32 59 19v26z" fill="#ff7ab3" stroke="#9c2a40" stroke-width="2.5" stroke-linejoin="round"/>
+  <circle cx="32" cy="32" r="15" fill="#c93a51" stroke="#9c2a40" stroke-width="2.5"/>
+  <path d="M24.5 21.5c3.5 6 3.5 15 0 21M32 17.5c4 7 4 22 0 29M39.5 21.5c3.5 6 3.5 15 0 21" fill="none" stroke="#ffe29a" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="26" cy="25" r="2.2" fill="#fff" opacity=".7"/>
+</svg>

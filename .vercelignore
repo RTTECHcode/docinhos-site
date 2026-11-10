@@ -1,0 +1,10 @@
+# Arquivos que nunca devem ir para o deploy (defesa extra; a Vercel só precisa de api/, public/, vercel.json e package*.json).
+.env
+.env.*
+!.env.example
+scripts/
+docs/
+.claude/
+.agents/
+skills-lock.json
+README.md

@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#3b1a12">
+<title>Minha conta — Docinhos da Gigi</title>
+<meta name="description" content="Sua conta na Docinhos da Gigi: pedidos, pontos e dados.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/conta/conta.css">
+</head>
+<body class="conta">
+<header class="conta-top">
+  <a class="conta-brand" href="/" aria-label="Docinhos da Gigi, voltar ao cardápio">
+    <img src="/images/branding/logo.jpg" alt="" class="conta-logo" width="52" height="52">
+    <span class="conta-brand-name">Docinhos da Gigi</span>
+  </a>
+  <a class="conta-back" href="/">Voltar ao cardápio</a>
+</header>
+
+<main class="conta-main" id="conta-main">
+  <nav id="conta-tabs" class="conta-tabs" aria-label="Minha conta" hidden>
+    <a href="#pedidos" data-tab="pedidos">Pedidos</a>
+    <a href="#pontos" data-tab="pontos">Pontos</a>
+    <a href="#dados" data-tab="dados">Meus dados</a>
+  </nav>
+
+  <p id="conta-aviso" class="notice" role="status" hidden></p>
+
+  <!-- U2: entrar -->
+  <section id="view-entrar" class="panel" data-view="entrar" hidden aria-labelledby="t-entrar">
+    <h1 id="t-entrar" class="panel-title" tabindex="-1">Entrar</h1>
+    <p class="muted">Entre para ver seus pedidos e seus pontos. Você também pode comprar sem conta.</p>
+    <form method="post" id="form-entrar" novalidate autocomplete="on">
+      <label class="field">Telefone com DDD
+        <input name="phone" type="tel" inputmode="tel" autocomplete="username" placeholder="(11) 91234-5678" maxlength="20" required data-phone>
+      </label>
+      <label class="field">Senha
+        <input name="password" type="password" autocomplete="current-password" maxlength="128" required>
+      </label>
+      <p class="form-error" role="alert" hidden></p>
+      <button class="button full" type="submit">Entrar</button>
+    </form>
+    <p class="links"><a href="#recuperar">Esqueci minha senha</a> <span aria-hidden="true">·</span> <a href="#cadastro">Criar conta</a></p>
+    <p class="links"><a href="/">Voltar ao cardápio</a></p>
+  </section>
+
+  <!-- U1: cadastro -->
+  <section id="view-cadastro" class="panel" data-view="cadastro" hidden aria-labelledby="t-cadastro">
+    <h1 id="t-cadastro" class="panel-title" tabindex="-1">Criar conta</h1>
+    <p class="muted">Com a conta você junta pontos a cada compra paga. Comprar sem conta continua possível.</p>
+    <form method="post" id="form-cadastro" novalidate autocomplete="on">
+      <label class="field">Seu nome
+        <input name="name" autocomplete="name" placeholder="Ex.: Maria Souza" maxlength="80" required>
+      </label>
+      <label class="field">Telefone com DDD
+        <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(11) 91234-5678" maxlength="20" required data-phone>
+      </label>
+      <label class="field">E-mail <span class="opt">(opcional)</span>
+        <input name="email" type="email" autocomplete="email" autocapitalize="none" maxlength="120" placeholder="voce@exemplo.com">
+      </label>
+      <label class="field">Senha <span class="opt">(mínimo 8 caracteres)</span>
+        <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+      </label>
+      <label class="field">Repita a senha
+        <input name="password2" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+      </label>
+
+      <fieldset class="group">
+        <legend>Pergunta de segurança</legend>
+        <p class="hint">Serve para recuperar sua senha se você esquecer. Escolha uma resposta que só você sabe.</p>
+        <label class="field">Pergunta
+          <select name="security_question" required><option value="">Carregando...</option></select>
+        </label>
+        <p class="hint q-full" id="cad-q-full" hidden></p>
+        <label class="field">Sua resposta <span class="opt">(mínimo 3 letras)</span>
+          <input name="security_answer" autocomplete="off" autocapitalize="none" maxlength="200" required>
+        </label>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Aniversário <span class="opt">(opcional)</span></legend>
+        <div class="row2">
+          <label class="field">Dia
+            <select name="birth_day"><option value="">--</option></select>
+          </label>
+          <label class="field">Mês
+            <select name="birth_month"><option value="">--</option></select>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset class="group consent-box">
+        <legend>WhatsApp</legend>
+        <label class="check">
+          <input type="checkbox" name="whatsapp_consent" id="cad-consent">
+          <span id="cad-consent-text" class="check-text">Carregando texto...</span>
+        </label>
+        <p class="hint">Isso é opcional: sua conta funciona do mesmo jeito sem marcar. <a href="/privacidade.html" target="_blank" rel="noopener">Política de privacidade</a>.</p>
+      </fieldset>
+
+      <p class="form-error" role="alert" hidden></p>
+      <button class="button full" type="submit">Criar minha conta</button>
+    </form>
+    <p class="links"><a href="#entrar">Já tenho conta</a> <span aria-hidden="true">·</span> <a href="/">Voltar ao cardápio</a></p>
+  </section>
+
+  <!-- U3: recuperar -->
+  <section id="view-recuperar" class="panel" data-view="recuperar" hidden aria-labelledby="t-recuperar">
+    <h1 id="t-recuperar" class="panel-title" tabindex="-1">Recuperar acesso</h1>
+    <div id="rec-etapa1">
+      <p class="muted">Informe o telefone da conta. Vamos mostrar a pergunta de segurança que você escolheu no cadastro.</p>
+      <form method="post" id="form-rec1" novalidate>
+        <label class="field">Telefone com DDD
+          <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(11) 91234-5678" maxlength="20" required data-phone>
+        </label>
+        <p class="form-error" role="alert" hidden></p>
+        <button class="button full" type="submit">Continuar</button>
+      </form>
+    </div>
+    <div id="rec-etapa2" hidden>
+      <form method="post" id="form-rec2" novalidate autocomplete="off">
+        <p class="question-box"><span class="question-label">Sua pergunta</span><strong id="rec-pergunta"></strong></p>
+        <label class="field">Sua resposta
+          <input name="answer" autocomplete="off" autocapitalize="none" maxlength="200" required>
+        </label>
+        <label class="field">Nova senha <span class="opt">(mínimo 8 caracteres)</span>
+          <input name="new_password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+        </label>
+        <label class="field">Repita a nova senha
+          <input name="new_password2" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+        </label>
+        <p class="notice info">Por segurança, depois da recuperação seus pontos ficam sem poder ser usados por 48 horas. Você continua juntando pontos normalmente.</p>
+        <p class="form-error" role="alert" hidden></p>
+        <button class="button full" type="submit">Trocar a senha</button>
+      </form>
+    </div>
+    <div id="rec-pronto" hidden>
+      <p class="notice ok" id="rec-pronto-msg" role="status"></p>
+      <a class="button full" href="#entrar">Entrar com a nova senha</a>
+    </div>
+    <p class="links"><a href="#entrar">Voltar para entrar</a> <span aria-hidden="true">·</span> <a href="/">Voltar ao cardápio</a></p>
+  </section>
+
+  <!-- U4: pedidos -->
+  <section id="view-pedidos" class="panel" data-view="pedidos" hidden aria-labelledby="t-pedidos">
+    <h1 id="t-pedidos" class="panel-title" tabindex="-1">Meus pedidos</h1>
+    <p id="pedidos-status" class="muted" role="status">Carregando...</p>
+    <ul id="pedidos-lista" class="order-list"></ul>
+    <p class="links"><a href="/">Voltar ao cardápio</a></p>
+  </section>
+
+  <!-- U5: pontos -->
+  <section id="view-pontos" class="panel" data-view="pontos" hidden aria-labelledby="t-pontos">
+    <h1 id="t-pontos" class="panel-title" tabindex="-1">Meus pontos</h1>
+    <p id="pontos-status" class="muted" role="status">Carregando...</p>
+    <div id="pontos-corpo" hidden>
+      <div class="points-card">
+        <span class="points-label">Seu saldo</span>
+        <strong id="pontos-saldo" class="points-balance">0</strong>
+        <span id="pontos-valor" class="points-worth"></span>
+      </div>
+      <p id="pontos-bloqueio" class="notice warn" hidden></p>
+      <p id="pontos-reservados" class="notice info" hidden></p>
+      <div class="rules">
+        <h2>Como funciona</h2>
+        <ul>
+          <li>Você ganha 1 ponto a cada R$ 1 em produtos.</li>
+          <li>Cada 100 pontos valem R$ 10 de desconto no pedido.</li>
+          <li>Os pontos entram só depois que o pagamento é aprovado.</li>
+          <li>Para usar, escolha os pontos na hora de finalizar o pedido, estando com a conta aberta.</li>
+        </ul>
+      </div>
+      <h2 class="section-title">Extrato</h2>
+      <ul id="pontos-extrato" class="ledger"></ul>
+      <p id="pontos-vazio" class="muted" hidden>Ainda não há movimentação. Faça um pedido para começar a juntar pontos.</p>
+    </div>
+    <p class="links"><a href="/">Voltar ao cardápio</a></p>
+  </section>
+
+  <!-- Dados -->
+  <section id="view-dados" class="panel" data-view="dados" hidden aria-labelledby="t-dados">
+    <h1 id="t-dados" class="panel-title" tabindex="-1">Meus dados</h1>
+    <p id="dados-status" class="muted" role="status">Carregando...</p>
+    <div id="dados-corpo" hidden>
+      <dl class="data-list">
+        <div><dt>Nome</dt><dd id="d-nome"></dd></div>
+        <div><dt>Telefone</dt><dd id="d-telefone"></dd></div>
+        <div><dt>E-mail</dt><dd id="d-email"></dd></div>
+        <div><dt>Aniversário</dt><dd id="d-aniversario"></dd></div>
+      </dl>
+
+      <div class="subpanel">
+        <h2>WhatsApp</h2>
+        <label class="check">
+          <input type="checkbox" id="dados-consent">
+          <span id="dados-consent-text" class="check-text"></span>
+        </label>
+        <p class="hint">Você pode ligar ou desligar quando quiser. Cada mudança fica registrada. <a href="/privacidade.html" target="_blank" rel="noopener">Política de privacidade</a>.</p>
+        <p id="dados-consent-msg" class="notice ok" role="status" hidden></p>
+        <p id="dados-consent-erro" class="form-error" role="alert" hidden></p>
+      </div>
+
+      <div class="subpanel">
+        <h2>Trocar senha</h2>
+        <form method="post" id="form-senha" novalidate autocomplete="off">
+          <label class="field">Senha atual
+            <input name="current_password" type="password" autocomplete="current-password" maxlength="128" required>
+          </label>
+          <label class="field">Nova senha <span class="opt">(mínimo 8 caracteres)</span>
+            <input name="new_password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+          </label>
+          <label class="field">Repita a nova senha
+            <input name="new_password2" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+          </label>
+          <p class="form-error" role="alert" hidden></p>
+          <p class="notice ok" role="status" hidden></p>
+          <button class="button full" type="submit">Trocar senha</button>
+        </form>
+      </div>
+
+      <button id="btn-sair" class="button secondary full" type="button">Sair da conta</button>
+    </div>
+    <p class="links"><a href="/">Voltar ao cardápio</a></p>
+  </section>
+</main>
+
+<footer class="conta-foot">
+  <span>Docinhos da Gigi</span>
+  <span class="footer-note">Peça fácil, receba feliz</span>
+  <a class="footer-link" href="/">Voltar ao cardápio</a>
+</footer>
+
+<script src="/conta/conta.js"></script>
+</body>
+</html>

@@ -1,4 +1,11 @@
 const crypto = require('node:crypto');
+const { hasControlChars } = require('./_lib/validate');
+const shipping = require('./_lib/shipping');
+const storeHours = require('./_lib/store-hours');
+const ordersLib = require('./_lib/orders');
+const loyalty = require('./_lib/loyalty');
+const customerLib = require('./_lib/customer');
+const auth = require('./_lib/auth');
 
 const SITE_URL = 'https://docinhos-site.vercel.app';
 const MP_PREFERENCES_URL = 'https://api.mercadopago.com/checkout/preferences';
@@ -9,10 +16,14 @@ const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
 const STORE_ADDRESS = 'Manoel Hare Peralta, 101';
 
 const DELIVERY_METHODS = ['delivery', 'pickup'];
-const DELIVERY_FEE_CENTS = 0; // taxa de entrega fixa por enquanto
+const DEFAULT_PAUSE_LABEL = 'volto logo <3';
 const MAX_ITEMS = 30;
 const MAX_ITEM_QTY = 20;
 const MAX_ORDERS_PER_PHONE = 5; // por janela de 10 minutos
+const MAX_ORDERS_PER_IP = 10;   // por janela de 10 minutos (A1-05: trocar o telefone não burla o limite)
+const MAX_ATTEMPTS_PER_IP = 20; // tentativas (aceitas OU recusadas: 400, 409, 422, 429, 503...) por IP em 10 minutos
+const MSG_TOO_MANY = 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.';
+const MSG_SHIPPING_BUSY = 'Muitas consultas de frete agora. Tente de novo em instantes.';
 const MAX_INT4 = 2147483647;
 
 // Decisões de pagamento:
@@ -64,6 +75,10 @@ function priceItems(rawItems, catalog) {
 
     const product = catalog.products.get(raw.product_id);
     if (!product) fail(`Item ${n}: produto indisponível.`);
+    if (product.paused) {
+      const label = product.pause_label || catalog.defaultPauseLabel || DEFAULT_PAUSE_LABEL;
+      fail(`Item ${n}: "${product.name}" está pausado no momento (${label}). Remova o item do carrinho para continuar.`);
+    }
     const links = catalog.complements.get(product.id) || new Map();
     const sizes = [...links.values()].filter(c => c.kind === 'size');
 
@@ -131,6 +146,7 @@ function priceItems(rawItems, catalog) {
 function validateCustomer(b, storeAddress = STORE_ADDRESS) {
   const name = typeof b.customer_name === 'string' ? b.customer_name.trim() : '';
   if (name.length < 2 || name.length > 80) fail('Informe seu nome (2 a 80 caracteres).');
+  if (hasControlChars(name, false)) fail('O nome contém caracteres inválidos.');
 
   const phone = typeof b.customer_phone === 'string' || typeof b.customer_phone === 'number'
     ? String(b.customer_phone).replace(/\D/g, '') : '';
@@ -139,10 +155,13 @@ function validateCustomer(b, storeAddress = STORE_ADDRESS) {
   const method = b.delivery_method;
   if (!DELIVERY_METHODS.includes(method)) fail('Escolha entrega ou retirada.');
 
-  let address;
+  let address, cep = null;
   if (method === 'delivery') {
+    cep = shipping.normalizeCep(b.cep);
+    if (!cep) fail('Informe o CEP de entrega com 8 números.');
     address = typeof b.address === 'string' ? b.address.trim() : '';
     if (address.length < 5 || address.length > 200) fail('Informe o endereço de entrega (5 a 200 caracteres).');
+    if (hasControlChars(address, false)) fail('O endereço contém caracteres inválidos.');
   } else {
     address = storeAddress; // retirada: ignora qualquer endereço enviado
   }
@@ -152,14 +171,15 @@ function validateCustomer(b, storeAddress = STORE_ADDRESS) {
     if (typeof b.notes !== 'string') fail('Observações inválidas.');
     notes = b.notes.trim() || null;
     if (notes && notes.length > 300) fail('As observações podem ter no máximo 300 caracteres.');
+    if (notes && hasControlChars(notes, true)) fail('As observações contêm caracteres inválidos.');
   }
-  return { name, phone, method, address, notes };
+  return { name, phone, method, address, notes, cep, number: b.address_number };
 }
 
 // Carrega do banco só produtos ativos (de categorias ativas) e seus complementos ativos.
 async function loadCatalog(sql, productIds) {
   const products = await sql.query(
-    `select p.id, p.name, p.price_cents
+    `select p.id, p.name, p.price_cents, p.paused, p.pause_label
        from products p join categories c on c.id = p.category_id
       where p.active and c.active and p.id = any($1::int[])`,
     [productIds]
@@ -189,14 +209,28 @@ async function loadCatalog(sql, productIds) {
 }
 
 // Um item do Mercado Pago por item do pedido (preço em reais, calculado no servidor).
-function buildPreferenceItems(items) {
-  return items
+// A taxa de entrega (se > 0) entra como item extra: o total pago precisa ser igual ao total_cents do pedido,
+// senão o webhook (que confere o valor) nunca aprova.
+// Com desconto de pontos o Mercado Pago não aceita valor negativo: os produtos viram uma linha só, já com o desconto
+// (subtotal - desconto), para o total pago continuar igual ao total_cents do pedido.
+function buildPreferenceItems(items, deliveryFeeCents = 0, discountCents = 0, orderLabel = 'Pedido') {
+  // Com desconto de pontos: um item só com o subtotal já descontado (o MP não aceita item de valor negativo ou zero).
+  const discounted = items.reduce((s, i) => s + i.unit_total_cents * i.qty, 0) - discountCents;
+  const list = discountCents > 0
+    ? (discounted > 0
+      ? [{ id: '1', title: `${orderLabel} - Docinhos da Gigi (com desconto de pontos)`.slice(0, 256), quantity: 1, currency_id: 'BRL', unit_price: Number((discounted / 100).toFixed(2)) }]
+      : [])
+    : items
     .filter(i => i.unit_total_cents > 0)
     .map((i, idx) => {
       const title = [i.name, i.size ? `- ${i.size}` : '', i.extras.length ? `(+ ${i.extras.join(', ')})` : '']
         .filter(Boolean).join(' ').slice(0, 256);
       return { id: String(idx + 1), title, quantity: i.qty, currency_id: 'BRL', unit_price: Number((i.unit_total_cents / 100).toFixed(2)) };
     });
+  if (deliveryFeeCents > 0) {
+    list.push({ id: 'frete', title: 'Taxa de entrega', quantity: 1, currency_id: 'BRL', unit_price: Number((deliveryFeeCents / 100).toFixed(2)) });
+  }
+  return list;
 }
 
 function buildPreferenceBody(order, prefItems, now = new Date()) {
@@ -254,7 +288,7 @@ function buildPixBody(order, customerName, now = new Date()) {
   return {
     transaction_amount: Number((order.total_cents / 100).toFixed(2)),
     payment_method_id: 'pix',
-    description: `Pedido ${order.code} - Docinhos da Gigi`,
+    description: `Pedido ${order.public_code || order.code} - Docinhos da Gigi`,
     external_reference: order.code,
     notification_url: `${SITE_URL}/api/mp-webhook`,
     date_of_expiration: mpDate(new Date(now.getTime() + PIX_TTL_MS)),
@@ -291,53 +325,139 @@ async function createPixPayment(token, order, customerName) {
   };
 }
 
+// Código legado (external_reference do Mercado Pago, chave única do banco). O cliente vê public_code (DG-####).
 function newCode() {
   return 'DG' + crypto.randomBytes(5).toString('hex').toUpperCase();
 }
 
+const MAX_CODE_TRIES = 10;
+const send = (res, status, payload) => res.status(status).json(payload);
+
+// Registra esta tentativa e diz se o IP passou do limite (a tentativa atual entra na conta). Tabela order_attempts
+// (scripts/migrate-2026-11-10-order-attempts.js). De vez em quando apaga linhas com mais de 1 dia.
+async function attemptsExceeded(sql, ip) {
+  const [{ n }] = await sql.query(
+    `with ins as (insert into order_attempts (ip) values ($1) returning 1)
+     select (select count(*) from order_attempts where ip = $1 and at > now() - interval '10 minutes')::int + (select count(*) from ins)::int as n`,
+    [ip]);
+  if (Math.random() < 0.02) await sql.query(`delete from order_attempts where at < now() - interval '1 day'`);
+  return n > MAX_ATTEMPTS_PER_IP;
+}
+// Pedidos criados nos últimos 10 min por este telefone e por este IP.
+async function recentOrders(sql, phone, ip) {
+  const [r] = await sql.query(
+    `select count(*) filter (where regexp_replace(customer_phone, '\\D', '', 'g') = $1)::int n, count(*) filter (where client_ip = $2)::int by_ip
+       from orders where created_at > now() - interval '10 minutes'`, [phone, ip]);
+  return r;
+}
+const overOrderLimit = r => r.n >= MAX_ORDERS_PER_PHONE || r.by_ip >= MAX_ORDERS_PER_IP;
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
+  // A1-05: só o próprio site cria pedido. Origin igual ao Host (e Sec-Fetch-Site same-origin quando vier) e corpo JSON
+  // (text/plain dispensaria o preflight de CORS e deixaria outro site postar pedidos).
+  if (!auth.sameOrigin(req)) return res.status(403).json({ error: 'Origem não permitida.', code: 'forbidden_origin' });
+  if (!auth.isJsonType(req)) return res.status(415).json({ error: 'Envie os dados como JSON.', code: 'unsupported_type' });
   try {
-    const sql = require('./db'); // carregado aqui para testar a função pura sem DATABASE_URL
+    const sql = require('./_lib/db'); // carregado aqui para testar a função pura sem DATABASE_URL
+    // Limite por IP antes de qualquer trabalho caro (frete, catálogo). Toda tentativa conta, até as recusadas.
+    // 403/415 acima não contam: um site de terceiros não consegue gastar a cota do IP de quem o visita.
+    const ip = auth.clientIp(req);
+    if (await attemptsExceeded(sql, ip)) return send(res, 429, { error: MSG_TOO_MANY, code: 'rate_limited' });
     let b = req.body;
     if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
     if (!b || typeof b !== 'object' || Array.isArray(b)) fail('Dados inválidos.');
 
-    // Configurações da loja editáveis no /admin (tabela settings). Padrões = constantes acima.
-    const st = {};
-    for (const r of await sql`select key, value from settings where key in ('store_paused', 'store_paused_message', 'store_address', 'delivery_fee_cents')`) st[r.key] = r.value;
-    if (st.store_paused === '1') {
-      return res.status(503).json({ error: st.store_paused_message || 'Estamos com os pedidos pausados no momento. Volte em instantes!' });
+    // Loja fechada (horário, fechamento manual ou pausa antiga): recusa já, informando quando abre.
+    const state = await storeHours.getStoreState(sql);
+    if (!state.open) {
+      return send(res, 503, {
+        error: state.message || 'Estamos fechados no momento.',
+        code: 'store_closed',
+        store: { open: false, reason: state.reason, reopens_at: state.reopens_at, next_open_at: state.next_open_at, message: state.message }
+      });
     }
-    const deliveryFee = Number.parseInt(st.delivery_fee_cents, 10);
-    const DELIVERY_FEE = Number.isInteger(deliveryFee) && deliveryFee >= 0 && deliveryFee <= 100000 ? deliveryFee : DELIVERY_FEE_CENTS;
+
+    const settingRows = await sql.query(`select key, value from settings where key in ('store_address', 'default_pause_label')`);
+    const st = {};
+    for (const r of settingRows) st[r.key] = r.value;
 
     const customer = validateCustomer(b, st.store_address || STORE_ADDRESS);
+    // Limite de pedidos por telefone e por IP também ANTES do frete (o insert confere de novo, de forma atômica).
+    if (overOrderLimit(await recentOrders(sql, customer.phone, ip))) return send(res, 429, { error: MSG_TOO_MANY, code: 'rate_limited' });
+    // Mesmo teto global de consultas novas de endereço do /api/store (protege ViaCEP/Nominatim/OSRM), antes do catálogo e do frete.
+    if (customer.method === 'delivery' && await shipping.tooManyNewLookups(sql)) return send(res, 429, { error: MSG_SHIPPING_BUSY, code: 'shipping_busy' });
     const choice = PAYMENT_CHOICES.includes(b.payment_choice) ? b.payment_choice : 'card';
     if (!Array.isArray(b.items) || b.items.length === 0) fail('O carrinho está vazio.');
     if (b.items.length > MAX_ITEMS) fail(`O pedido pode ter no máximo ${MAX_ITEMS} itens.`);
     const ids = [...new Set(b.items.map(i => (i && isId(i.product_id) ? i.product_id : null)).filter(Boolean))];
 
     const catalog = await loadCatalog(sql, ids);
+    catalog.defaultPauseLabel = st.default_pause_label || DEFAULT_PAUSE_LABEL;
     const priced = priceItems(b.items, catalog);
-    const total = priced.subtotal_cents + DELIVERY_FEE;
 
-    // Limite de abuso: o insert só acontece se o telefone tiver < 5 pedidos nos últimos 10 min
-    // (checagem e inserção na mesma instrução, para reduzir corridas).
-    const rows = await sql.query(
-      `insert into orders (code, customer_name, customer_phone, delivery_method, address, items,
-                           subtotal_cents, delivery_fee_cents, total_cents, notes, payment_status)
-       select $1::text, $2::text, $3::text, $4::text, $5::text, $6::jsonb, $7::int, $8::int, $9::int, $10::text, 'pending'
-        where (select count(*) from orders
-                where regexp_replace(customer_phone, '\\D', '', 'g') = $3::text
-                  and created_at > now() - interval '10 minutes') < $11::int
-       returning id, code, total_cents`,
-      [newCode(), customer.name, customer.phone, customer.method, customer.address, JSON.stringify(priced.items),
-        priced.subtotal_cents, DELIVERY_FEE, total, customer.notes, MAX_ORDERS_PER_PHONE]
-    );
-    if (!rows.length) return res.status(429).json({ error: 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.' });
-    const order = rows[0];
+    // Frete: retirada R$ 0; entrega por faixa de km, recalculado aqui (o cliente nunca informa valor).
+    let deliveryFee = 0, distanceKm = null;
+    if (customer.method === 'delivery') {
+      const quote = await shipping.quoteDelivery(sql, { cep: customer.cep, address: customer.address, number: customer.number });
+      deliveryFee = quote.fee_cents;
+      distanceKm = quote.km;
+    }
+
+    // Pontos (só com cliente logado): saldo, bloqueio de 48 h e desconto conferidos no servidor.
+    let discount = 0, pointsRedeemed = 0;
+    if (b.use_points !== undefined && b.use_points !== null && b.use_points !== 0 && (!Number.isInteger(b.use_points) || b.use_points < 0)) fail('Quantidade de pontos inválida.');
+    const session = await customerLib.getSession(sql, req);
+    if (b.use_points) {
+      if (!session) return send(res, 401, { error: 'Entre na sua conta para usar seus pontos.', code: 'login_required' });
+      const bal = await loyalty.getBalance(sql, session.customer.id);
+      const red = loyalty.validateRedemption({
+        points: b.use_points, subtotalCents: priced.subtotal_cents, balance: bal.balance, lockedUntil: session.customer.points_locked_until
+      });
+      discount = red.discount_cents;
+      pointsRedeemed = red.points;
+    }
+    const total = priced.subtotal_cents - discount + deliveryFee;
+    if (total < loyalty.MIN_CHARGE_CENTS) {
+      fail('O valor a pagar precisa ser de pelo menos R$ 1,00. Use menos pontos neste pedido.');
+    }
+
+    // Limite de abuso: o insert só acontece se o telefone tiver < 5 pedidos e o IP < 10 pedidos nos últimos 10 min, e se o
+    // DG-#### não existir entre os pedidos dos últimos 90 dias (checagem e inserção na mesma instrução, para reduzir corridas).
+    const tracking = ordersLib.newTrackingToken();
+    let order = null;
+    for (let attempt = 0; attempt < MAX_CODE_TRIES && !order; attempt++) {
+      const publicCode = ordersLib.newPublicCode();
+      const rows = await sql.query(
+        `insert into orders (code, public_code, tracking_token_hash, customer_id, customer_name, customer_phone, delivery_method, address, items,
+                             subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, total_cents, distance_km, notes, payment_status, client_ip)
+         select $1::text, $2::text, $3::text, $4::int, $5::text, $6::text, $7::text, $8::text, $9::jsonb,
+                $10::int, $11::int, $12::int, $13::int, $14::int, $15::numeric, $16::text, 'pending', $18::text
+          where (select count(*) from orders
+                  where regexp_replace(customer_phone, '\\D', '', 'g') = $6::text
+                    and created_at > now() - interval '10 minutes') < $17::int
+            and (select count(*) from orders where client_ip = $18::text and created_at > now() - interval '10 minutes') < $19::int
+            and not exists (select 1 from orders where public_code = $2::text and created_at > now() - interval '${ordersLib.PUBLIC_CODE_WINDOW}')
+         returning id, code, public_code, total_cents`,
+        [newCode(), publicCode, tracking.hash, session ? session.customer.id : null, customer.name, customer.phone, customer.method, customer.address,
+          JSON.stringify(priced.items), priced.subtotal_cents, deliveryFee, discount, pointsRedeemed, total, distanceKm, customer.notes, MAX_ORDERS_PER_PHONE,
+          ip, MAX_ORDERS_PER_IP]
+      );
+      if (rows.length) { order = rows[0]; break; }
+      if (overOrderLimit(await recentOrders(sql, customer.phone, ip))) return send(res, 429, { error: MSG_TOO_MANY, code: 'rate_limited' });
+      // senão foi colisão do DG-####: sorteia outro
+    }
+    if (!order) throw new Error('não foi possível gerar um código de pedido único');
+
+    // Reserva dos pontos (atômica com a conferência do saldo). Se outra compra gastou antes, desfaz este pedido.
+    if (pointsRedeemed > 0) {
+      const reserved = await loyalty.reserve(sql, { customerId: session.customer.id, orderId: order.id, points: pointsRedeemed });
+      if (!reserved) {
+        await sql.query('delete from orders where id = $1', [order.id]);
+        return send(res, 409, { error: 'Saldo de pontos insuficiente. Atualize a página e tente de novo.', code: 'insufficient_points' });
+      }
+    }
 
     // Se a criação do pagamento falhar, o pedido continua válido (payment: null).
     let payment = null;
@@ -353,7 +473,7 @@ module.exports = async (req, res) => {
       }
     } else if (mpToken) {
       try {
-        const pref = await createPreference(mpToken, order, buildPreferenceItems(priced.items));
+        const pref = await createPreference(mpToken, order, buildPreferenceItems(priced.items, deliveryFee, discount, order.public_code));
         if (pref && pref.init_point && pref.id) {
           payment = { type: 'card', url: pref.init_point, id: String(pref.id) };
           await sql`update orders set payment_method = 'mercadopago_card', payment_id = ${String(pref.id)} where id = ${order.id}`;
@@ -366,7 +486,14 @@ module.exports = async (req, res) => {
     return res.status(201).json({
       id: order.id,
       code: order.code,
+      public_code: order.public_code,
+      tracking_token: tracking.token, // só aparece aqui; o banco guarda apenas o SHA-256
+      subtotal_cents: priced.subtotal_cents,
+      delivery_fee_cents: deliveryFee,
+      discount_cents: discount,
+      points_redeemed: pointsRedeemed,
       total_cents: order.total_cents,
+      distance_km: distanceKm,
       delivery_method: customer.method,
       address: customer.address,
       items: priced.items,
@@ -374,9 +501,11 @@ module.exports = async (req, res) => {
     });
   } catch (error) {
     if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
+    if (error instanceof shipping.ShippingError) return res.status(error.status).json({ error: error.message, code: error.code, ...(error.max_km ? { max_km: error.max_km } : {}) });
+    if (error instanceof loyalty.LoyaltyError) return res.status(error.status).json({ error: error.message, code: error.code });
     console.error('Erro ao criar pedido:', error.message);
     return res.status(500).json({ error: 'Não foi possível criar o pedido' });
   }
 };
 
-module.exports._internal = { priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError };
+module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };

@@ -84,6 +84,13 @@ async function unit() {
     assert.equal(I.evaluateLock({ failsMs: [], ipFails: 20, nowMs: now }).locked, true);
     assert.equal(I.evaluateLock({ failsMs: [], ipFails: 19, nowMs: now }).locked, false);
   });
+  await t('A1-04: ataque espalhado (30 falhas do usuário em 1 h) barra só IP desconhecido; IP conhecido segue livre', () => {
+    const now = 1e12;
+    assert.equal(I.evaluateLock({ failsMs: [], ipFails: 0, userFails: 30, knownIp: false, nowMs: now }).locked, true);
+    assert.equal(I.evaluateLock({ failsMs: [], ipFails: 0, userFails: 30, knownIp: false, nowMs: now }).reason, 'spread');
+    assert.equal(I.evaluateLock({ failsMs: [], ipFails: 0, userFails: 29, knownIp: false, nowMs: now }).locked, false);
+    assert.equal(I.evaluateLock({ failsMs: [], ipFails: 0, userFails: 500, knownIp: true, nowMs: now }).locked, false);
+  });
   await t('validadores: centavos, ids e inteiros', () => {
     assert.equal(I.vCents(0, 'x'), 0); assert.equal(I.vCents(1000000, 'x'), 1000000); assert.equal(I.vCents(null, 'x', true), null);
     for (const v of [-1, 1.5, '12', 1000001, NaN, null, undefined]) throwsHttp(() => I.vCents(v, 'x'));
@@ -236,7 +243,8 @@ async function parserTests() {
 }
 
 // ---------- integração (banco real, somente dados ZZ-TESTE) ----------
-const S = { imageIds: new Set(), ips: { lock: '198.51.100.20', a: '198.51.100.21', b: '198.51.100.22', c: '198.51.100.23', d: '198.51.100.24', e: '198.51.100.25' } };
+const S = { imageIds: new Set(), ips: { lock: '198.51.100.20', a: '198.51.100.21', b: '198.51.100.22', c: '198.51.100.23', d: '198.51.100.24', e: '198.51.100.25',
+  f: '198.51.100.26', g: '198.51.100.27', h: '198.51.100.28' } };
 let sql, Q;
 const TABLES = ['products', 'complements', 'categories', 'product_complements', 'product_groups', 'orders', 'settings'];
 
@@ -248,8 +256,9 @@ async function snapshot() {
   return out;
 }
 async function mkUser(username, role, password, weak) {
-  return (await Q('insert into admin_users (username, password_hash, role, weak_password) values ($1,$2,$3,$4) returning id',
-    [username, await I.hashPassword(password), role, !!weak]))[0].id;
+  const ah = await require('../api/_lib/auth').hashAnswer('resposta teste');
+  return (await Q('insert into admin_users (username, password_hash, role, weak_password, security_question, security_answer_hash, security_set_at) values ($1,$2,$3,$4,$5,$6, now()) returning id',
+    [username, await I.hashPassword(password), role, !!weak, 'prof_favorito', ah]))[0].id;
 }
 async function loginAs(username, password, ip) {
   const r = await post(null, 'login', { username, password }, { ip });
@@ -259,14 +268,16 @@ async function loginAs(username, password, ip) {
 function trackImage(path) { const m = /id=(\d+)/.exec(String(path || '')); if (m) S.imageIds.add(Number(m[1])); }
 
 async function setup() {
-  sql = require('../api/db'); Q = (text, params) => sql.query(text, params || []);
+  sql = require('../api/_lib/db'); Q = (text, params) => sql.query(text, params || []);
   S.before = await snapshot();
   S.settingsBefore = await Q('select key, value from settings');
-  S.names = { adm: 'zz-teste-adm', staff: 'zz-teste-staff', lock: 'zz-teste-lock', ghost: 'zz-teste-ghost', fresh: 'zz-teste-novo' };
-  S.pw = { adm: rnd() + 'Aa1', staff: rnd() + 'Bb2', lock: rnd() + 'Cc3' };
+  S.names = { adm: 'zz-teste-adm', staff: 'zz-teste-staff', lock: 'zz-teste-lock', ghost: 'zz-teste-ghost', fresh: 'zz-teste-novo', weak: 'zz-teste-fraco', pwlock: 'zz-teste-pwlock' };
+  S.pw = { adm: rnd() + 'Aa1', staff: rnd() + 'Bb2', lock: rnd() + 'Cc3', weak: rnd() + 'Gg7', pwlock: rnd() + 'Hh8' };
   S.admId = await mkUser(S.names.adm, 'admin', S.pw.adm, false);
-  S.staffId = await mkUser(S.names.staff, 'staff', S.pw.staff, true);
+  S.staffId = await mkUser(S.names.staff, 'staff', S.pw.staff, false);
   await mkUser(S.names.lock, 'staff', S.pw.lock, false);
+  S.weakId = await mkUser(S.names.weak, 'staff', S.pw.weak, true);
+  await mkUser(S.names.pwlock, 'staff', S.pw.pwlock, false);
   const a = await loginAs(S.names.adm, S.pw.adm, S.ips.a);
   const s = await loginAs(S.names.staff, S.pw.staff, S.ips.b);
   S.adm = a.cookie; S.staff = s.cookie;
@@ -305,11 +316,25 @@ async function authTests() {
     assert.equal(last.r.status, 429); assert.equal(last.r.json.error, 'Muitas tentativas. Tente mais tarde.');
     const right = await loginAs(S.names.lock, S.pw.lock, S.ips.lock);
     assert.equal(right.r.status, 429); assert.equal(right.cookie, null);
-    const other = await loginAs(S.names.lock, S.pw.lock, S.ips.d); // IP diferente: bloqueio é por usuário
-    assert.equal(other.r.status, 429);
+    const other = await loginAs(S.names.lock, S.pw.lock, S.ips.d); // A1-04: IP diferente não herda o bloqueio do par usuário+IP
+    assert.equal(other.r.status, 200);
+    assert.equal((await loginAs(S.names.lock, S.pw.lock, S.ips.lock)).r.status, 429, 'o IP que errou continua barrado');
     execFileSync(process.execPath, [path.join(__dirname, 'unlock-admin.js'), S.names.lock], { env: process.env, stdio: 'pipe' });
-    const after = await loginAs(S.names.lock, S.pw.lock, S.ips.d);
+    const after = await loginAs(S.names.lock, S.pw.lock, S.ips.lock);
     assert.equal(after.r.status, 200);
+  });
+  await t('A1-04: 30 falhas espalhadas em vários IPs barram IP novo, mas o dono entra pelo IP conhecido', async () => {
+    assert.equal((await loginAs(S.names.lock, S.pw.lock, S.ips.d)).r.status, 200); // IP d vira conhecido
+    for (let i = 0; i < 30; i++) await Q('insert into login_attempts (username, ip, ok) values ($1, $2, false)', [S.names.lock, '203.0.113.' + (100 + i)]);
+    assert.equal((await loginAs(S.names.lock, S.pw.lock, S.ips.f)).r.status, 429, 'IP desconhecido');
+    assert.equal((await loginAs(S.names.lock, S.pw.lock, S.ips.d)).r.status, 200, 'IP conhecido');
+    await Q('delete from login_attempts where username = $1', [S.names.lock]);
+  });
+  await t('IP do cliente: x-real-ip (Vercel) vale mais que x-forwarded-for forjado', async () => {
+    for (let i = 0; i < 5; i++) await loginAs(S.names.lock, 'errada-xri-' + i, S.ips.g);
+    const forged = await post(null, 'login', { username: S.names.lock, password: S.pw.lock }, { ip: S.ips.h, headers: { 'x-real-ip': S.ips.g } });
+    assert.equal(forged.status, 429, 'trocar o x-forwarded-for não escapa do bloqueio');
+    await Q('delete from login_attempts where username = $1', [S.names.lock]);
   });
   await t('bloqueio por IP: 20 falhas em 15 min barram outros usuários desse IP', async () => {
     const ip = S.ips.e;
@@ -347,9 +372,37 @@ async function authTests() {
     assert.equal((await post(S.staff, 'user_reset', { id: S.admId, new_password: 'abcdefgh1' })).status, 403);
     assert.equal((await get(S.adm, 'users')).status, 200);
   });
-  await t('sessão expirada no banco => 401; weakPassword refletido em /me para o usuário fraco', async () => {
-    const l = await loginAs(S.names.staff, S.pw.staff, S.ips.b);
+  await t('A1-06: senha fraca só libera me, troca de senha, sair e segurança; o resto 403 password_change_required', async () => {
+    const l = await loginAs(S.names.weak, S.pw.weak, S.ips.b);
+    assert.equal(l.r.status, 200); assert.equal(l.r.json.user.weakPassword, true);
+    for (const a of ['catalog', 'orders', 'audit', 'store_state']) {
+      const r = await get(l.cookie, a); assert.equal(r.status, 403, a); assert.equal(r.json.code, 'password_change_required', a);
+    }
+    const c = await post(l.cookie, 'command', { text: 'pausar zz teste' });
+    assert.equal(c.status, 403); assert.equal(c.json.code, 'password_change_required');
+    for (const a of ['me', 'security_questions', 'security_status']) assert.equal((await get(l.cookie, a)).status, 200, a);
+    const newPw = rnd() + 'Ii9';
+    const ok = await post(l.cookie, 'password_change', { current_password: S.pw.weak, new_password: newPw });
+    assert.equal(ok.status, 200); assert.equal(ok.json.user.weakPassword, false);
+    assert.equal((await get(l.cookie, 'catalog')).status, 200);
+    S.pw.weak = newPw;
+  });
+  await t('A1-07: senha atual errada na troca conta no bloqueio (5 erros => 429, mesmo com a certa); outro IP não trava', async () => {
+    const l = await loginAs(S.names.pwlock, S.pw.pwlock, S.ips.c);
+    let last;
+    for (let i = 0; i < 5; i++) last = await post(l.cookie, 'password_change', { current_password: 'errada-' + i + '-xx', new_password: rnd() + 'Jj1' }, { ip: S.ips.c });
+    assert.equal(last.status, 429);
+    assert.equal((await post(l.cookie, 'password_change', { current_password: S.pw.pwlock, new_password: rnd() + 'Jj1' }, { ip: S.ips.c })).status, 429);
+    assert.equal((await post(l.cookie, 'recovery_codes_new', { current_password: S.pw.pwlock }, { ip: S.ips.c })).status, 429);
+    assert.equal((await loginAs(S.names.pwlock, S.pw.pwlock, S.ips.c)).r.status, 429, 'login desse IP também barrado');
+    assert.equal((await loginAs(S.names.pwlock, S.pw.pwlock, S.ips.d)).r.status, 200, 'outro IP segue livre');
+    assert.equal((await Q(`select count(*)::int n from admin_audit where username = $1 and action = 'troca_senha_falhou'`, [S.names.pwlock]))[0].n >= 5, true);
+  });
+  await t('sessão expirada no banco => 401; weakPassword refletido em /me', async () => {
+    await Q('update admin_users set weak_password = true where id = $1', [S.weakId]);
+    const l = await loginAs(S.names.weak, S.pw.weak, S.ips.b);
     assert.equal((await get(l.cookie, 'me')).json.user.weakPassword, true);
+    await Q('update admin_users set weak_password = false where id = $1', [S.weakId]);
     await Q(`update admin_sessions set expires_at = now() - interval '1 minute' where token_hash = $1`, [crypto.createHash('sha256').update(l.cookie.split('=')[1]).digest('hex')]);
     assert.equal((await get(l.cookie, 'me')).status, 401);
   });
@@ -384,11 +437,25 @@ async function catalogTests() {
     assert.equal(p.status, 200, JSON.stringify(p.json)); ctx.prod = p.json.product.id;
     assert.equal(p.json.product.price_cents, 1250); assert.match(p.json.product.description, /drop table/);
     assert.ok((await Q('select count(*)::int n from products'))[0].n > 30);
+    // A2 rodada 3: produto ATIVO sem preço e sem tamanho é recusado (a loja mostraria "Consulte" e o pedido falharia no fim)
+    const MSG = admin._internal.MSG_ACTIVE_NEEDS_PRICE;
     const e = await post(S.adm, 'product_save', { id: ctx.prod, name: 'ZZ-TESTE Fatia Alfa 2', price_cents: null });
-    assert.equal(e.json.product.price_cents, null); assert.equal(e.json.product.name, 'ZZ-TESTE Fatia Alfa 2');
-    assert.equal((await post(S.adm, 'product_save', { id: ctx.prod, name: 'ZZ-TESTE Fatia Alfa' })).status, 200);
+    assert.equal(e.status, 400); assert.equal(e.json.error, MSG);
+    assert.deepEqual(Object.values((await Q('select name, price_cents from products where id = $1', [ctx.prod]))[0]), ['ZZ-TESTE Fatia Alfa', 1250], 'nada mudou');
+    const novo = await post(S.adm, 'product_save', { name: 'ZZ-TESTE Sem Preco', price_cents: null, category_id: ctx.cat });
+    assert.equal(novo.status, 400, 'novo nasce ativo: sem preço recusa'); assert.equal(novo.json.error, MSG);
+    const novoOff = await post(S.adm, 'product_save', { name: 'ZZ-TESTE Sem Preco', price_cents: null, category_id: ctx.cat, active: false });
+    assert.equal(novoOff.status, 200, 'desligado pode ficar sem preço (para vincular tamanhos depois)');
+    const ligar = await post(S.adm, 'product_toggle', { id: novoOff.json.product.id, active: true });
+    assert.equal(ligar.status, 400); assert.equal(ligar.json.error, MSG);
+    assert.equal((await Q('select active from products where id = $1', [novoOff.json.product.id]))[0].active, false);
+    assert.equal((await post(S.adm, 'product_save', { id: novoOff.json.product.id, active: true, price_cents: 500 })).status, 200, 'com preço liga');
     const off = await post(S.adm, 'product_toggle', { id: ctx.prod, active: false });
     assert.equal(off.json.product.active, false);
+    const e2 = await post(S.adm, 'product_save', { id: ctx.prod, name: 'ZZ-TESTE Fatia Alfa 2', price_cents: null });
+    assert.equal(e2.status, 200); assert.equal(e2.json.product.price_cents, null); assert.equal(e2.json.product.name, 'ZZ-TESTE Fatia Alfa 2');
+    assert.equal((await post(S.adm, 'product_toggle', { id: ctx.prod, active: true })).status, 400, 'ligar sem preço e sem tamanho');
+    assert.equal((await post(S.adm, 'product_save', { id: ctx.prod, name: 'ZZ-TESTE Fatia Alfa', price_cents: 1250 })).status, 200);
     assert.equal((await post(S.adm, 'product_toggle', { id: ctx.prod, active: true })).json.product.active, true);
     assert.equal((await post(S.adm, 'product_toggle', { id: ctx.prod, active: 'sim' })).status, 400);
     assert.equal((await post(S.adm, 'product_toggle', { id: 2147483000, active: true })).status, 404);
@@ -438,7 +505,7 @@ async function catalogTests() {
     const find = m => m.body.categories.flatMap(c => c.products).find(p => p.id === ctx.prod);
     let m = await menuCall();
     assert.equal(m.code, 200); assert.ok(find(m).complements.some(c => c.id === ctx.comp));
-    assert.deepEqual(Object.keys(m.body.settings).sort(), ['deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
+    assert.deepEqual(Object.keys(m.body.settings).sort(), ['defaultPauseLabel', 'deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: ctx.comp, paused: true })).status, 200);
     m = await menuCall(); assert.ok(!find(m).complements.some(c => c.id === ctx.comp));
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: ctx.comp, paused: false })).status, 200);
@@ -446,8 +513,15 @@ async function catalogTests() {
     assert.equal((await post(S.adm, 'link_save', { product_id: ctx.prod, complement_id: ctx.comp, max_quantity: 51 })).status, 400);
     assert.equal((await post(S.adm, 'link_save', { product_id: ctx.prod, complement_id: ctx.comp, group_id: 2147483000 })).status, 404);
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: 2147483000, paused: true })).status, 404);
+    // A2 rodada 3: com um tamanho vinculado, o produto pode ficar ativo sem preço (preço pelo tamanho) e aparece normal no cardápio
+    assert.equal((await post(S.adm, 'product_save', { id: ctx.prod, price_cents: null })).status, 200, 'tem tamanho: preço nulo aceito');
+    m = await menuCall(); assert.notEqual(find(m).unavailable, true);
     assert.equal((await post(S.adm, 'link_delete', { product_id: ctx.prod, complement_id: ctx.size })).status, 200);
     assert.equal((await post(S.adm, 'link_delete', { product_id: ctx.prod, complement_id: ctx.size })).status, 404);
+    // sem preço e sem tamanho: o cardápio marca como indisponível (a loja não deixa pôr no carrinho)
+    m = await menuCall(); assert.equal(find(m).unavailable, true); assert.equal(find(m).label, require('../api/menu').NO_PRICE_LABEL);
+    assert.equal((await post(S.adm, 'product_save', { id: ctx.prod, price_cents: 1250 })).status, 200);
+    m = await menuCall(); assert.notEqual(find(m).unavailable, true);
   });
   await t('foto: PNG minúsculo grava em images, image_path vira /api/img?id=N e api/img serve com cache imutável', async () => {
     const r = await post(S.adm, 'product_image', { product_id: ctx.prod, data: PNG_B64 });
@@ -483,7 +557,7 @@ async function catalogTests() {
     assert.equal(c.status, 200);
     assert.ok(c.json.products.some(p => p.id === S.ctx.prod)); assert.ok(c.json.complements.some(x => x.id === S.ctx.comp && x.uses === 1));
     assert.ok(c.json.groups.some(g => g.id === S.ctx.group)); assert.ok(c.json.links.some(l => l.complement_id === S.ctx.comp && l.paused === false));
-    assert.deepEqual(Object.keys(c.json.settings).sort(), ['deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
+    assert.deepEqual(Object.keys(c.json.settings).sort(), ['defaultPauseLabel', 'deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
   });
 }
 
@@ -499,15 +573,18 @@ async function orderTests() {
     assert.equal((await get(S.adm, 'orders', { s: 'zz-teste cliente' })).json.orders.length, 1);
     assert.equal((await get(S.adm, 'orders', { s: code, f: 'paid' })).json.orders.length, 1);
     assert.equal((await get(S.adm, 'orders', { s: code, f: 'ready' })).json.orders.length, 0);
-    assert.ok((await get(S.adm, 'orders')).json.orders.length <= 100);
+    assert.ok((await get(S.adm, 'orders')).json.orders.length <= 200);
     assert.equal((await get(S.adm, 'orders', { s: "'; drop table orders; --" })).status, 200);
   });
   await t('status: new -> preparing -> ready -> delivered -> cancelled; inválidos => 400/404', async () => {
-    for (const s of ['preparing', 'ready', 'delivered', 'cancelled']) {
+    for (const s of ['accepted', 'preparing', 'ready', 'awaiting_delivery']) {
       const r = await post(S.adm, 'order_status', { id: row.id, status: s });
       assert.equal(r.status, 200); assert.equal(r.json.order.fulfillment_status, s);
       assert.equal((await Q('select fulfillment_status from orders where id=$1', [row.id]))[0].fulfillment_status, s);
     }
+    assert.equal((await post(S.adm, 'order_status', { id: row.id, status: 'preparing' })).status, 409); // não volta
+    assert.equal((await post(S.adm, 'order_status', { id: row.id, status: 'cancelled', reason: 'teste' })).status, 200);
+    assert.equal((await post(S.adm, 'order_status', { id: row.id, status: 'new' })).status, 409);
     assert.equal((await get(S.adm, 'orders', { f: 'cancelled', s: code })).json.orders.length, 1);
     for (const bad of ['pronto', '', null, 5]) assert.equal((await post(S.adm, 'order_status', { id: row.id, status: bad })).status, 400);
     assert.equal((await post(S.adm, 'order_status', { id: 'x', status: 'new' })).status, 400);
@@ -535,6 +612,16 @@ async function commandTests() {
     assert.equal(back.json.targets[0].to, true); assert.equal(back.json.targets[0].from, false);
     await post(S.staff, 'command_apply', { targets: back.json.targets });
     assert.equal((await state()).comp, true);
+  });
+  await t('A2 rodada 3: ativar por comando produto sem preço e sem tamanho = 400 (nada muda); com preço liga', async () => {
+    const [p] = await Q(`insert into products (category_id, name, price_cents, active) values ($1, 'ZZ-TESTE Cmd Sem Preco', null, false) returning id`, [ctx.cat]);
+    const r = await post(S.adm, 'command_apply', { targets: [{ type: 'product', id: p.id, to: true }, { type: 'complement', id: ctx.comp, to: true }] });
+    assert.equal(r.status, 400); assert.ok(r.json.error.startsWith(admin._internal.MSG_ACTIVE_NEEDS_PRICE)); assert.match(r.json.error, /ZZ-TESTE Cmd Sem Preco/);
+    assert.equal((await Q('select active from products where id = $1', [p.id]))[0].active, false);
+    await Q('update products set price_cents = 300 where id = $1', [p.id]);
+    assert.equal((await post(S.adm, 'command_apply', { targets: [{ type: 'product', id: p.id, to: true }] })).status, 200);
+    assert.equal((await Q('select active from products where id = $1', [p.id]))[0].active, true);
+    await Q('delete from products where id = $1', [p.id]);
   });
   await t('comando: complemento só em um produto (vínculo) e produto, com prévia antes/depois', async () => {
     const p = await post(S.adm, 'command', { text: 'acabou zz teste calda beta no zz teste fatia alfa' });
@@ -605,6 +692,7 @@ async function commandTests() {
     assert.equal((await post(S.staff, 'password_change', { current_password: S.pw.staff, new_password: '1234567' })).status, 400);
     assert.equal((await post(S.staff, 'password_change', { current_password: S.pw.staff, new_password: S.pw.staff })).status, 400);
     const newPw = rnd() + 'Dd4';
+    await Q('update admin_users set weak_password = true where id = $1', [S.staffId]); // a troca limpa a marca de senha fraca
     const ok = await post(S.staff, 'password_change', { current_password: S.pw.staff, new_password: newPw });
     assert.equal(ok.status, 200); assert.equal(ok.json.user.weakPassword, false);
     assert.equal((await Q('select weak_password from admin_users where id=$1', [S.staffId]))[0].weak_password, false);
@@ -628,6 +716,13 @@ async function commandTests() {
     assert.equal((await get(sess, 'me')).status, 401);
     assert.equal((await loginAs(S.names.fresh, pw, S.ips.b)).r.status, 401);
     const s2 = await loginAs(S.names.fresh, pw2, S.ips.b); assert.equal(s2.r.status, 200);
+    // senha redefinida pelo admin é provisória: obriga a troca no próximo login
+    assert.equal(s2.r.json.user.weakPassword, true, 'user_reset grava weak_password = true');
+    // usuário recém-criado ainda não tem pergunta de segurança (esse portão vem antes); cadastra para testar o da senha
+    await Q(`update admin_users set security_question = 'prof_favorito', security_answer_hash = $2, security_set_at = now() where id = $1`,
+      [id, await require('../api/_lib/auth').hashAnswer('resposta teste')]);
+    { const c = await get(s2.cookie, 'catalog'); assert.equal(c.status, 403); assert.equal(c.json.code, 'password_change_required'); }
+    assert.equal((await Q('select weak_password from admin_users where id = $1', [id]))[0].weak_password, true);
     assert.equal((await post(S.adm, 'user_reset', { id, new_password: 'curta' })).status, 400);
     assert.equal((await post(S.adm, 'user_toggle', { id, active: false })).status, 200);
     assert.equal((await get(s2.cookie, 'me')).status, 401);
@@ -642,7 +737,10 @@ async function commandTests() {
     assert.equal(a.status, 200); assert.ok(a.json.rows.length > 0 && a.json.rows.length <= 50);
     const blob = JSON.stringify(a.json.rows);
     assert.ok(!blob.includes(S.pw.adm) && !blob.includes(S.pw.staff) && !/scrypt\$/.test(blob));
-    assert.ok(a.json.rows.some(r => r.action === 'login_falhou')); assert.ok(a.json.rows.some(r => r.action === 'produto_criado'));
+    assert.ok(a.json.rows.some(r => r.action === 'login_falhou')); assert.ok(a.json.rows.some(r => r.action === 'produto_editado'));
+    const st = await get(S.staff, 'audit'); // A1-08: staff não vê falhas de login/recuperação (IP e usuário digitado)
+    assert.equal(st.status, 200); assert.ok(st.json.rows.length > 0);
+    assert.ok(!st.json.rows.some(r => r.action === 'login_falhou' || r.action === 'recuperacao_falhou'));
     const l = await loginAs(S.names.adm, S.pw.adm, S.ips.a);
     const out = await post(l.cookie, 'logout', {});
     assert.equal(out.status, 200); assert.ok(String(out.headers['set-cookie']).includes('Max-Age=0'));

@@ -24,6 +24,9 @@
     return node;
   };
   const el = DG.el;
+  // Estados padrão (classes .is-loading e .empty-state em admin.css): use estes em vez de um p.muted solto.
+  DG.loading = text => el('p', { class: 'is-loading', role: 'status', text: text || 'Carregando...' });
+  DG.empty = text => el('p', { class: 'empty-state', text });
 
   // append/replaceChildren nativos transformam null/false em texto ("null"). Aqui eles passam a ignorar esses valores,
   // para que condicionais como `cond ? el(...) : null` funcionem em qualquer ponto da interface.
@@ -61,7 +64,13 @@
     let data = {};
     try { data = await res.json(); } catch { /* corpo vazio */ }
     if (res.status === 401 && action !== 'login') { showLogin(); throw new Error(data.error || 'Sessão expirada.'); }
-    if (!res.ok) throw new Error(data.error || 'Algo deu errado. Tente de novo.');
+    if (!res.ok) {
+      const err = new Error(data.error || 'Algo deu errado. Tente de novo.');
+      err.status = res.status; err.code = data.code;
+      if (res.status === 403 && data.code === 'security_setup_required' && DG.forceSecurity) DG.forceSecurity();
+      else if (res.status === 403 && data.code === 'password_change_required') DG.forcePasswordChange();
+      throw err;
+    }
     if (data.user) setUser(data.user);
     return data;
   };
@@ -70,37 +79,86 @@
   };
 
   // ---- sheet e confirmação ----
-  // Interruptor play/pause acessível. onChange(próximoValor) deve retornar false se falhar (o botão não muda).
+  // Interruptor play/pause acessível. onChange(próximoValor) deve retornar false se falhar (o botão volta ao valor confirmado).
+  // B2: o clique atualiza na hora e os envios ao servidor são feitos em fila (um por vez, em ordem); se o usuário clicar várias
+  // vezes enquanto um envio está em andamento, só o último valor desejado é enviado depois. Assim o estado final no servidor
+  // sempre bate com o último clique (antes o botão ficava desabilitado e cliques rápidos eram perdidos ou chegavam fora de ordem).
   DG.switchEl = (checked, label, onChange, big) => {
     const b = el('button', { class: 'switch' + (big ? ' big' : ''), type: 'button', role: 'switch', 'aria-checked': String(!!checked), 'aria-label': label });
-    b.addEventListener('click', async () => {
-      const next = b.getAttribute('aria-checked') !== 'true';
-      b.disabled = true;
-      const ok = await onChange(next);
-      b.disabled = false;
-      if (ok !== false) b.setAttribute('aria-checked', String(next));
+    let confirmed = !!checked; // último valor aceito pelo servidor
+    let wanted = confirmed;    // último valor pedido pelo usuário
+    let busy = false;
+    const show = v => b.setAttribute('aria-checked', String(v));
+    async function flush() {
+      busy = true;
+      while (wanted !== confirmed) {
+        const target = wanted;
+        let ok;
+        try { ok = await onChange(target); } catch { ok = false; }
+        if (ok === false) { wanted = confirmed; show(confirmed); break; }
+        confirmed = target;
+      }
+      busy = false;
+    }
+    b.addEventListener('click', () => {
+      wanted = !wanted;
+      show(wanted);
+      if (!busy) flush();
     });
     return b;
   };
 
+  // ---- sheets (pop-ups) com histórico do navegador (B3) e animação de fechar (B5) ----
+  // Cada sheet aberto empilha uma entrada no histórico; o botão voltar (popstate) fecha o sheet do topo.
+  // Fechar pelo X/fundo/botões consome a própria entrada com history.back() (ignorando o popstate resultante).
+  const sheetStack = [];
+  let ignorePops = 0;      // popstates causados por history.back() nosso
+  const afterPops = [];    // pushState adiado enquanto há history.back() pendente
+  function runAfterPops() { while (!ignorePops && afterPops.length) afterPops.shift()(); }
+  window.addEventListener('popstate', () => {
+    if (ignorePops > 0) { ignorePops--; runAfterPops(); return; }
+    const top = sheetStack[sheetStack.length - 1];
+    if (top) top.dismiss(false);
+  });
+
   DG.sheet = function (title, build, onClose) {
     const root = $('#overlay-root');
     const body = el('div', { class: 'stack' });
-    const close = () => { backdrop.remove(); if (onClose) onClose(); };
+    const entry = { pushed: false, closed: false };
+    function dismiss(fromUi) {
+      if (entry.closed) return;
+      entry.closed = true;
+      const i = sheetStack.indexOf(entry);
+      const wasTop = i === sheetStack.length - 1;
+      if (i >= 0) sheetStack.splice(i, 1);
+      if (entry.pushed && fromUi && wasTop) { ignorePops++; history.back(); }
+      backdrop.classList.add('closing');
+      let gone = false;
+      const remove = () => { if (!gone) { gone = true; backdrop.remove(); } };
+      sheet.addEventListener('animationend', remove, { once: true });
+      setTimeout(remove, 320);
+      if (onClose) onClose();
+    }
+    entry.dismiss = dismiss;
+    const close = () => dismiss(true);
     const sheet = el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       el('div', { class: 'sheet-head' }, el('h2', { text: title }), el('button', { class: 'x', type: 'button', 'aria-label': 'Fechar', text: '×', on: { click: close } })),
       body);
     const backdrop = el('div', { class: 'backdrop', on: { click: e => { if (e.target === backdrop) close(); } } }, sheet);
     root.append(backdrop);
+    sheetStack.push(entry);
+    const push = () => { if (entry.closed) return; history.pushState({ dgSheet: true }, ''); entry.pushed = true; };
+    if (ignorePops) afterPops.push(push); else push();
     build(body, close);
     return close;
   };
   DG.confirm = (message, okLabel, danger) => new Promise(resolve => {
+    // resolve(valor) vem antes de close(): voltar/fechar sem escolher cai no onClose e cancela (resolve(false)).
     DG.sheet('Confirmar', (body, close) => {
       body.append(el('p', { text: message, class: 'wrap' }), el('div', { class: 'grid2' },
-        el('button', { class: 'btn', type: 'button', text: 'Cancelar', on: { click: () => { close(); resolve(false); } } }),
-        el('button', { class: 'btn ' + (danger ? 'danger solid' : 'primary'), type: 'button', text: okLabel || 'Confirmar', on: { click: () => { close(); resolve(true); } } })));
-    });
+        el('button', { class: 'btn', type: 'button', text: 'Cancelar', on: { click: () => { resolve(false); close(); } } }),
+        el('button', { class: 'btn ' + (danger ? 'danger solid' : 'primary'), type: 'button', text: okLabel || 'Confirmar', on: { click: () => { resolve(true); close(); } } })));
+    }, () => resolve(false));
   });
 
   // ---- usuário, abas ----
@@ -113,6 +171,7 @@
     $('#app').hidden = true;
     $('#login-view').hidden = false;
     $('#overlay-root').replaceChildren();
+    sheetStack.length = 0;
   }
   function stopTab() { const t = DG.tabs[DG.state.tab]; if (t && t.stop) t.stop(); }
   DG.go = async function (tab) {
@@ -120,7 +179,7 @@
     DG.state.tab = tab;
     document.querySelectorAll('#tabbar button').forEach(b => { if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     const view = $('#view');
-    view.replaceChildren(el('p', { class: 'muted', text: 'Carregando...' }));
+    view.replaceChildren(DG.loading());
     window.scrollTo(0, 0);
     try { await DG.tabs[tab].render(view); } catch (e) { if (DG.state.tab === tab) view.replaceChildren(el('p', { class: 'error', text: e.message })); }
   };
@@ -131,9 +190,15 @@
   async function boot() {
     try { await DG.api('me'); } catch { return; }
     $('#login-view').hidden = true;
+    if (DG.state.user && DG.state.user.needsSecurity && DG.forceSecurity) { DG.forceSecurity(); return; }
+    if (DG.state.user && DG.state.user.weakPassword) { DG.forcePasswordChange(); return; }
     $('#app').hidden = false;
     DG.go(DG.state.tab);
   }
+
+  // Rótulos em pt-BR para eventos da atividade; os de AUDIT_WARN aparecem em destaque (pedem ação de alguém).
+  const AUDIT_LABELS = { pagamento_apos_cancelamento: 'Pagamento recebido após cancelamento – verificar devolução' };
+  const AUDIT_WARN = new Set(['pagamento_apos_cancelamento']);
 
   // ---- aba Conta ----
   DG.tabs.account = {
@@ -144,12 +209,13 @@
           el('button', { class: 'btn', type: 'button', text: 'Sair', on: { click: logout } }))),
         el('h2', { class: 'section-title', text: 'Trocar senha' }), passwordForm(),
         u.role === 'admin' ? el('div', { id: 'users-box' }) : null,
-        el('h2', { class: 'section-title', text: 'Atividade recente' }), el('div', { id: 'audit-box', class: 'card' }, el('p', { class: 'muted', text: 'Carregando...' })));
+        el('h2', { class: 'section-title', text: 'Atividade recente' }), el('div', { id: 'audit-box', class: 'card' }, DG.loading()));
       DG.api('audit').then(r => {
         const box = $('#audit-box');
         if (!box) return;
-        box.replaceChildren(...(r.rows.length ? r.rows.map(a => el('div', { class: 'audit' }, el('strong', { text: a.action.replace(/_/g, ' ') }),
-          el('span', { class: 'muted wrap', text: DG.fmtDate(a.at) + ' - ' + (a.username || 'sistema') + (a.detail ? ' - ' + a.detail : '') }))) : [el('p', { class: 'muted', text: 'Nada registrado.' })]));
+        box.replaceChildren(...(r.rows.length ? r.rows.map(a => el('div', { class: 'audit' + (AUDIT_WARN.has(a.action) ? ' warn' : ''), role: AUDIT_WARN.has(a.action) ? 'note' : null },
+          el('strong', { text: AUDIT_LABELS[a.action] || a.action.replace(/_/g, ' ') }),
+          el('span', { class: 'muted wrap', text: DG.fmtDate(a.at) + ' - ' + (a.username || 'sistema') + (a.detail ? ' - ' + a.detail : '') }))) : [DG.empty('Nada registrado ainda.')]));
       }).catch(() => {});
       if (u.role === 'admin') loadUsers();
     }
@@ -172,6 +238,48 @@
     return form;
   }
 
+  // Tela obrigatória de troca de senha (F5, A1-06): o servidor bloqueia tudo com 403 password_change_required
+  // enquanto a senha for fraca. Mesmo padrão da tela da pergunta de segurança; ao trocar, recarrega o painel.
+  let pwLock = null;
+  DG.forcePasswordChange = function () {
+    if (pwLock) return;
+    stopTab();
+    $('#app').hidden = true;
+    $('#login-view').hidden = true;
+    $('#overlay-root').replaceChildren();
+    sheetStack.length = 0;
+    const cur = el('input', { type: 'password', autocomplete: 'current-password', maxlength: 256, required: true });
+    const nw = el('input', { type: 'password', autocomplete: 'new-password', maxlength: 128, minlength: 8, required: true });
+    const again = el('input', { type: 'password', autocomplete: 'new-password', maxlength: 128, required: true });
+    const err = el('p', { class: 'error wrap', role: 'alert', hidden: true });
+    const save = el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar nova senha' });
+    const show = t => { err.textContent = t; err.hidden = false; };
+    const form = el('form', { class: 'stack', novalidate: true, on: { submit: async e => {
+      e.preventDefault();
+      err.hidden = true;
+      if (!cur.value) return show('Digite a sua senha atual.');
+      if (nw.value.length < 8) return show('A nova senha precisa ter pelo menos 8 caracteres.');
+      if (nw.value !== again.value) return show('As duas senhas novas não são iguais.');
+      save.disabled = true;
+      try {
+        await DG.api('password_change', { body: { current_password: cur.value, new_password: nw.value } });
+        DG.toast('Senha alterada.');
+        location.reload();
+      } catch (ex) { show(ex.message); save.disabled = false; }
+    } } },
+    el('label', { class: 'field' }, el('span', { text: 'Senha atual' }), cur),
+    el('label', { class: 'field' }, el('span', { text: 'Nova senha (mínimo 8 caracteres)' }), nw),
+    el('label', { class: 'field' }, el('span', { text: 'Repita a nova senha' }), again),
+    err, save);
+    const card = el('div', { class: 'login-card' }, el('h1', { text: 'Troque a sua senha' }),
+      el('p', { class: 'muted wrap', text: 'Sua senha atual é fraca. Para continuar usando o painel, escolha uma senha nova.' }),
+      form,
+      el('button', { class: 'btn block', type: 'button', text: 'Sair', on: { click: async () => { await DG.run(() => DG.api('logout', { body: {} })); location.reload(); } } }));
+    pwLock = el('main', { class: 'login a5-lock', 'aria-label': 'Troca de senha obrigatória' }, card);
+    document.body.append(pwLock);
+    cur.focus();
+  };
+
   async function loadUsers() {
     const box = $('#users-box');
     if (!box) return;
@@ -181,7 +289,7 @@
       ...r.users.map(u => el('div', { class: 'card' }, el('div', { class: 'row between' },
         el('div', { class: 'grow' }, el('strong', { text: u.username }), el('p', { class: 'muted small', text: (u.role === 'admin' ? 'Administrador' : 'Equipe') + (u.active ? '' : ' - desativado') + (u.weak_password ? ' - senha fraca' : '') })),
         el('button', { class: 'btn small', type: 'button', text: 'Nova senha', on: { click: () => resetPassword(u) } }),
-        u.username === DG.state.user.username ? null : el('button', { class: 'btn small', type: 'button', text: u.active ? 'Desativar' : 'Ativar', on: { click: async () => {
+        u.username === DG.state.user.username ? null : el('button', { class: 'btn small' + (u.active ? ' danger' : ''), type: 'button', text: u.active ? 'Desativar' : 'Ativar', on: { click: async () => {
           if (u.active && !(await DG.confirm('Desativar o usuário ' + u.username + '?', 'Desativar', true))) return;
           await DG.run(() => DG.api('user_toggle', { body: { id: u.id, active: !u.active } }), 'Pronto.');
           loadUsers();
@@ -223,6 +331,7 @@
     btn.disabled = false;
   });
   $('#tabbar').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) DG.go(b.dataset.tab); });
+  $('#login-forgot').addEventListener('click', () => { if (DG.forgotPassword) DG.forgotPassword(); });
   $('#weak-banner').addEventListener('click', () => DG.go('account'));
   boot().then(() => { if (!DG.state.user) { $('#login-view').hidden = false; } });
 })();

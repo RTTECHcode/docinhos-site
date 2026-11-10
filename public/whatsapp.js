@@ -3,8 +3,8 @@
 (function () {
   var number = String(window.WHATSAPP_NUMBER || '').replace(/\D/g, '');
   if (!number) return;
-  var text = encodeURIComponent('Olá! Gostaria de ver o cardápio e fazer um pedido.');
+  var DEFAULT = 'Olá! Gostaria de ver o cardápio e fazer um pedido.';
   document.querySelectorAll('[data-wa]').forEach(function (a) {
-    a.href = 'https://wa.me/' + number + '?text=' + text;
+    a.href = 'https://wa.me/' + number + '?text=' + encodeURIComponent(a.getAttribute('data-wa-text') || DEFAULT);
   });
 })();

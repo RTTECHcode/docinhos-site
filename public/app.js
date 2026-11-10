@@ -14,6 +14,7 @@ const WHATSAPP_NUMBER = String(window.WHATSAPP_NUMBER || '').replace(/\D/g, '');
 const STORE_ADDRESS = String(window.STORE_ADDRESS || '').trim();
 const CART_KEY = 'dg-cart';
 const LAST_ORDER_KEY = 'dg-last-order';
+const RECENT_KEY = 'dg-recent-orders';
 const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)');
 const MODAL_MS = 300; // um pouco acima da transição de 280ms do CSS
 
@@ -22,7 +23,7 @@ let activeProduct = null;
 let sel = { size: null, extras: {} };
 let pmGroups = []; // grupos de escolha do produto aberto: { id, label, min, max, opts[] }
 
-const brl = cents => 'R$ ' + (cents / 100).toFixed(2).replace('.', ',');
+const brl = cents => 'R$ ' + (cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' };
 const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ESC_MAP[c]);
 const waLink = text => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
@@ -36,6 +37,25 @@ function readStore(key, storage = localStorage) {
 }
 function writeStore(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* segue sem persistir */ }
+}
+function removeStore(key) {
+  try { localStorage.removeItem(key); } catch { /* ignora */ }
+}
+
+/* Último pedido (para a volta do Mercado Pago). Guarda só o mínimo: DG-####, token de acompanhamento, status, forma de
+   pagamento e os valores do resumo. O texto do WhatsApp (tem nome, telefone e endereço) só é guardado no pagamento com
+   cartão, que sai do site e volta; tudo vale 24 h e o texto é apagado assim que a pessoa toca em "Enviar pelo WhatsApp".
+   Entradas antigas (sem prazo, com dados pessoais) são apagadas na primeira leitura. */
+const LAST_ORDER_TTL_MS = 24 * 60 * 60 * 1000;
+function saveLastOrder(o) { writeStore(LAST_ORDER_KEY, { ...o, expires_at: Date.now() + LAST_ORDER_TTL_MS }); }
+function readLastOrder() {
+  const last = readStore(LAST_ORDER_KEY);
+  if (!last || typeof last !== 'object' || typeof last.token !== 'string' || !(last.expires_at > Date.now())) { removeStore(LAST_ORDER_KEY); return null; }
+  return last;
+}
+function forgetWhatsAppText() {
+  const last = readLastOrder();
+  if (last && 'whatsappText' in last) { delete last.whatsappText; writeStore(LAST_ORDER_KEY, last); }
 }
 
 const isId = n => Number.isInteger(n) && n > 0;
@@ -83,9 +103,12 @@ const modalHooks = {
 };
 const modalEl = id => document.querySelector(id);
 
+let pendingOpen = null;     // abertura pedida enquanto outro modal ainda fecha (history.back em andamento)
 function openModal(id, opts = {}) {
   const modal = modalEl(id);
-  if (!modal || modalStack.includes(id) || closing.has(id)) return;
+  if (!modal || modalStack.includes(id)) return;
+  // Antes: o toque era descartado se algum modal estava fechando. Agora fica na fila e abre quando o fechamento termina.
+  if (closing.size) { pendingOpen = [id, opts]; return; }
   clearTimeout(modal._hideTimer);
   modal._opener = opts.opener || document.activeElement;
   modalStack.push(id);
@@ -118,6 +141,7 @@ function hideModal(id) {
   clearTimeout(modal._hideTimer);
   if (REDUCED.matches) finish(); else modal._hideTimer = setTimeout(finish, MODAL_MS);
   if (after) after();
+  if (!closing.size && pendingOpen) { const [pid, popts] = pendingOpen; pendingOpen = null; openModal(pid, popts); }
 }
 
 function requestClose(id, after) {
@@ -166,6 +190,7 @@ document.addEventListener('keydown', e => {
 fetch('/api/menu').then(r => { if (!r.ok) throw 0; return r.json(); }).then(data => {
   statusEl.remove();
   menu = data.categories;
+  setStoreState(data.store);
   renderCats();
   renderMenu();
   observeCats();
@@ -250,16 +275,17 @@ function renderMenu() {
     <section class="category" id="cat-${c.id}">
       <h2>${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
-        <button type="button" class="card" data-pid="${p.id}">
-          ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true">🍬</span>'}
+        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
+          ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
           <span class="body">
             <span class="name">${esc(p.name)}</span>
             ${p.description ? `<span class="desc">${esc(p.description)}</span>` : ''}
+            ${p.unavailable ? `<span class="unavail-tag">${esc(p.label || 'Indisponível no momento')}</span>` : ''}
             <span class="price-row">
               <span class="price">${p.priceCents != null ? (p.complements?.some(x => x.kind === 'size') ? `<span class="from">a partir de</span> ${brl(p.priceCents)}` : brl(p.priceCents)) : 'Consulte'}</span>
             </span>
           </span>
-          <span class="add-hint" aria-hidden="true">+</span>
+          ${p.unavailable ? '' : '<span class="add-hint" aria-hidden="true">+</span>'}
         </button>`).join('')}</div>
     </section>`).join('');
 }
@@ -274,6 +300,7 @@ document.addEventListener('click', e => {
 function openProduct(id, opener) {
   activeProduct = findProduct(id);
   if (!activeProduct) return;
+  if (activeProduct.unavailable) { activeProduct = null; toast('Este produto está indisponível no momento.'); return; }
   const comps = activeProduct.complements || [];
   const sizes = comps.filter(c => c.kind === 'size');
   const extras = comps.filter(c => c.kind !== 'size');
@@ -425,6 +452,7 @@ document.addEventListener('click', e => {
 
 // O carrinho guarda ids (enviados ao servidor, que recalcula o preço) e nomes/preços só para exibição.
 function addToCart(product, sel2) {
+  if (product.unavailable) { toast('Este produto está indisponível no momento.'); return; }
   const extras = Object.entries(sel2.extras).map(([cid, q]) => {
     const c = (product.complements || []).find(x => x.id === Number(cid));
     return { id: c.id, name: c.name, qty: q, priceCents: c.priceCents };
@@ -456,10 +484,34 @@ function renderCartFab() {
 
 cartFab.addEventListener('click', () => { renderCart(); openModal('#cart-modal', { opener: cartFab }); });
 
+// Tira do carrinho o que saiu do ar (produto pausado, tamanho ou complemento que não existe mais). Devolve os nomes removidos.
+function pruneCart() {
+  if (!menu.length) return [];
+  const removed = [];
+  cart = cart.filter(i => {
+    const p = findProduct(i.productId);
+    if (!p) return true; // não está no cardápio carregado: o servidor decide
+    const comps = p.complements || [];
+    const ok = !p.unavailable
+      && (!i.size || comps.some(c => c.id === i.size.id))
+      && i.extras.every(x => comps.some(c => c.id === x.id));
+    if (!ok) removed.push(i.name);
+    return ok;
+  });
+  if (removed.length) save();
+  return removed;
+}
+
 function renderCart() {
+  const removed = pruneCart();
+  const noticeEl = document.querySelector('#cart-notice');
+  noticeEl.hidden = !removed.length;
+  noticeEl.textContent = removed.length
+    ? (removed.length === 1 ? `O item "${removed[0]}" ficou indisponível e foi removido do carrinho.` : `Estes itens ficaram indisponíveis e foram removidos do carrinho: ${removed.join(', ')}.`)
+    : '';
   const itemsEl = document.querySelector('#cart-items');
   if (!cart.length) {
-    itemsEl.innerHTML = '<div class="cart-empty">Seu carrinho está vazio 🍬</div>';
+    itemsEl.innerHTML = '<div class="cart-empty">Seu carrinho está vazio. Escolha um docinho no cardápio!</div>';
     document.querySelector('#checkout-btn').hidden = true;
     document.querySelector('#cart-total').innerHTML = '';
     return;
@@ -485,32 +537,312 @@ document.addEventListener('click', e => {
   if (rm) { cart.splice(Number(rm.dataset.rm), 1); save(); renderCart(); }
 });
 
+/* ---------- Pedidos recentes (C7): lista no navegador, só public_code + token de acompanhamento + data ---------- */
+const RECENT_MAX = 10;
+function loadRecent() {
+  const raw = readStore(RECENT_KEY);
+  // Só código público, token e data: qualquer outro campo (versões antigas) é descartado.
+  return Array.isArray(raw) ? raw.filter(r => r && typeof r.token === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(r.token))
+    .map(r => ({ public_code: typeof r.public_code === 'string' ? r.public_code.slice(0, 20) : '', token: r.token, date: typeof r.date === 'string' ? r.date : '' })) : [];
+}
+function addRecent(order) {
+  if (!order.token) return;
+  const list = loadRecent().filter(r => r.token !== order.token);
+  list.unshift({ public_code: order.public_code || '', token: order.token, date: new Date().toISOString() });
+  writeStore(RECENT_KEY, list.slice(0, RECENT_MAX));
+  renderRecentBtn();
+}
+const recentBtn = document.querySelector('#recent-btn');
+function renderRecentBtn() { recentBtn.hidden = loadRecent().length === 0; }
+const dateTimeFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+recentBtn.addEventListener('click', () => {
+  const list = document.querySelector('#recent-list');
+  list.replaceChildren();
+  for (const r of loadRecent()) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = '/pedido.html?t=' + encodeURIComponent(r.token);
+    const code = document.createElement('strong');
+    code.textContent = r.public_code || 'Pedido';
+    const when = document.createElement('span');
+    const d = new Date(r.date);
+    when.textContent = isNaN(d) ? '' : dateTimeFmt.format(d).replace(',', ' às');
+    a.append(code, when);
+    li.append(a);
+    list.append(li);
+  }
+  openModal('#recent-modal', { opener: recentBtn });
+});
+renderRecentBtn();
+
+/* ---------- Loja aberta/fechada (C3): fechada só impede finalizar ---------- */
+const SP_TZ = 'America/Sao_Paulo';
+const dayKey = d => new Intl.DateTimeFormat('en-CA', { timeZone: SP_TZ }).format(d);
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('pt-BR', { timeZone: SP_TZ, weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(d).map(p => [p.type, p.value]));
+  const time = `${parts.hour}:${parts.minute}`;
+  const now = new Date();
+  if (dayKey(d) === dayKey(now)) return `hoje (${parts.day}/${parts.month}) às ${time}`;
+  if (dayKey(d) === dayKey(new Date(now.getTime() + 864e5))) return `amanhã (${parts.day}/${parts.month}) às ${time}`;
+  return `${parts.weekday} (${parts.day}/${parts.month}) às ${time}`;
+}
+// Texto de loja fechada: horário de abertura (next_open_at), previsão de reabertura (reopens_at) ou a mensagem do servidor.
+function closedMessage(st) {
+  const base = String(st.message || '').replace(/\s*Previsão de reabertura:.*$/i, '').trim() || 'Estamos fechados no momento.';
+  let when = '';
+  if (st.reopens_at && (st.reason === 'manual' || !st.next_open_at)) when = `Previsão de reabertura: ${fmtWhen(st.reopens_at)}.`;
+  else if (st.next_open_at) when = `Abrimos ${fmtWhen(st.next_open_at)}.`;
+  return [base, when].filter(Boolean).join(' ');
+}
+let store = null; // { open, reason, reopens_at, next_open_at, message }
+const storeBadgeEl = document.querySelector('#store-badge');
+const closedNoteEl = document.querySelector('#store-closed-note');
+function setStoreState(st) {
+  store = st && typeof st === 'object' && typeof st.open === 'boolean' ? st : null;
+  storeBadgeEl.hidden = !store;
+  if (store) {
+    storeBadgeEl.className = 'store-badge ' + (store.open ? 'open' : 'closed');
+    storeBadgeEl.textContent = store.open ? 'Loja aberta' : 'Loja fechada';
+    storeBadgeEl.title = store.open ? '' : closedMessage(store);
+  }
+  const closed = !!store && !store.open;
+  closedNoteEl.hidden = !closed;
+  closedNoteEl.textContent = closed ? closedMessage(store) + ' Você pode montar o carrinho, mas só conseguimos receber o pedido com a loja aberta.' : '';
+  syncSubmitState();
+}
+async function refreshStore() {
+  try {
+    const r = await fetch('/api/store?a=state', { cache: 'no-store' });
+    if (r.ok) setStoreState(await r.json());
+  } catch { /* mantém o último estado */ }
+}
+setInterval(() => { if (!document.hidden) refreshStore(); }, 60000);
+
+/* ---------- Conta do cliente (C8, contrato do A10): sem a rota ou sem login = deslogado ---------- */
+let account = null; // { name, points: { balance, locked_until } }
+const accountAreaEl = document.querySelector('#account-area');
+function topLink(text, href, cls) {
+  const a = document.createElement('a');
+  a.className = 'topbar-btn' + (cls ? ' ' + cls : '');
+  a.href = href;
+  a.textContent = text;
+  return a;
+}
+function renderAccount() {
+  accountAreaEl.replaceChildren();
+  if (!account) {
+    accountAreaEl.append(topLink('Entrar', '/conta/'), topLink('Criar conta', '/conta/#cadastro', 'primary'));
+    return;
+  }
+  const hi = document.createElement('span');
+  hi.className = 'account-name';
+  hi.textContent = 'Olá, ' + String(account.name || '').split(' ')[0];
+  const pts = topLink(`${Number(account.points && account.points.balance) || 0} pontos`, '/conta/#pontos', 'points');
+  accountAreaEl.append(hi, pts, topLink('Meus pedidos', '/conta/#pedidos'));
+}
+async function loadAccount() {
+  try {
+    const r = await fetch('/api/customer?a=me', { credentials: 'same-origin', cache: 'no-store' });
+    if (!r.ok) account = null;
+    else { const d = await r.json(); account = d && d.logged_in && d.customer ? d.customer : null; }
+  } catch { account = null; }
+  renderAccount();
+  renderPoints();
+  renderSummary();
+}
+
 /* ---------- Checkout ---------- */
 const checkoutFormEl = document.querySelector('#checkout-form');
 const paymentStepEl = document.querySelector('#payment-step');
 const checkoutTitleEl = document.querySelector('#checkout-title');
 const addressFieldEl = document.querySelector('#address-field');
-const addressInputEl = addressFieldEl.querySelector('input');
 const pickupInfoEl = document.querySelector('#pickup-info');
+const quoteBtnEl = document.querySelector('#quote-btn');
+const quoteBoxEl = document.querySelector('#quote-box');
+const submitBtnEl = checkoutFormEl.querySelector('button[type="submit"]');
+const pointsBoxEl = document.querySelector('#points-box');
+const field = n => checkoutFormEl.elements[n];
+const digitsOf = v => String(v || '').replace(/\D/g, '');
+const isPickup = () => field('delivery').value === 'pickup';
 document.querySelector('#store-address').textContent = STORE_ADDRESS;
+
+let submitting = false;
+function syncSubmitState() { submitBtnEl.disabled = submitting || (!!store && !store.open); }
 
 // Retirada: some o endereço do cliente (sem required nem envio) e mostra o endereço da loja.
 function syncDelivery() {
-  const pickup = checkoutFormEl.elements.delivery.value === 'pickup';
+  const pickup = isPickup();
   addressFieldEl.hidden = pickup;
-  addressInputEl.required = !pickup;
-  addressInputEl.disabled = pickup;
+  addressFieldEl.querySelectorAll('input').forEach(i => { i.disabled = pickup; i.required = !pickup && i.name !== 'complement'; });
   pickupInfoEl.hidden = !pickup;
+  renderPoints();
+  renderSummary();
 }
 checkoutFormEl.addEventListener('change', e => { if (e.target.name === 'delivery') syncDelivery(); });
-syncDelivery();
 
-/* ---------- Etapa pós-pedido: cartão (link), Pix (QR no site) ou só WhatsApp ----------
-   Links são <a> reais (toque direto do usuário), sem window.open depois de await. */
+/* Frete (C4): a cotação só informa; o pedido é recalculado no servidor */
+let quote = null; // { key, km, fee_cents, band }
+let quoteSeq = 0;
+const fullAddress = () => {
+  const num = field('address_number').value.trim();
+  const comp = field('complement').value.trim();
+  return `${field('address').value.trim()}, ${num}${comp ? ' - ' + comp : ''}`;
+};
+const quoteKey = () => [digitsOf(field('cep').value), fullAddress()].join('|');
+const kmText = n => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+function showQuote(msg, kind) {
+  quoteBoxEl.textContent = msg;
+  quoteBoxEl.className = 'quote-box' + (kind ? ' ' + kind : '');
+  quoteBoxEl.hidden = !msg;
+}
+function quoteErrorText(status, d) {
+  const code = d && d.code;
+  if (code === 'invalid_cep') return 'CEP inválido. Informe os 8 números do CEP.';
+  if (code === 'invalid_address') return 'Endereço inválido. Informe a rua e o bairro (mínimo de 5 letras).';
+  if (code === 'cep_not_found') return 'CEP não encontrado. Confira o CEP digitado.';
+  if (code === 'address_not_found') return 'Não encontramos esse endereço. Confira a rua, o número e o CEP.';
+  if (code === 'out_of_area') return `Esse endereço fica fora da nossa área de entrega${d.max_km ? ` (até ${kmText(d.max_km)} km)` : ''}. Você pode escolher retirada.`;
+  if (code === 'origin_unavailable' || status === 503) return 'O cálculo do frete está indisponível agora. Tente de novo em instantes ou escolha retirada.';
+  if (status === 429) return 'Muitas consultas de frete. Aguarde um instante e tente de novo.';
+  return 'Não foi possível calcular o frete agora. Tente de novo em instantes.';
+}
+function invalidateQuote() {
+  if (quote && quote.key !== quoteKey()) { quote = null; showQuote('', ''); renderPoints(); renderSummary(); }
+}
+async function runQuote() {
+  const cep = digitsOf(field('cep').value);
+  if (cep.length !== 8) { showQuote('Informe o CEP com 8 números.', 'warn'); return null; }
+  if (field('address').value.trim().length < 5) { showQuote('Informe a rua e o bairro.', 'warn'); return null; }
+  if (!field('address_number').value.trim()) { showQuote('Informe o número da casa (ou s/n).', 'warn'); return null; }
+  const key = quoteKey();
+  const mine = ++quoteSeq;
+  quoteBtnEl.disabled = true;
+  showQuote('Calculando o frete...', '');
+  try {
+    const qs = new URLSearchParams({ a: 'quote', cep, address: fullAddress(), number: field('address_number').value.trim() });
+    const r = await fetch('/api/store?' + qs, { cache: 'no-store' });
+    let d = {};
+    try { d = await r.json(); } catch { /* corpo não-JSON */ }
+    if (mine !== quoteSeq || key !== quoteKey()) return null; // o endereço mudou no meio do caminho
+    if (!r.ok || !Number.isInteger(d.fee_cents)) { quote = null; showQuote(quoteErrorText(r.status, d), 'warn'); renderPoints(); renderSummary(); return null; }
+    quote = { key, km: Number(d.km), fee_cents: d.fee_cents, band: d.faixa || null };
+    const faixa = quote.band && quote.band.max_km ? ` · faixa até ${kmText(quote.band.max_km)} km` : '';
+    showQuote(`Distância: ${kmText(quote.km)} km${faixa} · Frete: ${brl(quote.fee_cents)}`, 'ok');
+    renderPoints();
+    renderSummary();
+    return quote;
+  } catch {
+    if (mine === quoteSeq) { quote = null; showQuote('Sem conexão para calcular o frete. Confira a internet e tente de novo.', 'warn'); }
+    return null;
+  } finally {
+    if (mine === quoteSeq) quoteBtnEl.disabled = false;
+  }
+}
+quoteBtnEl.addEventListener('click', runQuote);
+const cepInput = field('cep');
+cepInput.addEventListener('input', () => {
+  const d = digitsOf(cepInput.value).slice(0, 8);
+  cepInput.value = d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d;
+});
+addressFieldEl.addEventListener('input', invalidateQuote);
+// ao terminar de preencher (sai do campo), calcula sozinho se estiver tudo pronto
+addressFieldEl.addEventListener('change', e => {
+  if (e.target.name === 'complement') return;
+  if (digitsOf(cepInput.value).length === 8 && field('address').value.trim().length >= 5 && field('address_number').value.trim() && (!quote || quote.key !== quoteKey())) runQuote();
+});
+
+/* Resumo: subtotal, frete, desconto e total. Antes do pedido, frete da cotação; depois, os valores da resposta do servidor. */
+function fillSummary(el, v) {
+  el.replaceChildren();
+  const row = (label, value, cls) => {
+    const d = document.createElement('div');
+    d.className = 'sum-row' + (cls ? ' ' + cls : '');
+    const a = document.createElement('span'); a.textContent = label;
+    const b = document.createElement('span'); b.textContent = value;
+    d.append(a, b);
+    el.append(d);
+  };
+  row('Subtotal', brl(v.subtotal));
+  row('Frete', v.fee == null ? 'calcule acima' : v.pickup ? 'R$ 0,00 (retirada)' : brl(v.fee));
+  if (v.discount > 0) row('Desconto com pontos', '− ' + brl(v.discount), 'sum-discount');
+  row(v.fee == null ? 'Total (sem frete)' : 'Total', brl(v.total), 'sum-total');
+}
+let usePoints = 0;
+function currentFee() { return isPickup() ? 0 : (quote && quote.key === quoteKey() ? quote.fee_cents : null); }
+function renderSummary() {
+  const sub = cartTotal();
+  const fee = currentFee();
+  const discount = usePoints / 100 * 1000;
+  fillSummary(document.querySelector('#payment-summary'), { subtotal: sub, fee, pickup: isPickup(), discount, total: sub + (fee || 0) - discount });
+}
+
+/* Pontos (C8/U5): só logado, blocos de 100 (= R$ 10), limitado pelo subtotal; o servidor confere tudo */
+function maxPointBlocks() {
+  if (!account) return 0;
+  const bal = Number(account.points && account.points.balance) || 0;
+  const fee = currentFee() || 0;
+  const maxDiscount = Math.min(cartTotal(), cartTotal() + fee - 100); // não passa do subtotal; sobra pelo menos R$ 1,00
+  return Math.max(0, Math.min(Math.floor(bal / 100), Math.floor(maxDiscount / 1000)));
+}
+function renderPoints() {
+  pointsBoxEl.replaceChildren();
+  const p = (text, cls) => { const e = document.createElement('p'); e.className = 'points-note' + (cls ? ' ' + cls : ''); e.textContent = text; return e; };
+  if (!account) {
+    usePoints = 0;
+    const note = p('Tem conta? Entre para usar seus pontos (100 pontos = R$ 10,00). ');
+    const a = document.createElement('a'); a.href = '/conta/'; a.textContent = 'Entrar';
+    note.append(a);
+    pointsBoxEl.append(note);
+    pointsBoxEl.hidden = false;
+    return;
+  }
+  const bal = Number(account.points && account.points.balance) || 0;
+  const lockedUntil = account.points && account.points.locked_until;
+  pointsBoxEl.hidden = false;
+  if (lockedUntil && Date.parse(lockedUntil) > Date.now()) {
+    usePoints = 0;
+    pointsBoxEl.append(p(`Seus pontos estão bloqueados por segurança até ${fmtWhen(lockedUntil)} (depois da recuperação da conta). Você pode comprar normalmente, sem usar pontos.`, 'warn'));
+    return;
+  }
+  if (bal < 100) {
+    usePoints = 0;
+    pointsBoxEl.append(p(`Você tem ${bal} pontos. A partir de 100 pontos você troca por R$ 10,00 de desconto.`));
+    return;
+  }
+  const max = maxPointBlocks();
+  if (max < 1) {
+    usePoints = 0;
+    pointsBoxEl.append(p(`Você tem ${bal} pontos, mas este pedido é pequeno para usar um bloco de 100 pontos (o desconto não pode passar do valor dos itens e o total mínimo é R$ 1,00).`));
+    return;
+  }
+  if (usePoints / 100 > max) usePoints = max * 100;
+  const label = document.createElement('label');
+  label.textContent = `Usar pontos (você tem ${bal})`;
+  const sel = document.createElement('select');
+  sel.id = 'use-points';
+  sel.name = 'use_points_ui';
+  for (let b = 0; b <= max; b++) {
+    const o = document.createElement('option');
+    o.value = String(b * 100);
+    o.textContent = b === 0 ? 'Não usar pontos' : `${b * 100} pontos (− ${brl(b * 1000)})`;
+    sel.append(o);
+  }
+  sel.value = String(usePoints);
+  sel.addEventListener('change', () => { usePoints = Number(sel.value) || 0; renderSummary(); });
+  label.append(sel);
+  pointsBoxEl.append(label);
+}
+
+/* ---------- Etapa pós-pedido: cartão (link), Pix (QR no site) ou sem pagamento. O botão do WhatsApp só vem depois de aprovado (C6). ---------- */
 const payEls = {
   codeRow: document.querySelector('#payment-code-row'),
   code: document.querySelector('#payment-code'),
   text: document.querySelector('#payment-text'),
+  summary: document.querySelector('#pay-summary'),
+  track: document.querySelector('#pay-track'),
+  trackLink: document.querySelector('#pay-track-link'),
   status: document.querySelector('#pay-status'),
   pixBox: document.querySelector('#pix-box'),
   qr: document.querySelector('#pix-qr'),
@@ -521,22 +853,24 @@ const payEls = {
   card: document.querySelector('#pay-mp'),
   support: document.querySelector('#pay-support'),
   retry: document.querySelector('#pay-retry'),
-  wa: document.querySelector('#pay-wa')
+  wa: document.querySelector('#pay-wa'),
+  help: document.querySelector('#pay-help')
 };
 const PIX_DEFAULT_MS = 30 * 60 * 1000;
 const POLL_MS = 5000;
+const PREP_TEXT = 'Estamos preparando seu pedido e vamos avisar por aqui e pelo WhatsApp.';
 const watch = { token: 0, poll: null, tick: null, pollNow: null };
 let lastCartCopy = null; // cópia do carrinho do último pedido, para "refazer" se o Pix expirar ou falhar
 let copyTimer = null;
 
-// Para contagem e polling (fechar o modal, expirar, aprovar, refazer). O token invalida respostas em voo.
+// Para contagem e polling (fechar o modal, expirar, aprovar, recusar, refazer). O token invalida respostas em voo.
 function stopPayWatch() {
   watch.token++;
   clearInterval(watch.poll);
   clearInterval(watch.tick);
   watch.poll = watch.tick = watch.pollNow = null;
 }
-modalHooks['#checkout-modal'] = { open() {}, close: stopPayWatch };
+modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); }, close: stopPayWatch };
 
 function normalizePayment(p) {
   if (!p || typeof p !== 'object') return null;
@@ -551,36 +885,43 @@ function normalizePayment(p) {
   return null;
 }
 
-function setWhatsApp(text, primary) {
+function setWhatsApp(text) {
   const ok = !!WHATSAPP_NUMBER && !!text;
   payEls.wa.hidden = !ok;
   if (ok) payEls.wa.href = waLink(text);
-  payEls.wa.classList.toggle('primary', primary);
-  payEls.wa.classList.toggle('secondary', !primary);
+  payEls.wa.classList.add('primary');
+  payEls.wa.classList.remove('secondary');
 }
 function setPayStatus(msg, kind) {
   payEls.status.textContent = msg;
   payEls.status.className = 'pay-status' + (kind ? ' ' + kind : '');
   payEls.status.hidden = !msg;
 }
+const trackUrl = token => '/pedido.html?t=' + encodeURIComponent(token);
 
-function renderOrderStep(order, { title, text } = {}) {
+function renderOrderStep(order, { title, text, watchNow } = {}) {
   stopPayWatch();
   const pay = order.payment;
   const type = pay ? pay.type : null;
-  payEls.code.textContent = order.code || '';
-  payEls.codeRow.hidden = !order.code;
+  payEls.code.textContent = order.publicCode || order.code || '';
+  payEls.codeRow.hidden = !(order.publicCode || order.code);
+  payEls.track.hidden = !order.token;
+  if (order.token) payEls.trackLink.href = trackUrl(order.token);
+  payEls.summary.hidden = !order.summary;
+  if (order.summary) fillSummary(payEls.summary, order.summary);
   setPayStatus('', '');
   payEls.pixBox.hidden = type !== 'pix';
   payEls.card.hidden = payEls.support.hidden = type !== 'card';
   payEls.retry.hidden = true;
+  payEls.wa.hidden = true; // só depois do pagamento confirmado
+  payEls.help.hidden = true;
   payEls.copyStatus.textContent = '';
   payEls.timer.textContent = '';
   let msg = text;
   if (msg == null) {
-    msg = type === 'pix' ? 'Pedido registrado! Pague com o Pix abaixo e depois avise a Gigi pelo WhatsApp.'
-      : type === 'card' ? 'Pedido registrado! Pague com cartão e depois envie o pedido pelo WhatsApp para a Gigi receber o aviso.'
-      : 'Não foi possível gerar o pagamento agora. Seu pedido foi registrado: envie pelo WhatsApp para a Gigi combinar o pagamento.';
+    msg = type === 'pix' ? 'Pedido registrado! Pague com o Pix abaixo. Esta tela confirma sozinha quando o pagamento cair.'
+      : type === 'card' ? 'Pedido registrado! Pague com cartão no botão abaixo. Esta tela confirma sozinha quando o pagamento for aprovado.'
+      : 'Pedido registrado! Não foi possível gerar o pagamento agora. Fale com a Gigi pelo WhatsApp para combinar o pagamento.';
   }
   payEls.text.textContent = msg;
   if (type === 'card') payEls.card.href = pay.url;
@@ -589,71 +930,82 @@ function renderOrderStep(order, { title, text } = {}) {
     if (pay.qr_code_base64) { payEls.qr.src = 'data:image/png;base64,' + pay.qr_code_base64; payEls.qr.hidden = false; }
     else { payEls.qr.removeAttribute('src'); payEls.qr.hidden = true; }
   }
-  setWhatsApp(order.whatsappText, !pay);
+  if (!pay && !watchNow && WHATSAPP_NUMBER) {
+    payEls.help.hidden = false;
+    payEls.help.href = waLink(`Olá! Fiz o pedido ${order.publicCode || order.code} pelo site e o pagamento não foi gerado. Pode me ajudar?`);
+  }
   checkoutFormEl.hidden = true;
   paymentStepEl.hidden = false;
   checkoutTitleEl.textContent = title || (type === 'pix' ? 'Pague com Pix' : type === 'card' ? 'Pagamento' : 'Pedido registrado');
   const panel = paymentStepEl.closest('.modal-panel');
   if (panel) panel.scrollTop = 0;
-  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : payEls.wa).focus({ preventScroll: true });
-  if (type === 'pix') startPixWatch(order, pay);
+  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : payEls.help.hidden ? payEls.trackLink : payEls.help).focus({ preventScroll: true });
+  if (type || watchNow) startPayWatch(order, pay, !!watchNow);
 }
 
-function startPixWatch(order, pay) {
+function startPayWatch(order, pay, immediate) {
   const token = watch.token;
-  let expiresAt = Date.parse(pay.expires_at);
-  if (!Number.isFinite(expiresAt)) expiresAt = Date.now() + PIX_DEFAULT_MS;
-  const tick = () => {
-    if (token !== watch.token) return;
-    const left = expiresAt - Date.now();
-    if (left <= 0) { onPixEnded('O Pix expirou (valia 30 minutos). Nenhum valor foi cobrado. Você pode refazer o pedido.'); return; }
-    const s = Math.ceil(left / 1000);
-    payEls.timer.textContent = `O Pix expira em ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  };
-  tick();
-  if (token !== watch.token) return; // já expirou ao abrir
-  watch.tick = setInterval(tick, 1000);
+  if (pay && pay.type === 'pix') {
+    let expiresAt = Date.parse(pay.expires_at);
+    if (!Number.isFinite(expiresAt)) expiresAt = Date.now() + PIX_DEFAULT_MS;
+    const tick = () => {
+      if (token !== watch.token) return;
+      const left = expiresAt - Date.now();
+      if (left <= 0) { onPayEnded(order, 'O Pix expirou (valia 30 minutos). Nenhum valor foi cobrado. Você pode refazer o pedido.'); return; }
+      const s = Math.ceil(left / 1000);
+      payEls.timer.textContent = `O Pix expira em ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    };
+    tick();
+    if (token !== watch.token) return; // já expirou ao abrir
+    watch.tick = setInterval(tick, 1000);
+  }
   let busy = false;
+  const url = order.token ? '/api/order-status?t=' + encodeURIComponent(order.token) : '/api/order-status?code=' + encodeURIComponent(order.code);
   const poll = async () => {
     if (busy || token !== watch.token) return;
     busy = true;
     try {
-      const r = await fetch('/api/order-status?code=' + encodeURIComponent(order.code), { cache: 'no-store' });
+      const r = await fetch(url, { cache: 'no-store' });
       if (!r.ok) return;
       const d = await r.json();
       if (token !== watch.token) return;
-      if (d.payment_status === 'approved') onPixApproved(order);
-      else if (d.payment_status === 'rejected') onPixEnded('O pagamento foi recusado. Você pode refazer o pedido.');
-      else if (d.payment_status === 'cancelled') onPixEnded('O pagamento foi cancelado. Você pode refazer o pedido.');
+      if (d.payment_status === 'approved') onPayApproved(order);
+      else if (d.payment_status === 'rejected') onPayEnded(order, 'O pagamento foi recusado. Você pode tentar de novo ou refazer o pedido.');
+      else if (d.payment_status === 'cancelled') onPayEnded(order, 'O pagamento foi cancelado. Você pode refazer o pedido.');
     } catch { /* sem rede: tenta de novo no próximo ciclo */ } finally { busy = false; }
   };
   watch.pollNow = poll;
   watch.poll = setInterval(poll, POLL_MS);
+  if (immediate) poll();
 }
 
-function onPixApproved(order) {
+function onPayApproved(order) {
   stopPayWatch();
   payEls.pixBox.hidden = true;
+  payEls.card.hidden = payEls.support.hidden = true;
   payEls.retry.hidden = true;
+  payEls.help.hidden = true;
   setPayStatus('Pagamento confirmado!', 'ok');
-  payEls.text.textContent = 'Agora envie o pedido pelo WhatsApp para a Gigi receber o aviso.';
+  payEls.text.textContent = PREP_TEXT + (WHATSAPP_NUMBER ? ' Se quiser, envie o pedido também pelo WhatsApp.' : '');
   checkoutTitleEl.textContent = 'Pagamento confirmado';
-  const text = order.whatsappText + '\nPagamento Pix confirmado ✓';
-  setWhatsApp(text, true);
-  const last = readStore(LAST_ORDER_KEY);
-  if (last && last.code === order.code) writeStore(LAST_ORDER_KEY, { ...last, whatsappText: text });
-  payEls.wa.focus({ preventScroll: true });
+  setWhatsApp(order.whatsappText ? order.whatsappText + '\nPagamento confirmado ✓'
+    : `Olá! Fiz o pedido ${order.publicCode || order.code || ''} pelo site e o pagamento foi confirmado ✓` + (order.token ? `\nAcompanhar: ${location.origin}${trackUrl(order.token)}` : ''));
+  (payEls.wa.hidden ? payEls.trackLink : payEls.wa).focus({ preventScroll: true });
   toast('Pagamento confirmado! ✓', 3000);
 }
 
-function onPixEnded(msg) {
+function onPayEnded(order, msg) {
   stopPayWatch();
   payEls.pixBox.hidden = true;
   setPayStatus(msg, 'warn');
   payEls.text.textContent = 'Se já pagou, fale com a Gigi pelo WhatsApp informando o número do pedido.';
-  checkoutTitleEl.textContent = 'Pix não concluído';
+  checkoutTitleEl.textContent = 'Pagamento não concluído';
   payEls.retry.hidden = !(lastCartCopy && lastCartCopy.length);
-  (payEls.retry.hidden ? payEls.wa : payEls.retry).focus({ preventScroll: true });
+  if (WHATSAPP_NUMBER) {
+    payEls.help.hidden = false;
+    payEls.help.href = waLink(`Olá! Tive um problema com o pagamento do pedido ${order.publicCode || order.code}. Pode me ajudar?`);
+  }
+  (payEls.retry.hidden ? payEls.help : payEls.retry).focus({ preventScroll: true });
 }
 
 // Refazer: devolve os itens ao carrinho e volta ao formulário
@@ -662,7 +1014,9 @@ payEls.retry.addEventListener('click', () => {
   cart = lastCartCopy.map(i => ({ ...i }));
   save();
   resetCheckoutView();
-  document.querySelector('#payment-summary').innerHTML = `<span>Total</span><span>${brl(cartTotal())}</span>`;
+  pruneCart();
+  renderPoints();
+  renderSummary();
 });
 
 // Ao voltar para a aba, confere o pagamento na hora (o navegador atrasa timers em segundo plano)
@@ -700,16 +1054,18 @@ function resetCheckoutView() {
 }
 
 document.querySelector('#checkout-btn').addEventListener('click', () => {
+  const removed = pruneCart();
+  if (removed.length) { renderCart(); toast('Um item ficou indisponível e saiu do carrinho. Confira antes de finalizar.', 4000); return; }
+  if (!cart.length) return;
   resetCheckoutView();
   syncDelivery();
-  document.querySelector('#payment-summary').innerHTML = `<span>Total</span><span>${brl(cartTotal())}</span>`;
   // carrinho -> checkout substitui a entrada do histórico em vez de empilhar
   hideModal('#cart-modal');
   openModal('#checkout-modal', { replace: true, opener: cartFab });
 });
 
 function buildWhatsAppMessage(srv, cust) {
-  const lines = [`*Novo pedido ${srv.code}*`, ''];
+  const lines = [`*Novo pedido ${srv.public_code || srv.code}*`, ''];
   for (const i of srv.items) {
     let line = `• ${i.qty}x ${i.name}`;
     if (i.size) line += ` (${i.size})`;
@@ -717,61 +1073,113 @@ function buildWhatsAppMessage(srv, cust) {
     if (Number.isInteger(i.unit_total_cents)) line += `\n   ${brl(i.unit_total_cents * i.qty)}`;
     lines.push(line);
   }
-  lines.push('', `*Total: ${brl(srv.total_cents)}*`);
+  lines.push('');
+  if (Number.isInteger(srv.subtotal_cents)) lines.push(`Subtotal: ${brl(srv.subtotal_cents)}`);
+  if (Number.isInteger(srv.delivery_fee_cents)) lines.push(`Frete: ${brl(srv.delivery_fee_cents)}`);
+  if (srv.discount_cents > 0) lines.push(`Desconto (pontos): − ${brl(srv.discount_cents)}`);
+  lines.push(`*Total: ${brl(srv.total_cents)}*`);
   lines.push('', `Nome: ${cust.customer_name}`);
   lines.push(`WhatsApp: ${cust.customer_phone}`);
   if (srv.delivery_method === 'pickup') lines.push(`Retirada em: ${STORE_ADDRESS}`);
   else lines.push(`Entrega: ${srv.address || cust.address || 'a combinar'}`);
   lines.push(`Pagamento: ${cust.payment_choice === 'card' ? 'Cartão de crédito ou débito' : 'Pix'}`);
   if (cust.notes) lines.push(`Obs.: ${cust.notes}`);
+  if (srv.tracking_token) lines.push(`Acompanhar: ${location.origin}${trackUrl(srv.tracking_token)}`);
   return lines.join('\n');
+}
+
+// Erros do POST /api/order, em português claro (contrato seção 3)
+function handleOrderError(status, d) {
+  const code = d && d.code;
+  if (code === 'store_closed') { setStoreState(d.store || { open: false, reason: null, message: d.error }); toast('A loja está fechada agora. ' + closedMessage(store || {}), 7000); return; }
+  if (code === 'login_required') { account = null; usePoints = 0; renderAccount(); renderPoints(); renderSummary(); toast('Sua sessão acabou. Entre na sua conta para usar pontos, ou faça o pedido sem pontos.', 6000); return; }
+  if (code === 'insufficient_points') { usePoints = 0; loadAccount(); toast('Você não tem pontos suficientes. Atualizamos seu saldo; confira e tente de novo.', 6000); return; }
+  if (code === 'points_locked') { usePoints = 0; loadAccount(); toast('Seus pontos estão bloqueados por segurança após a recuperação da conta. Faça o pedido sem usar pontos.', 6000); return; }
+  // F5 (A1-05): origem/tipo barrados pelo servidor. O site manda os dois certos; isso só acontece com página antiga, extensão ou proxy.
+  if (code === 'forbidden_origin' || status === 403 && !code) { toast('Não conseguimos confirmar de onde veio o pedido. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
+  if (code === 'unsupported_type' || status === 415) { toast('O pedido chegou num formato que não reconhecemos. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
+  if (status === 429) { toast('Recebemos muitos pedidos seguidos desta conexão ou deste telefone. Aguarde uns 10 minutos e tente de novo, ou chame a gente no WhatsApp.', 8000); return; }
+  if (code === 'invalid_block') { toast('Os pontos são usados em blocos de 100. Escolha de novo.', 5000); return; }
+  if (code === 'invalid_points') { toast('Quantidade de pontos inválida. Escolha de novo.', 5000); return; }
+  if (code === 'discount_too_big') { toast('O desconto não pode ser maior que o valor dos itens. Use menos pontos.', 5000); return; }
+  if (['out_of_area', 'cep_not_found', 'address_not_found', 'origin_unavailable', 'invalid_cep', 'invalid_address'].includes(code)) {
+    quote = null;
+    const msg = quoteErrorText(status, d);
+    showQuote(msg, 'warn');
+    renderPoints(); renderSummary();
+    toast(msg, 6000);
+    return;
+  }
+  toast(typeof (d && d.error) === 'string' && d.error ? d.error : 'Não foi possível enviar o pedido. Tente de novo.', 5000);
 }
 
 checkoutFormEl.addEventListener('submit', async e => {
   e.preventDefault();
+  if (submitting) return;
+  if (store && !store.open) { toast(closedMessage(store), 6000); return; }
+  const removed = pruneCart();
+  if (removed.length) { renderSummary(); toast('Um item ficou indisponível e saiu do carrinho. Confira o resumo.', 5000); return; }
   if (!cart.length) { toast('Seu carrinho está vazio.'); return; }
   const form = new FormData(e.target);
   const pickup = form.get('delivery') === 'pickup';
-  const btn = e.target.querySelector('button[type="submit"]');
-  btn.disabled = true;
-  btn.textContent = 'Enviando...';
+  submitting = true;
+  syncSubmitState();
+  submitBtnEl.textContent = 'Enviando...';
   try {
+    if (!pickup && !(quote && quote.key === quoteKey())) { // sem frete calculado para este endereço: calcula e deixa a pessoa conferir
+      const q = await runQuote();
+      if (q) toast('Confira o frete no resumo e toque em Enviar pedido de novo.', 5000);
+      return;
+    }
     const order = {
       customer_name: String(form.get('name') || '').trim(),
       customer_phone: String(form.get('phone') || '').trim(),
       delivery_method: pickup ? 'pickup' : 'delivery',
-      address: pickup ? '' : String(form.get('address') || '').trim(),
       notes: String(form.get('notes') || '').trim(),
       payment_choice: form.get('payment_choice') === 'card' ? 'card' : 'pix',
-      // só ids e quantidades: o servidor calcula nomes e preços
+      // só ids e quantidades: o servidor calcula nomes, preços, frete e desconto
       items: cart.map(i => ({ product_id: i.productId, size_id: i.size ? i.size.id : null, extras: i.extras.map(x => ({ id: x.id, qty: x.qty })), qty: i.qty }))
     };
+    if (!pickup) {
+      order.cep = digitsOf(form.get('cep'));
+      order.address = fullAddress();
+      order.address_number = String(form.get('address_number') || '').trim();
+    } else {
+      order.address = '';
+    }
+    if (usePoints > 0) order.use_points = usePoints;
     const res = await fetch('/api/order', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(order)
     });
     let data = {};
     try { data = await res.json(); } catch { /* corpo não-JSON */ }
-    if (!res.ok) {
-      toast(typeof data.error === 'string' && data.error ? data.error : 'Não foi possível enviar o pedido. Tente de novo.', 5000);
-      return; // carrinho preservado
-    }
+    if (!res.ok) { handleOrderError(res.status, data); return; } // carrinho preservado
     const srv = { ...data, items: Array.isArray(data.items) ? data.items : [] };
     const whatsappText = buildWhatsAppMessage(srv, order);
     const payment = normalizePayment(data.payment);
+    const summary = { subtotal: srv.subtotal_cents, fee: srv.delivery_fee_cents, pickup: srv.delivery_method === 'pickup', discount: srv.discount_cents || 0, total: srv.total_cents };
     // pedido criado com sucesso: só agora o carrinho é limpo (cópia guardada para "refazer")
     lastCartCopy = cart.map(i => ({ ...i }));
     cart = [];
     save();
-    writeStore(LAST_ORDER_KEY, { code: data.code, whatsappText, payment_choice: order.payment_choice, paymentUrl: payment && payment.type === 'card' ? payment.url : null });
-    renderOrderStep({ code: data.code, whatsappText, payment });
-    toast(payment ? 'Pedido registrado! Agora é só pagar' : 'Pedido registrado! Envie pelo WhatsApp');
+    usePoints = 0;
+    quote = null;
+    addRecent({ public_code: data.public_code, code: data.code, token: data.tracking_token });
+    const card = payment && payment.type === 'card';
+    saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice,
+      ...(card ? { paymentUrl: payment.url, whatsappText } : {}) });
+    renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary });
+    toast(payment ? 'Pedido registrado! Agora é só pagar.' : 'Pedido registrado!');
+    if (account) loadAccount(); // saldo mudou (pontos reservados)
   } catch {
     toast('Sem conexão com o servidor. Confira a internet e tente de novo.', 4000);
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Enviar pedido';
+    submitting = false;
+    syncSubmitState();
+    submitBtnEl.textContent = 'Enviar pedido';
   }
 });
 
@@ -784,24 +1192,29 @@ function handlePaymentReturn() {
   const qs = params.toString();
   history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
   const msgs = {
-    ok: 'Pagamento aprovado! Obrigada pelo pedido ✓',
+    ok: 'Voltamos do pagamento. Estamos confirmando com o Mercado Pago ✓',
     erro: 'O pagamento não foi concluído. Você pode tentar novamente.',
     pendente: 'Pagamento pendente. Avisaremos quando for confirmado.'
   };
   if (!msgs[status]) return;
   toast(msgs[status], 6000);
-  const last = readStore(LAST_ORDER_KEY);
-  if (!last || typeof last.whatsappText !== 'string') return;
+  const last = readLastOrder();
+  if (!last) return;
   const texts = {
-    ok: 'Pagamento aprovado! Envie o pedido pelo WhatsApp para a Gigi receber o aviso.',
-    pendente: 'Pagamento pendente. Envie o pedido pelo WhatsApp para a Gigi acompanhar.',
-    erro: 'O pagamento não foi concluído. Tente pagar de novo ou envie o pedido pelo WhatsApp.'
+    ok: 'Estamos confirmando o seu pagamento. Esta tela atualiza sozinha e mostra o botão do WhatsApp assim que for aprovado.',
+    pendente: 'Pagamento pendente. Esta tela atualiza sozinha quando for aprovado. Você também pode acompanhar pelo link do pedido.',
+    erro: 'O pagamento não foi concluído. Tente pagar de novo pelo botão abaixo.'
   };
   openModal('#checkout-modal', { opener: document.body });
   const retryPay = status === 'erro' && typeof last.paymentUrl === 'string' ? normalizePayment({ type: 'card', url: last.paymentUrl }) : null;
-  renderOrderStep({ code: last.code, whatsappText: last.whatsappText, payment: retryPay }, { title: status === 'erro' ? 'Pagamento não concluído' : 'Pedido registrado', text: texts[status] });
-  if (status === 'erro') payEls.wa.classList.toggle('primary', !retryPay);
+  renderOrderStep({ publicCode: last.public_code, token: last.token, whatsappText: typeof last.whatsappText === 'string' ? last.whatsappText : '', payment: retryPay, summary: last.summary },
+    { title: status === 'erro' ? 'Pagamento não concluído' : 'Pedido registrado', text: texts[status], watchNow: status !== 'erro' });
 }
 
+payEls.wa.addEventListener('click', forgetWhatsAppText); // texto enviado: não fica mais guardado no aparelho
+readLastOrder(); // apaga o último pedido vencido (24 h) ou no formato antigo
+syncDelivery();
 renderCartFab();
+renderAccount();
+loadAccount();
 handlePaymentReturn();

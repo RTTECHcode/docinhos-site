@@ -16,7 +16,7 @@ module.exports = async (req, res) => {
       res.statusCode = 404;
       return res.end('Não encontrada');
     }
-    const sql = require('./db');
+    const sql = require('./_lib/db');
     const rows = await sql.query('select mime, data from images where id = $1', [id]);
     if (!rows[0]) {
       res.setHeader('Cache-Control', 'no-store');
