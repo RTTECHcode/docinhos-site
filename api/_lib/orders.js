@@ -57,12 +57,13 @@ function checkTransition(fromRaw, to) {
 
 // Conclusão automática, calculada na leitura (sem cron): pronto/aguardando entrega há mais de 1 h viram concluído.
 // completed_at fica igual ao instante em que a regra venceu (ready_at + 1 h), não ao da consulta.
-async function sweepOrders(sql) {
+async function sweepOrders(sql, { id = null } = {}) {
   await sql.query(
     `update orders
         set fulfillment_status = 'completed', completed_at = coalesce(ready_at, created_at) + interval '${AUTO_COMPLETE_AFTER}'
       where fulfillment_status in ('ready', 'awaiting_delivery')
-        and coalesce(ready_at, created_at) < now() - interval '${AUTO_COMPLETE_AFTER}'`);
+        and coalesce(ready_at, created_at) < now() - interval '${AUTO_COMPLETE_AFTER}'
+        and ($1::int is null or id = $1::int)`, [id]);
 }
 
 // Muda o status com validação no servidor. Retorna a linha atualizada.

@@ -147,6 +147,15 @@ function parseCookies(header) {
   }
   return out;
 }
+// CSRF: requisição mutável precisa de Origin igual ao Host e não pode vir de outro site.
+function sameOrigin(req) {
+  const origin = req.headers.origin, host = req.headers.host;
+  if (!origin || !host) return false;
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return false;
+  try { return new URL(origin).host === host; } catch { return false; }
+}
+const isJsonType = req => /^application\/json\s*(;|$)/i.test(String(req.headers['content-type'] || ''));
 function buildCookie(name, value, { maxAge, sameSite = 'Strict' }) {
   return `${name}=${value}; HttpOnly; Secure; SameSite=${sameSite}; Path=/; Max-Age=${maxAge}`;
 }
@@ -156,5 +165,5 @@ module.exports = {
   hashPassword, verifyPassword, dummyHash, validatePassword,
   SECURITY_QUESTIONS, QUESTION_IDS, questionText, normalizeAnswer, validateQuestionId, validateAnswer, hashAnswer, verifyAnswer, fakeQuestionFor,
   RECOVERY_CODE_COUNT, generateRecoveryCodes, matchRecoveryCode, normalizeRecoveryCode,
-  evaluateAttemptLock, clientIp, parseCookies, buildCookie
+  evaluateAttemptLock, clientIp, parseCookies, buildCookie, sameOrigin, isJsonType
 };
