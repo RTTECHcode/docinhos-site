@@ -104,8 +104,9 @@ async function restore(s) {
   for (const h of s.hours) await sql.query('insert into store_hours (weekday, opens, closes) values ($1, $2, $3)', [h.weekday, h.opens, h.closes]);
   await sql.query('delete from store_state where id = 1');
   if (s.state) {
-    await sql.query(`insert into store_state (id, closed_until, closed_indefinitely, closed_message, updated_by) values (1, $1, $2, $3, $4)`,
-      [s.state.closed_until, s.state.closed_indefinitely, s.state.closed_message, s.state.updated_by]);
+    // updated_at também volta ao valor antigo (restauração exata; senão ficaria com o horário do teste)
+    await sql.query(`insert into store_state (id, closed_until, closed_indefinitely, closed_message, updated_by, updated_at) values (1, $1, $2, $3, $4, coalesce($5, now()))`,
+      [s.state.closed_until, s.state.closed_indefinitely, s.state.closed_message, s.state.updated_by, s.state.updated_at]);
   }
   await sql.query('delete from settings where key = any($1::text[])', [SETTING_KEYS]);
   for (const r of s.settings) await sql.query('insert into settings (key, value) values ($1, $2)', [r.key, r.value]);
