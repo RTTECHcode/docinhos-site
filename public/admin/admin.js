@@ -70,37 +70,86 @@
   };
 
   // ---- sheet e confirmação ----
-  // Interruptor play/pause acessível. onChange(próximoValor) deve retornar false se falhar (o botão não muda).
+  // Interruptor play/pause acessível. onChange(próximoValor) deve retornar false se falhar (o botão volta ao valor confirmado).
+  // B2: o clique atualiza na hora e os envios ao servidor são feitos em fila (um por vez, em ordem); se o usuário clicar várias
+  // vezes enquanto um envio está em andamento, só o último valor desejado é enviado depois. Assim o estado final no servidor
+  // sempre bate com o último clique (antes o botão ficava desabilitado e cliques rápidos eram perdidos ou chegavam fora de ordem).
   DG.switchEl = (checked, label, onChange, big) => {
     const b = el('button', { class: 'switch' + (big ? ' big' : ''), type: 'button', role: 'switch', 'aria-checked': String(!!checked), 'aria-label': label });
-    b.addEventListener('click', async () => {
-      const next = b.getAttribute('aria-checked') !== 'true';
-      b.disabled = true;
-      const ok = await onChange(next);
-      b.disabled = false;
-      if (ok !== false) b.setAttribute('aria-checked', String(next));
+    let confirmed = !!checked; // último valor aceito pelo servidor
+    let wanted = confirmed;    // último valor pedido pelo usuário
+    let busy = false;
+    const show = v => b.setAttribute('aria-checked', String(v));
+    async function flush() {
+      busy = true;
+      while (wanted !== confirmed) {
+        const target = wanted;
+        let ok;
+        try { ok = await onChange(target); } catch { ok = false; }
+        if (ok === false) { wanted = confirmed; show(confirmed); break; }
+        confirmed = target;
+      }
+      busy = false;
+    }
+    b.addEventListener('click', () => {
+      wanted = !wanted;
+      show(wanted);
+      if (!busy) flush();
     });
     return b;
   };
 
+  // ---- sheets (pop-ups) com histórico do navegador (B3) e animação de fechar (B5) ----
+  // Cada sheet aberto empilha uma entrada no histórico; o botão voltar (popstate) fecha o sheet do topo.
+  // Fechar pelo X/fundo/botões consome a própria entrada com history.back() (ignorando o popstate resultante).
+  const sheetStack = [];
+  let ignorePops = 0;      // popstates causados por history.back() nosso
+  const afterPops = [];    // pushState adiado enquanto há history.back() pendente
+  function runAfterPops() { while (!ignorePops && afterPops.length) afterPops.shift()(); }
+  window.addEventListener('popstate', () => {
+    if (ignorePops > 0) { ignorePops--; runAfterPops(); return; }
+    const top = sheetStack[sheetStack.length - 1];
+    if (top) top.dismiss(false);
+  });
+
   DG.sheet = function (title, build, onClose) {
     const root = $('#overlay-root');
     const body = el('div', { class: 'stack' });
-    const close = () => { backdrop.remove(); if (onClose) onClose(); };
+    const entry = { pushed: false, closed: false };
+    function dismiss(fromUi) {
+      if (entry.closed) return;
+      entry.closed = true;
+      const i = sheetStack.indexOf(entry);
+      const wasTop = i === sheetStack.length - 1;
+      if (i >= 0) sheetStack.splice(i, 1);
+      if (entry.pushed && fromUi && wasTop) { ignorePops++; history.back(); }
+      backdrop.classList.add('closing');
+      let gone = false;
+      const remove = () => { if (!gone) { gone = true; backdrop.remove(); } };
+      sheet.addEventListener('animationend', remove, { once: true });
+      setTimeout(remove, 320);
+      if (onClose) onClose();
+    }
+    entry.dismiss = dismiss;
+    const close = () => dismiss(true);
     const sheet = el('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       el('div', { class: 'sheet-head' }, el('h2', { text: title }), el('button', { class: 'x', type: 'button', 'aria-label': 'Fechar', text: '×', on: { click: close } })),
       body);
     const backdrop = el('div', { class: 'backdrop', on: { click: e => { if (e.target === backdrop) close(); } } }, sheet);
     root.append(backdrop);
+    sheetStack.push(entry);
+    const push = () => { if (entry.closed) return; history.pushState({ dgSheet: true }, ''); entry.pushed = true; };
+    if (ignorePops) afterPops.push(push); else push();
     build(body, close);
     return close;
   };
   DG.confirm = (message, okLabel, danger) => new Promise(resolve => {
+    // resolve(valor) vem antes de close(): voltar/fechar sem escolher cai no onClose e cancela (resolve(false)).
     DG.sheet('Confirmar', (body, close) => {
       body.append(el('p', { text: message, class: 'wrap' }), el('div', { class: 'grid2' },
-        el('button', { class: 'btn', type: 'button', text: 'Cancelar', on: { click: () => { close(); resolve(false); } } }),
-        el('button', { class: 'btn ' + (danger ? 'danger solid' : 'primary'), type: 'button', text: okLabel || 'Confirmar', on: { click: () => { close(); resolve(true); } } })));
-    });
+        el('button', { class: 'btn', type: 'button', text: 'Cancelar', on: { click: () => { resolve(false); close(); } } }),
+        el('button', { class: 'btn ' + (danger ? 'danger solid' : 'primary'), type: 'button', text: okLabel || 'Confirmar', on: { click: () => { resolve(true); close(); } } })));
+    }, () => resolve(false));
   });
 
   // ---- usuário, abas ----
@@ -113,6 +162,7 @@
     $('#app').hidden = true;
     $('#login-view').hidden = false;
     $('#overlay-root').replaceChildren();
+    sheetStack.length = 0;
   }
   function stopTab() { const t = DG.tabs[DG.state.tab]; if (t && t.stop) t.stop(); }
   DG.go = async function (tab) {

@@ -7,13 +7,27 @@
 
   function initials(name) { return String(name).trim().slice(0, 1).toUpperCase() || '?'; }
 
-  function productRow(p, catalog, reload) {
+  // B2: toda leitura/gravação do estado de um produto passa por current(), que acha o objeto VIVO em catalog.products pelo id.
+  // Antes, as linhas guardavam o objeto antigo; depois de um refresh do catálogo (ex.: vincular complemento) a lista repintada
+  // mostrava o valor velho e o modal abria com active velho, e "Salvar" reativava o item.
+  let toggling = 0, epoch = 0; // evita que um catálogo buscado antes de um toggle sobrescreva o estado novo
+  const current = (catalog, p) => catalog.products.find(x => x.id === p.id) || p;
+
+  function productRow(p0, catalog, reload) {
+    const p = current(catalog, p0);
     const thumb = p.image_path ? el('img', { class: 'thumb', src: p.image_path, alt: '', loading: 'lazy' }) : el('div', { class: 'thumb empty', text: initials(p.name), 'aria-hidden': 'true' });
     return el('div', { class: 'card' }, el('div', { class: 'row' },
-      el('button', { class: 'item-btn grow row', type: 'button', on: { click: () => DG.openProduct(p, catalog, null, reload) } },
+      el('button', { class: 'item-btn grow row', type: 'button', on: { click: () => DG.openProduct(current(catalog, p), catalog, null, reload) } },
         thumb,
         el('span', { class: 'grow' }, el('strong', { class: 'wrap', text: p.name }), el('p', { class: 'muted small', text: DG.money(p.price_cents) + (p.active ? '' : ' - pausado') }))),
-      DG.switchEl(p.active, 'Produto ' + p.name + ' ativo', async next => !!(await DG.run(() => DG.api('product_toggle', { body: { id: p.id, active: next } }))) && ((p.active = next), true))));
+      DG.switchEl(p.active, 'Produto ' + p.name + ' ativo', async next => {
+        toggling++;
+        try {
+          const ok = !!(await DG.run(() => DG.api('product_toggle', { body: { id: p.id, active: next } })));
+          if (ok) { current(catalog, p).active = next; p.active = next; epoch++; }
+          return ok;
+        } finally { toggling--; }
+      })));
   }
 
   function productsView(box, catalog, reload) {
@@ -31,14 +45,24 @@
       for (const c of catalog.categories) {
         const inCat = items.filter(p => p.category_id === c.id);
         if (!inCat.length) continue;
-        out.push(el('h3', { class: 'section-title', text: c.name + (c.active ? '' : ' (pausada)') }), ...inCat.map(p => productRow(p, catalog, reload)));
+        out.push(el('h3', { class: 'section-title', text: c.name + (c.active ? '' : ' (pausada)') }), ...inCat.map(p => productRow(p, catalog, afterEdit)));
       }
       list.replaceChildren(...(out.length ? out : [el('p', { class: 'muted', text: 'Nenhum produto encontrado.' })]));
     };
     search.addEventListener('input', () => { st.search = search.value; paint(); });
     paint();
+    // B5: depois de salvar/fechar o pop-up, repinta na hora com os dados já atualizados e confirma com o servidor em seguida
+    // (sem recarregar a aba, sem perder a rolagem).
+    async function afterEdit() {
+      paint();
+      const e0 = epoch;
+      try {
+        const fresh = await DG.api('catalog');
+        if (toggling === 0 && e0 === epoch && st.sub === 'products' && box.isConnected) { DG.state.catalog = fresh; Object.assign(catalog, fresh); paint(); }
+      } catch { /* a lista local já está certa; o próximo carregamento corrige */ }
+    }
     box.replaceChildren(search, chips, list,
-      el('button', { class: 'btn primary block', type: 'button', text: 'Novo produto', on: { click: () => DG.openProduct(null, catalog, st.catFilter ? Number(st.catFilter) : null, reload) } }));
+      el('button', { class: 'btn primary block', type: 'button', text: 'Novo produto', on: { click: () => DG.openProduct(null, catalog, st.catFilter ? Number(st.catFilter) : null, afterEdit) } }));
   }
 
   function editCategory(c, reload) {
