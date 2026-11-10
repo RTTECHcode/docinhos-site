@@ -41,7 +41,7 @@ Sem login. Só leitura. Outros métodos: 405.
 - `a=state` retorna `{ open, reason, reopens_at, next_open_at, closes_at, message, hours: [{ weekday, opens, closes }] }` (weekday 0 = domingo; horas "HH:MM").
 - `a=shipping` retorna `{ bands, max_km, pickup_fee_cents }`.
 - `a=quote&cep=06000000&address=Rua X, 100[&number=100]` retorna `{ "km": 4.2, "fee_cents": 900, "faixa": { "max_km": 6, "fee_cents": 900 }, "max_km": 10 }`. Só informativo: o pedido recalcula.
-- Erros do `quote`: 400 `invalid_cep` | `invalid_address`; 422 `cep_not_found` | `address_not_found` | `out_of_area` (com `max_km`); 429 (limite de consultas); 503 `origin_unavailable`.
+- Erros do `quote`: 400 `invalid_cep` | `invalid_address`; 422 `cep_not_found` | `address_not_found` | `out_of_area` (com `max_km`); 429 `rate_limited` `Muitas consultas de frete. Aguarde alguns minutos.` (mais de 30 cotações do mesmo IP em 10 min, contadas no banco, valem para todas as instâncias); 429 `shipping_busy` `Muitas consultas de frete agora. Tente de novo em instantes.` (teto global de 40 endereços novos por minuto); 503 `origin_unavailable`.
 - Ação desconhecida: 404.
 
 ## 3. Pedido: POST /api/order
@@ -99,7 +99,7 @@ Erros:
 
 - `?code=DGxxxxxxxxxx` (formato antigo) retorna `{ code, payment_status }`. O `public_code` NÃO serve de chave (adivinhável).
 - Token ou código malformado/desconhecido: 404. Outros métodos: 405.
-- 429 `rate_limited` (F5, A1-12): mais de 300 consultas do mesmo IP em 10 min (por instância). A tela deve esperar e tentar de novo mais tarde, sem martelar (a consulta a cada 5 s de uma aba fica em 120).
+- 429 `rate_limited` (F5, A1-12): mais de 300 consultas do mesmo IP em 10 min (contadas no banco por minuto, tabela `rate_hits`; valem para todas as instâncias da Vercel). A tela deve esperar e tentar de novo mais tarde, sem martelar (a consulta a cada 5 s de uma aba fica em 120).
 - Fluxo: `new -> accepted -> preparing -> ready -> awaiting_delivery -> completed`, mais `cancelled`. Rótulos: novo, aceito, em preparo, pronto, aguardando entrega (retirada: "aguardando retirada"), concluído, cancelado. Pronto há mais de 1 h vira concluído sozinho na próxima leitura (sem cron). O valor antigo `delivered` é lido como `completed`.
 
 ## 5. Admin: /api/admin?a=<ação>
