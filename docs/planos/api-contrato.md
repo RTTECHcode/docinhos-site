@@ -54,7 +54,7 @@ Corpo:
   "delivery_method": "delivery", "cep": "06000-000", "address": "Rua das Flores", "number": "100",
   "notes": "sem granulado", "payment_choice": "pix",
   "use_points": 100,
-  "items": [{ "product_id": 7, "quantity": 2, "size_id": 31, "extras": [{ "id": 3, "quantity": 1 }] }]
+  "items": [{ "product_id": 7, "qty": 2, "size_id": 31, "extras": [{ "id": 3, "qty": 1 }] }]
 }
 ```
 
