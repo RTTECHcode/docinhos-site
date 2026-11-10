@@ -259,6 +259,27 @@ insert into ingredient_synonyms (canonical, synonym, canonical_norm, synonym_nor
      ('oreo', 'biscoito oreo', 'oreo', 'biscoito oreo'),
      ('morango', 'morangos', 'morango', 'morangos')
    on conflict (canonical_norm, synonym_norm) do nothing;
+create table if not exists ingredient_pause_batches (
+     id serial primary key,
+     term text not null,
+     term_norm text not null,
+     pause_label text,
+     created_by text,
+     created_at timestamptz not null default now(),
+     released_at timestamptz,
+     released_by text
+   );
+create index if not exists ingredient_pause_batches_open_idx on ingredient_pause_batches (term_norm) where released_at is null;
+create table if not exists ingredient_pause_items (
+     id serial primary key,
+     batch_id integer not null references ingredient_pause_batches(id) on delete cascade,
+     product_id integer not null references products(id) on delete cascade,
+     complement_id integer references complements(id) on delete cascade,
+     changed boolean not null default true,
+     prev_pause_label text
+   );
+create index if not exists ingredient_pause_items_batch_idx on ingredient_pause_items (batch_id);
+create index if not exists ingredient_pause_items_product_idx on ingredient_pause_items (product_id, complement_id);
 insert into settings (key, value) values ('default_pause_label', 'volto logo <3') on conflict (key) do nothing;
 insert into settings (key, value) values ('shipping_bands', '[{"max_km":3,"fee_cents":600},{"max_km":6,"fee_cents":900},{"max_km":10,"fee_cents":1400}]') on conflict (key) do nothing;
 insert into settings (key, value) values ('store_origin_address', 'Rua Manoel Hare Peralta, 101, Ayrosa, Osasco, SP') on conflict (key) do nothing;

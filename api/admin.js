@@ -674,6 +674,15 @@ async function loadCommandCatalog() {
 // Prévia: nada é alterado aqui. O cliente mostra o antes/depois e só então chama command_apply.
 A.command = { m: 'POST', fn: async ({ body }) => {
   const text = vStr(body.text, 1, 200, 'Comando');
+  // "voltou morango" / "reativar morango": se houver pausa em lote aberta desse ingrediente, mostra a prévia da reativação por lote
+  const toks = words(text), vi = toks.findIndex(t => RESUME_VERBS.has(t));
+  if (vi >= 0) {
+    const term = toks.filter((_, i) => i !== vi).filter(t => !STOP.has(t) && !SCOPE_WORDS[t] && !ALL_WORDS.has(t)).join(' ');
+    if (term.length >= 2) {
+      const r = await resumePreviewFor(term);
+      if (r.batches.length) return { ok: true, kind: 'ingredient_resume', action: 'resume', term, apply: { a: 'resume_apply', body: { term, confirm: true } }, ...r };
+    }
+  }
   return parseCommand(text, await loadCommandCatalog());
 } };
 
@@ -1019,7 +1028,7 @@ async function shippingInfo() {
 }
 A.shipping_get = { m: 'GET', fn: async () => ({ shipping: await shippingInfo() }) };
 
-A.shipping_save = { m: 'POST', fn: async ({ body, user }) => {
+A.shipping_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   let warning = null;
   if (body.bands === undefined && body.origin_address === undefined) bad('Nada para alterar.');
   if (body.bands !== undefined) {
@@ -1094,7 +1103,7 @@ function searchByTerms(termList, { products, complements, links }) {
   for (const p of products) {
     const inName = textMatches(p.name, termList);
     const inDesc = inName ? null : textMatches(p.description || '', termList);
-    if (inName || inDesc) foundProducts.push({ id: p.id, name: p.name, matched_in: inName ? 'nome' : 'descrição', matched_term: inName || inDesc, active: p.active, paused: p.paused, pause_label: p.pause_label });
+    if (inName || inDesc) foundProducts.push({ id: p.id, name: p.name, matched_in: inName ? 'nome' : 'descrição', matched_term: inName || inDesc, active: p.active, paused: p.paused, pause_label: p.pause_label, builder: !!p.builder });
   }
   const foundComplements = [];
   for (const c of complements) {
@@ -1102,7 +1111,7 @@ function searchByTerms(termList, { products, complements, links }) {
     if (!hit) continue;
     foundComplements.push({
       id: c.id, name: c.name, matched_term: hit, active: c.active,
-      links: links.filter(l => l.complement_id === c.id).map(l => ({ product_id: l.product_id, product_name: l.product_name, paused: l.paused }))
+      links: links.filter(l => l.complement_id === c.id).map(l => ({ product_id: l.product_id, product_name: l.product_name, group_label: l.group_label || null, paused: l.paused }))
     });
   }
   return { products: foundProducts, complements: foundComplements };
@@ -1114,9 +1123,9 @@ A.pause_preview = { m: 'POST', fn: async ({ body }) => {
   if (norm(term).length < 2) bad('Escreva o nome do ingrediente.');
   const [syn, products, complements, links] = await Promise.all([
     q('select canonical_norm, synonym_norm from ingredient_synonyms'),
-    q('select id, name, description, active, paused, pause_label from products order by name'),
+    q('select id, name, description, active, paused, pause_label, exists (select 1 from product_groups g where g.product_id = products.id) as builder from products order by name'),
     q('select id, name, active from complements order by name'),
-    q(`select pc.product_id, pc.complement_id, pc.paused, p.name as product_name from product_complements pc join products p on p.id = pc.product_id`)
+    q(`select pc.product_id, pc.complement_id, pc.paused, p.name as product_name, g.label as group_label from product_complements pc join products p on p.id = pc.product_id left join product_groups g on g.id = pc.group_id`)
   ]);
   const terms = expandTerms(term, syn);
   const found = searchByTerms(terms, { products, complements, links });
@@ -1124,29 +1133,206 @@ A.pause_preview = { m: 'POST', fn: async ({ body }) => {
   return { ok: true, term, terms, ...found, summary: { products: found.products.length, complements: found.complements.length, links: linkCount } };
 } };
 
-// APLICA depois da confirmação: pausa (ou retoma) em lote os produtos e os vínculos produto-complemento escolhidos na prévia.
+// APLICA depois da confirmação: pausa em lote os produtos e os vínculos produto-complemento escolhidos na prévia e GRAVA O LOTE
+// (ingredient_pause_batches + ingredient_pause_items) para poder reativar depois ("voltou morango") ou desfazer logo em seguida.
+// Itens que já estavam pausados por outro motivo (manual) não entram no lote. Itens já pausados por outro lote aberto entram
+// como "compartilhados": só voltam quando TODOS os lotes que os seguram forem liberados.
 A.pause_apply = { m: 'POST', fn: async ({ body, user }) => {
   if (body.confirm !== true) bad('Confirme para aplicar a pausa.');
-  const paused = vBool(body.paused, 'Pausado');
+  if (body.paused !== undefined && body.paused !== true) bad('Para reativar use resume_preview e resume_apply (ou pause_undo logo após pausar).');
+  const term = vStr(body.term, 2, 60, 'Ingrediente');
+  const termNorm = norm(term);
+  if (termNorm.length < 2) bad('Escreva o nome do ingrediente.');
   const productIds = body.product_ids === undefined ? [] : body.product_ids;
   const linkList = body.links === undefined ? [] : body.links;
   if (!Array.isArray(productIds) || !Array.isArray(linkList) || productIds.length > 300 || linkList.length > 600) bad('Lista inválida.');
   if (!productIds.length && !linkList.length) bad('Nada para aplicar.');
-  const pids = productIds.map(v => vId(v, 'Produto'));
+  const pids = [...new Set(productIds.map(v => vId(v, 'Produto')))];
   const pairs = linkList.map(l => { if (!l || typeof l !== 'object') bad('Vínculo inválido.'); return [vId(l.product_id, 'Produto'), vId(l.complement_id, 'Complemento')]; });
+  const pairKeys = [...new Set(pairs.map(p => p.join(':')))].map(k => k.split(':').map(Number));
   let label = null, setLabel = false;
   if (body.pause_label !== undefined) { setLabel = true; label = body.pause_label === null || body.pause_label === '' ? null : vStr(body.pause_label, 1, 60, 'Etiqueta'); }
+
+  // Uma instrução só (CTEs que alteram dados): pausa o que estava ativo, acha o que já é segurado por outro lote aberto,
+  // cria o lote e grava os itens. Tudo ou nada.
+  const [r] = await q(
+    `with cand_p as (
+       select id, pause_label from products where id = any($1::int[]) and paused = false for update),
+     upd_p as (
+       update products p set paused = true, pause_label = case when $5::boolean then $6::text else p.pause_label end
+         from cand_p where p.id = cand_p.id returning p.id, cand_p.pause_label as prev),
+     want_l as (select * from unnest($2::int[], $3::int[]) as t(pid, cid)),
+     cand_l as (
+       select pc.product_id, pc.complement_id from product_complements pc join want_l w on w.pid = pc.product_id and w.cid = pc.complement_id
+        where pc.paused = false for update of pc),
+     upd_l as (
+       update product_complements pc set paused = true from cand_l
+        where pc.product_id = cand_l.product_id and pc.complement_id = cand_l.complement_id returning pc.product_id, pc.complement_id),
+     held as (
+       select distinct i.product_id, i.complement_id from ingredient_pause_items i join ingredient_pause_batches b on b.id = i.batch_id
+        where b.released_at is null and b.term_norm <> $7::text -- o mesmo termo reaplicado não cria dependência nova
+          and ((i.complement_id is null and i.product_id = any($1::int[]))
+            or (i.complement_id is not null and exists (select 1 from want_l w where w.pid = i.product_id and w.cid = i.complement_id)))),
+     rows_all as (
+       select id as pid, null::int as cid, prev, true as changed from upd_p
+       union all select product_id, complement_id, null, true from upd_l
+       union all select h.product_id, h.complement_id, null, false from held h
+        where not exists (select 1 from upd_p u where h.complement_id is null and u.id = h.product_id)
+          and not exists (select 1 from upd_l u where h.complement_id is not null and u.product_id = h.product_id and u.complement_id = h.complement_id)),
+     b as (
+       insert into ingredient_pause_batches (term, term_norm, created_by, pause_label)
+       select $4::text, $7::text, $8::text, case when $5::boolean then $6::text end where exists (select 1 from rows_all) returning id),
+     ins as (
+       insert into ingredient_pause_items (batch_id, product_id, complement_id, changed, prev_pause_label)
+       select b.id, r.pid, r.cid, r.changed, r.prev from b cross join rows_all r returning 1)
+     select (select id from b) as batch_id,
+            (select count(*)::int from upd_p) as products_changed,
+            (select count(*)::int from upd_l) as links_changed,
+            (select count(*)::int from held) as shared,
+            (select count(*)::int from ins) as items`,
+    [pids, pairKeys.map(p => p[0]), pairKeys.map(p => p[1]), term, setLabel, label, termNorm, user.username]);
+  const touched = [...new Set([...pids, ...pairKeys.map(p => p[0])])];
+  const emptied = touched.length ? await q(
+    `select g.product_id, p.name as product_name, g.label as group_label from product_groups g join products p on p.id = g.product_id
+      where g.product_id = any($1::int[]) and g.min_choices > 0
+        and not exists (select 1 from product_complements pc join complements c on c.id = pc.complement_id where pc.group_id = g.id and not pc.paused and c.active)`, [touched]) : [];
+  const warnings = emptied.map(g => ({ product_id: g.product_id, product_name: g.product_name, group_label: g.group_label,
+    message: `Todas as opções de "${g.group_label}" em "${g.product_name}" estão pausadas e a escolha é obrigatória: o produto não poderá ser pedido.` }));
+  const requested = pids.length + pairKeys.length;
+  const already = Math.max(0, requested - r.products_changed - r.links_changed - r.shared);
+  await audit(user.username, 'pausa_em_lote', `${term}: ${r.products_changed} produtos, ${r.links_changed} vínculos${r.batch_id ? ` (lote #${r.batch_id})` : ''}`);
+  return { ok: true, batch_id: r.batch_id || null, term, products_changed: r.products_changed, links_changed: r.links_changed, shared_with_other_batches: r.shared, already_paused: already, ...(warnings.length ? { warnings } : {}) };
+} };
+
+// ---------- Reativar pausa em lote por ingrediente (e desfazer) ----------
+const stemKey = text => words(text).map(stem).join(' ');
+
+// Lotes abertos do termo (com sinônimos; plural tolerado).
+async function openBatchesFor(term) {
+  const syn = await q('select canonical_norm, synonym_norm from ingredient_synonyms');
+  const terms = expandTerms(term, syn);
+  const keys = new Set(terms.map(stemKey).filter(Boolean));
+  const open = await q('select id, term, term_norm, created_by, created_at, pause_label from ingredient_pause_batches where released_at is null order by id');
+  return { terms, batches: open.filter(b => keys.has(stemKey(b.term_norm))) };
+}
+
+// Plano de liberação (só lê): o que volta, o que continua pausado (e por quê) e o que já estava ativo.
+async function releasePlan(batchIds) {
+  if (!batchIds.length) return [];
+  const items = await q(
+    `select i.batch_id, i.product_id, i.complement_id, i.changed, i.prev_pause_label, p.name as product_name, c.name as complement_name,
+            case when i.complement_id is null then p.paused else pc.paused end as is_paused,
+            (i.complement_id is not null and pc.product_id is null) as link_gone
+       from ingredient_pause_items i join products p on p.id = i.product_id
+       left join complements c on c.id = i.complement_id
+       left join product_complements pc on pc.product_id = i.product_id and pc.complement_id = i.complement_id
+      where i.batch_id = any($1::int[]) order by i.batch_id, i.id`, [batchIds]);
+  const holders = await q(
+    `select i.product_id, i.complement_id, b.term from ingredient_pause_items i join ingredient_pause_batches b on b.id = i.batch_id
+      where b.released_at is null and b.id <> all($1::int[]) and i.product_id = any($2::int[])`, [batchIds, [...new Set(items.map(i => i.product_id))]]);
+  const heldBy = new Map();
+  for (const h of holders) {
+    const k = `${h.product_id}:${h.complement_id || 0}`;
+    if (!heldBy.has(k)) heldBy.set(k, new Set());
+    heldBy.get(k).add(h.term);
+  }
+  const plan = new Map();
+  for (const i of items) {
+    if (i.link_gone) continue; // vínculo foi removido do cardápio: nada a reativar
+    const k = `${i.product_id}:${i.complement_id || 0}`;
+    let e = plan.get(k);
+    if (!e) {
+      e = { type: i.complement_id ? 'link' : 'product', product_id: i.product_id, complement_id: i.complement_id || null,
+            name: i.complement_id ? `${i.complement_name} em ${i.product_name}` : i.product_name,
+            held_by: [...(heldBy.get(k) || [])], batch_ids: [], restore: false, restore_label: null };
+      e.action = !i.is_paused ? 'already_active' : e.held_by.length ? 'keep_paused' : 'resume';
+      plan.set(k, e);
+    }
+    e.batch_ids.push(i.batch_id);
+  }
+  // Produto que volta: restaura a etiqueta que ele tinha antes da pausa em lote mais recente que o alterou.
+  const resumingProducts = [...plan.values()].filter(e => e.type === 'product' && e.action === 'resume').map(e => e.product_id);
+  if (resumingProducts.length) {
+    const prev = await q(
+      `select distinct on (i.product_id) i.product_id, i.prev_pause_label from ingredient_pause_items i
+        where i.complement_id is null and i.changed and i.product_id = any($1::int[]) order by i.product_id, i.batch_id desc`, [resumingProducts]);
+    for (const r of prev) { const e = plan.get(`${r.product_id}:0`); if (e) { e.restore = true; e.restore_label = r.prev_pause_label || null; } }
+  }
+  return [...plan.values()];
+}
+
+const planView = plan => {
+  const pick = a => plan.filter(e => e.action === a).map(e => ({ type: e.type, product_id: e.product_id, complement_id: e.complement_id, name: e.name, ...(e.held_by.length ? { held_by: e.held_by } : {}) }));
+  const will = pick('resume'), keep = pick('keep_paused'), active = pick('already_active');
+  return { will_resume: will, keep_paused: keep, already_active: active, summary: { resume: will.length, keep_paused: keep.length, already_active: active.length } };
+};
+const batchView = b => ({ id: b.id, term: b.term, created_by: b.created_by, created_at: b.created_at });
+
+async function executeRelease(plan, batchIds, username) {
+  const rp = plan.filter(e => e.action === 'resume' && e.type === 'product'), rl = plan.filter(e => e.action === 'resume' && e.type === 'link');
   const queries = [];
-  if (pids.length) queries.push(getSql().query(
-    `update products set paused = $2, pause_label = case when $3::boolean then $4::text else pause_label end where id = any($1::int[]) returning id`,
-    [pids, paused, setLabel, label]));
-  if (pairs.length) queries.push(getSql().query(
-    `update product_complements pc set paused = $3 from unnest($1::int[], $2::int[]) as t(pid, cid)
-      where pc.product_id = t.pid and pc.complement_id = t.cid returning pc.product_id`, [pairs.map(p => p[0]), pairs.map(p => p[1]), paused]));
+  if (rp.length) queries.push(getSql().query(
+    `update products p set paused = false, pause_label = case when t.restore then nullif(t.label, '') else p.pause_label end
+       from unnest($1::int[], $2::boolean[], $3::text[]) as t(id, restore, label) where p.id = t.id and p.paused = true returning p.id`,
+    [rp.map(e => e.product_id), rp.map(e => e.restore), rp.map(e => e.restore_label || '')]));
+  if (rl.length) queries.push(getSql().query(
+    `update product_complements pc set paused = false from unnest($1::int[], $2::int[]) as t(pid, cid)
+      where pc.product_id = t.pid and pc.complement_id = t.cid and pc.paused = true returning pc.product_id`,
+    [rl.map(e => e.product_id), rl.map(e => e.complement_id)]));
+  queries.push(getSql().query(
+    'update ingredient_pause_batches set released_at = now(), released_by = $2 where id = any($1::int[]) and released_at is null returning id', [batchIds, username]));
   const results = await getSql().transaction(queries);
-  const productsChanged = pids.length ? results[0].length : 0, linksChanged = pairs.length ? results[results.length - 1].length : 0;
-  await audit(user.username, paused ? 'pausa_em_lote' : 'retomada_em_lote', `${productsChanged} produtos, ${linksChanged} vínculos`);
-  return { ok: true, products_changed: productsChanged, links_changed: linksChanged };
+  const released = results[results.length - 1].map(r => r.id);
+  return { released, products_resumed: rp.length ? results[0].length : 0, links_resumed: rl.length ? results[rp.length ? 1 : 0].length : 0 };
+}
+
+async function resumePreviewFor(term) {
+  const { terms, batches } = await openBatchesFor(term);
+  if (!batches.length) return { terms, batches: [], will_resume: [], keep_paused: [], already_active: [], summary: { resume: 0, keep_paused: 0, already_active: 0 } };
+  return { terms, batches: batches.map(batchView), ...planView(await releasePlan(batches.map(b => b.id))) };
+}
+
+// PRÉVIA da reativação por ingrediente ("voltou morango"): só lê.
+A.resume_preview = { m: 'POST', fn: async ({ body }) => {
+  const term = vStr(body.term, 2, 60, 'Ingrediente');
+  if (norm(term).length < 2) bad('Escreva o nome do ingrediente.');
+  const r = await resumePreviewFor(term);
+  return { ok: true, term, ...r, ...(r.batches.length ? {} : { message: 'Não há pausa em lote aberta para esse ingrediente.' }) };
+} };
+
+// Reativa só o que os lotes abertos do ingrediente pausaram e que ainda está pausado; o que outro lote aberto segura continua pausado.
+A.resume_apply = { m: 'POST', fn: async ({ body, user }) => {
+  if (body.confirm !== true) bad('Confirme para reativar.');
+  const term = vStr(body.term, 2, 60, 'Ingrediente');
+  const { batches } = await openBatchesFor(term);
+  if (!batches.length) throw new HttpError(404, 'Não há pausa em lote aberta para esse ingrediente.');
+  const ids = batches.map(b => b.id), plan = await releasePlan(ids);
+  const done = await executeRelease(plan, ids, user.username);
+  await audit(user.username, 'retomada_em_lote', `${term}: ${done.products_resumed} produtos, ${done.links_resumed} vínculos (lotes ${ids.join(', ')})`);
+  return { ok: true, term, batches_released: done.released, products_resumed: done.products_resumed, links_resumed: done.links_resumed, ...planView(plan) };
+} };
+
+// "Desfazer" logo depois de pausar: libera um lote específico (mesmas regras de itens compartilhados).
+A.pause_undo = { m: 'POST', fn: async ({ body, user }) => {
+  const id = vId(body.batch_id, 'Lote');
+  const b = own(await q('select id, term, released_at from ingredient_pause_batches where id = $1', [id]), 'Lote não encontrado.');
+  if (b.released_at) throw new HttpError(409, 'Esse lote já foi desfeito.');
+  const plan = await releasePlan([id]);
+  const done = await executeRelease(plan, [id], user.username);
+  if (!done.released.length) throw new HttpError(409, 'Esse lote já foi desfeito.');
+  await audit(user.username, 'pausa_em_lote_desfeita', `${b.term}: lote #${id}, ${done.products_resumed} produtos, ${done.links_resumed} vínculos`);
+  return { ok: true, batch_id: id, term: b.term, products_resumed: done.products_resumed, links_resumed: done.links_resumed, ...planView(plan) };
+} };
+
+// Lotes abertos (ou todos com ?all=1, os 50 mais recentes) com a situação atual dos itens.
+A.pause_batches = { m: 'GET', fn: async ({ query }) => {
+  const all = query.get('all') === '1';
+  const rows = await q(
+    `select b.id, b.term, b.created_by, b.created_at, b.released_at, b.released_by, b.pause_label,
+            count(*) filter (where i.complement_id is null)::int as products, count(*) filter (where i.complement_id is not null)::int as links
+       from ingredient_pause_batches b left join ingredient_pause_items i on i.batch_id = b.id
+      where ($1::boolean or b.released_at is null) group by b.id order by b.id desc limit 50`, [all]);
+  return { batches: rows };
 } };
 
 // ---------- Roteador ----------
