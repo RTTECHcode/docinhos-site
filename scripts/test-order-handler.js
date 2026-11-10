@@ -42,8 +42,13 @@ function run(fn, req) {
     Promise.resolve(fn(req, res)).catch(reject);
   });
 }
-const call = (body, cookie, method = 'POST') => run(handler, { method, body, headers: cookie ? { cookie } : {} });
-const track = (query, method = 'GET') => run(statusHandler, { method, query });
+// Pedido vindo do próprio site: Origin = Host, JSON e um IP novo por chamada (o limite por IP tem teste próprio).
+const HOST = 'loja.test.local';
+const randomIp = () => '192.0.2.' + (1 + Math.floor(Math.random() * 254)) + '.' + rnd(4); // único por chamada
+const siteHeaders = () => ({ host: HOST, origin: 'https://' + HOST, 'content-type': 'application/json', 'x-real-ip': randomIp() });
+const call = (body, cookie, method = 'POST', extra = {}) =>
+  run(handler, { method, body, headers: { ...siteHeaders(), ...(cookie ? { cookie } : {}), ...extra } });
+const track = (query, method = 'GET', headers) => run(statusHandler, { method, query, headers });
 
 let passed = 0;
 async function test(name, fn) {
@@ -569,6 +574,44 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
     assert.equal(await balanceOf(c.id), 0);
     const left = await sql.query(`select count(*)::int n from orders where customer_id = $1`, [c.id]);
     assert.equal(left[0].n, 1, 'pedidos sem reserva são apagados');
+  });
+
+  // ===== Segurança (F5: A1-05 e A1-12) =====
+  await test('A1-05: outro site não cria pedido (Origin diferente ou ausente, Sec-Fetch-Site cross-site) -> 403', async () => {
+    const before = (await sql.query('select count(*)::int n from orders where customer_name = $1', [NAME]))[0].n;
+    for (const extra of [{ origin: 'https://evil.example' }, { origin: undefined }, { 'sec-fetch-site': 'cross-site' }, { origin: 'https://' + HOST + '.evil.example' }]) {
+      const r = await call(fresh(), null, 'POST', extra);
+      assert.equal(r.status, 403, JSON.stringify(extra)); assert.equal(r.body.code, 'forbidden_origin');
+    }
+    assert.equal((await sql.query('select count(*)::int n from orders where customer_name = $1', [NAME]))[0].n, before, 'nenhum pedido criado');
+  });
+
+  await test('A1-05: corpo text/plain (ou sem Content-Type) -> 415, sem criar pedido', async () => {
+    const r1 = await call(JSON.stringify(fresh()), null, 'POST', { 'content-type': 'text/plain' });
+    assert.equal(r1.status, 415); assert.equal(r1.body.code, 'unsupported_type');
+    assert.equal((await call(fresh(), null, 'POST', { 'content-type': undefined })).status, 415);
+    assert.equal((await call(fresh(), null, 'POST', { 'content-type': 'application/json; charset=utf-8' })).status, 201);
+  });
+
+  await test('A1-05: limite por IP (10 pedidos em 10 min) vale mesmo trocando o telefone', async () => {
+    const { MAX_ORDERS_PER_IP } = handler._internal;
+    const ip = '192.0.2.250.' + rnd(4);
+    for (let i = 0; i < MAX_ORDERS_PER_IP; i++) assert.equal((await call(fresh(), null, 'POST', { 'x-real-ip': ip })).status, 201, 'pedido ' + (i + 1));
+    const r = await call(fresh(), null, 'POST', { 'x-real-ip': ip });
+    assert.equal(r.status, 429);
+    assert.equal((await call(fresh(), null, 'POST', { 'x-real-ip': ip, 'x-forwarded-for': randomIp() })).status, 429, 'x-forwarded-for forjado não escapa');
+    assert.equal((await call(fresh())).status, 201, 'outro IP segue livre');
+    const [row] = await sql.query('select client_ip from orders where customer_name = $1 and client_ip = $2 limit 1', [NAME, ip]);
+    assert.equal(row.client_ip, ip);
+  });
+
+  await test('A1-12: /api/order-status limita consultas por IP (429 acima do limite; outro IP livre)', async () => {
+    const { MAX_PER_IP } = statusHandler._internal;
+    const ip = { 'x-real-ip': '192.0.2.251.' + rnd(4) };
+    for (let i = 0; i < MAX_PER_IP; i++) assert.equal((await track({ t: 'curto' }, 'GET', ip)).status, 404);
+    const r = await track({ t: 'curto' }, 'GET', ip);
+    assert.equal(r.status, 429); assert.equal(r.body.code, 'rate_limited');
+    assert.equal((await track({ t: 'curto' }, 'GET', { 'x-real-ip': randomIp() })).status, 404);
   });
 
   console.log(`\n${passed} testes passaram${process.exitCode ? ' (com falhas)' : ''}`);
