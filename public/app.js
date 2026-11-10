@@ -83,9 +83,12 @@ const modalHooks = {
 };
 const modalEl = id => document.querySelector(id);
 
+let pendingOpen = null;     // abertura pedida enquanto outro modal ainda fecha (history.back em andamento)
 function openModal(id, opts = {}) {
   const modal = modalEl(id);
-  if (!modal || modalStack.includes(id) || closing.has(id)) return;
+  if (!modal || modalStack.includes(id)) return;
+  // Antes: o toque era descartado se algum modal estava fechando. Agora fica na fila e abre quando o fechamento termina.
+  if (closing.size) { pendingOpen = [id, opts]; return; }
   clearTimeout(modal._hideTimer);
   modal._opener = opts.opener || document.activeElement;
   modalStack.push(id);
@@ -118,6 +121,7 @@ function hideModal(id) {
   clearTimeout(modal._hideTimer);
   if (REDUCED.matches) finish(); else modal._hideTimer = setTimeout(finish, MODAL_MS);
   if (after) after();
+  if (!closing.size && pendingOpen) { const [pid, popts] = pendingOpen; pendingOpen = null; openModal(pid, popts); }
 }
 
 function requestClose(id, after) {

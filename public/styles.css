@@ -605,3 +605,7 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
 .pix-timer { font-family: var(--display); font-size: 1.1rem; color: var(--brand-deep); }
 .pix-wait { font-size: .78rem; color: var(--ink-soft); text-align: center; }
 .payment-step { min-width: 0; }
+
+/* A6: correção C1 */
+/* Modal fechando (ainda visível durante a transição de saída) não pode capturar toques: antes engolia o toque no carrinho/cards. */
+.modal:not(.is-open) { pointer-events: none; }
