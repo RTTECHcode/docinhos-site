@@ -405,7 +405,7 @@ module.exports = async (req, res) => {
       distanceKm = quote.km;
     }
 
-    // Pontos (só com cliente logado): saldo, bloqueio de 48 h e desconto conferidos no servidor.
+    // Pontos (só com cliente logado): saldo, bloqueio de 48 h, regra em vigor (Ajustes do painel) e desconto conferidos no servidor.
     let discount = 0, pointsRedeemed = 0;
     if (b.use_points !== undefined && b.use_points !== null && b.use_points !== 0 && (!Number.isInteger(b.use_points) || b.use_points < 0)) fail('Quantidade de pontos inválida.');
     const session = await customerLib.getSession(sql, req);
@@ -413,7 +413,8 @@ module.exports = async (req, res) => {
       if (!session) return send(res, 401, { error: 'Entre na sua conta para usar seus pontos.', code: 'login_required' });
       const bal = await loyalty.getBalance(sql, session.customer.id);
       const red = loyalty.validateRedemption({
-        points: b.use_points, subtotalCents: priced.subtotal_cents, balance: bal.balance, lockedUntil: session.customer.points_locked_until
+        points: b.use_points, subtotalCents: priced.subtotal_cents, balance: bal.balance, lockedUntil: session.customer.points_locked_until,
+        rules: bal.rules
       });
       discount = red.discount_cents;
       pointsRedeemed = red.points;

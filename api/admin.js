@@ -1092,6 +1092,21 @@ A.shipping_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   return { ok: true, shipping: await shippingInfo(), ...(warning ? { warning } : {}) };
 } };
 
+// ---------- Regra de pontos (settings points_*; validação e cálculo em api/_lib/loyalty.js) ----------
+const pointsInfo = async () => ({ rules: await loyalty.getRules(getSql()), defaults: { ...loyalty.DEFAULT_RULES }, limits: loyalty.RULE_LIMITS });
+const rulesText = r => `${r.enabled ? 'ligado' : 'desligado'}, ${r.points_per_real} pt/R$ 1, ${r.block_points} pts = ${r.block_value_cents} centavos`;
+A.points_get = { m: 'GET', fn: async () => ({ points: await pointsInfo() }) };
+
+// Só admin. Vale para os próximos pedidos: o que já foi creditado ou reservado não muda.
+A.points_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const before = await loyalty.getRules(getSql());
+  const r = await loyalty.saveRules(getSql(), {
+    enabled: body.enabled, points_per_real: body.points_per_real, block_points: body.block_points, block_value_cents: body.block_value_cents
+  });
+  await audit(user.username, 'pontos_regra_alterada', `${rulesText(before)} -> ${rulesText(r)}`);
+  return { ok: true, points: await pointsInfo() };
+} };
+
 // ---------- Sinônimos de ingredientes e pausa em lote com prévia (O8) ----------
 const SYN_SPEC = { canonical: v => vStr(v, 2, 60, 'Nome principal'), synonym: v => vStr(v, 2, 60, 'Sinônimo') };
 

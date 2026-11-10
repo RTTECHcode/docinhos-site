@@ -307,6 +307,12 @@
       $('#pontos-saldo').textContent = fmtPoints(p.balance);
       const blocks = Math.floor(p.balance / p.block_points);
       $('#pontos-valor').textContent = blocks > 0 ? `Dá para trocar por ${money(blocks * p.block_value_cents)} de desconto` : `Faltam ${fmtPoints(p.block_points - p.balance)} pontos para o primeiro desconto de ${money(p.block_value_cents)}`;
+      // Regra em vigor (definida no painel da loja); o servidor confere tudo na hora do pedido.
+      const perReal = p.points_per_real === 1 ? '1 ponto' : `${fmtPoints(p.points_per_real)} pontos`;
+      $('#pontos-regra-ganho').textContent = `Você ganha ${perReal} a cada R$ 1 em produtos.`;
+      $('#pontos-regra-resgate').textContent = `Cada ${fmtPoints(p.block_points)} pontos valem ${money(p.block_value_cents)} de desconto no pedido.`;
+      $('#pontos-pausado').hidden = p.points_enabled !== false;
+      if (p.points_enabled === false) $('#pontos-valor').textContent = 'Uso de pontos pausado no momento';
       const lock = $('#pontos-bloqueio');
       lock.hidden = !p.locked_until;
       if (p.locked_until) lock.textContent = `Por segurança, seus pontos estão bloqueados para uso até ${fmtDate(p.locked_until)}, porque você recuperou o acesso da conta há pouco. Você continua juntando pontos.`;

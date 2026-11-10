@@ -1,6 +1,7 @@
 const sql = require('./_lib/db');
 const { getStoreState } = require('./_lib/store-hours');
 const { getBands, maxKmOf } = require('./_lib/shipping');
+const { getRules } = require('./_lib/loyalty');
 // Produto sem preço e sem tamanho disponível: aparece, mas não pode ir para o carrinho (o pedido recusaria no fim).
 const NO_PRICE_LABEL = 'Consulte pelo WhatsApp';
 module.exports = async (req, res) => {
@@ -24,7 +25,8 @@ module.exports = async (req, res) => {
     const st = {};
     for (const s of settingRows) st[s.key] = s.value;
     // Estado da loja (horário + fechamento manual) e faixas de frete (públicas, o cliente só vê; o servidor recalcula).
-    const [store, bands] = await Promise.all([getStoreState(sql), getBands(sql)]);
+    // Regra de pontos (Ajustes do painel): só para mostrar na loja; o pedido recalcula tudo no servidor.
+    const [store, bands, rules] = await Promise.all([getStoreState(sql), getBands(sql), getRules(sql)]);
     const defaultPauseLabel = st.default_pause_label || 'volto logo <3';
     const settings = {
       storeAddress: st.store_address || 'Manoel Hare Peralta, 101',
@@ -56,7 +58,8 @@ module.exports = async (req, res) => {
     }
     const shipping = { bands, maxKm: maxKmOf(bands), pickupFeeCents: 0 };
     const storeState = { open: store.open, reason: store.reason, reopens_at: store.reopens_at, next_open_at: store.next_open_at, closes_at: store.closes_at, message: store.message };
-    res.status(200).json({ categories, settings, store: storeState, shipping });
+    const points = { enabled: rules.enabled, pointsPerReal: rules.points_per_real, blockPoints: rules.block_points, blockValueCents: rules.block_value_cents };
+    res.status(200).json({ categories, settings, store: storeState, shipping, points });
   } catch (error) { res.status(500).json({ error: 'Não foi possível carregar o cardápio' }); }
 };
 module.exports.NO_PRICE_LABEL = NO_PRICE_LABEL;

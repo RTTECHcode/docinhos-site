@@ -173,7 +173,7 @@ const A = {
     const p = await customerLib.getPoints(sql, customer.id, { limit: 50 });
     return { body: {
       balance: p.balance, reserved: p.reserved, earned_total: p.earned_total, locked_until: p.locked_until,
-      points_per_real: p.points_per_real, block_points: p.block_points, block_value_cents: p.block_value_cents,
+      points_per_real: p.points_per_real, block_points: p.block_points, block_value_cents: p.block_value_cents, points_enabled: p.points_enabled,
       history: p.history.map(h => ({
         id: Number(h.id), kind: h.kind, points: h.points, created_at: new Date(h.created_at).toISOString(),
         public_code: h.public_code || null, description: ledgerDescription(h)

@@ -10,6 +10,7 @@ const customer = require('../api/_lib/customer');
 const loyalty = require('../api/_lib/loyalty');
 
 const NAME = 'ZZ-a8 Pontos';
+const POINT_KEYS = Object.values(loyalty.RULE_KEYS);
 const Q = (t, p = []) => sql.query(t, p);
 const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
 let seq = 0;
@@ -106,7 +107,35 @@ async function cleanup() {
     // Saldo final: 300 + 25 - 100 + 10 = 235.
     const pts = await customer.getPoints(sql, c.id, { limit: 50 });
     assert.equal(pts.balance, 235, 'saldo final ' + pts.balance);
-    console.log('test-qa-points: todos os testes passaram (aprovado credita, recusado/pendente/valor errado/assinatura inválida não creditam).');
+
+    // Regra editável (Ajustes do painel). O banco dev é compartilhado: a regra fica alterada só durante estes casos.
+    const pointsSnap = await Q('select key, value from settings where key = any($1::text[])', [POINT_KEYS]);
+    try {
+      await loyalty.saveRules(sql, { enabled: true, points_per_real: 2, block_points: 50, block_value_cents: 500 });
+      // G: pedido já creditado não muda com a regra nova (notificação repetida).
+      assert.equal(await notify(a, 'approved'), 200);
+      assert.deepEqual(await ledger(a.id), ['earn:25'], 'já creditado não muda');
+      // H: aprovado depois da mudança credita pela regra em vigor: R$ 25,50 x 2 = 51.
+      const g = await mkOrder(c.id, 'G', { subtotal: 2550 });
+      assert.equal(await notify(g, 'approved'), 200);
+      assert.deepEqual(await ledger(g.id), ['earn:51'], 'regra nova: 2 pontos por R$ 1');
+      // I: resgate pela regra nova (50 pontos = R$ 5) e confirmado; ganho sobre o pago (R$ 15 x 2 = 30).
+      const i = await mkOrder(c.id, 'I', { subtotal: 2000, discount: 500, points: 50 });
+      assert.equal(await notify(i, 'approved'), 200);
+      assert.deepEqual(await ledger(i.id), ['redeem_reserve:-50', 'redeem_commit:0', 'earn:30']);
+      // J: programa desligado: aprovado confirma o resgate já reservado, mas não credita pontos novos.
+      await loyalty.saveRules(sql, { enabled: false, points_per_real: 2, block_points: 50, block_value_cents: 500 });
+      const j = await mkOrder(c.id, 'J', { subtotal: 2000, discount: 500, points: 50 });
+      assert.equal(await notify(j, 'approved'), 200);
+      assert.deepEqual(await ledger(j.id), ['redeem_reserve:-50', 'redeem_commit:0'], 'desligado não credita');
+      const bal = await customer.getPoints(sql, c.id, { limit: 5 });
+      assert.equal(bal.balance, 235 + 51 - 50 + 30 - 50, 'saldo depois da regra nova');
+      assert.deepEqual([bal.points_enabled, bal.points_per_real, bal.block_points, bal.block_value_cents], [false, 2, 50, 500]);
+    } finally {
+      await Q('delete from settings where key = any($1::text[])', [POINT_KEYS]);
+      for (const r of pointsSnap) await Q('insert into settings (key, value) values ($1, $2)', [r.key, r.value]);
+    }
+    console.log('test-qa-points: todos os testes passaram (aprovado credita, recusado/pendente/valor errado/assinatura inválida não creditam; regra editável e programa desligado).');
   } finally {
     await cleanup();
   }

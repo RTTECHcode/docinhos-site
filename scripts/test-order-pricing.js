@@ -231,4 +231,64 @@ test('preference (cartão): sem Pix, boleto, atm e pré-pago; 3x; expira em 2h',
   assert.equal(body.external_reference, 'DGX');
 });
 
+// ---------- Regra de pontos editável (api/_lib/loyalty.js, funções puras) ----------
+const loyalty = require('../api/_lib/loyalty');
+const loyaltyThrows = (fn, status, code) => {
+  try { fn(); } catch (e) { assert.ok(e instanceof loyalty.LoyaltyError, 'tipo do erro'); assert.deepEqual([e.status, e.code], [status, code]); return e; }
+  assert.fail('devia falhar');
+};
+
+test('pontos: padrão = regra antiga (1 ponto por R$ 1; 100 pontos = R$ 10)', () => {
+  assert.deepEqual({ ...loyalty.DEFAULT_RULES }, { enabled: true, points_per_real: 1, block_points: 100, block_value_cents: 1000 });
+  assert.equal(loyalty.earnPoints(2599, 0), 25);
+  assert.equal(loyalty.earnPoints(2000, 1000), 10);
+  assert.equal(loyalty.discountForPoints(300), 3000);
+  assert.equal(loyalty.maxRedeemablePoints(2599, 900), 200);
+  assert.deepEqual(loyalty.validateRedemption({ points: 100, subtotalCents: 2000, balance: 250 }), { points: 100, discount_cents: 1000 });
+});
+
+test('pontos: regra customizada muda ganho, bloco e desconto (2 pts/R$; 50 pts = R$ 5)', () => {
+  const r = { enabled: true, points_per_real: 2, block_points: 50, block_value_cents: 500 };
+  assert.equal(loyalty.earnPoints(2599, 0, r), 51);           // R$ 25,99 x 2 = 51,98 -> 51
+  assert.equal(loyalty.earnPoints(2000, 500, r), 30);
+  assert.equal(loyalty.earnPoints(300, 1000, r), 0);           // nunca negativo
+  assert.equal(loyalty.discountForPoints(150, r), 1500);
+  assert.equal(loyalty.maxRedeemablePoints(1299, 1000, r), 100); // R$ 12,99 cabe 2 blocos de R$ 5
+  assert.equal(loyalty.maxRedeemablePoints(5000, 120, r), 100);  // saldo cabe 2 blocos
+  assert.deepEqual(loyalty.validateRedemption({ points: 150, subtotalCents: 2000, balance: 200, rules: r }), { points: 150, discount_cents: 1500 });
+  const e = loyaltyThrows(() => loyalty.validateRedemption({ points: 75, subtotalCents: 2000, balance: 500, rules: r }), 400, 'invalid_block');
+  assert.match(e.message, /blocos de 50 \(50 pontos = R\$ 5,00\)/);
+});
+
+test('pontos: desconto do resgate nunca passa do valor dos produtos', () => {
+  const r = { enabled: true, points_per_real: 1, block_points: 100, block_value_cents: 5000 };
+  const e = loyaltyThrows(() => loyalty.validateRedemption({ points: 100, subtotalCents: 4999, balance: 500, rules: r }), 400, 'discount_too_big');
+  assert.match(e.message, /100 pontos \(R\$ 50,00\)/);
+  assert.deepEqual(loyalty.validateRedemption({ points: 100, subtotalCents: 5000, balance: 500, rules: r }), { points: 100, discount_cents: 5000 });
+  loyaltyThrows(() => loyalty.validateRedemption({ points: 200, subtotalCents: 1999, balance: 500 }), 400, 'discount_too_big');
+});
+
+test('pontos: programa desligado recusa resgate (409 points_disabled); sem pontos o pedido passa', () => {
+  const off = { ...loyalty.DEFAULT_RULES, enabled: false };
+  loyaltyThrows(() => loyalty.validateRedemption({ points: 100, subtotalCents: 5000, balance: 500, rules: off }), 409, 'points_disabled');
+  assert.deepEqual(loyalty.validateRedemption({ points: 0, subtotalCents: 5000, balance: 500, rules: off }), { points: 0, discount_cents: 0 });
+  loyaltyThrows(() => loyalty.validateRedemption({ points: -100, subtotalCents: 5000, balance: 500, rules: off }), 400, 'invalid_points');
+});
+
+test('pontos: validateRules aceita limites e recusa negativo, zero, fração, texto, acima do máximo e retorno > 50%', () => {
+  const ok = { enabled: true, points_per_real: 1, block_points: 100, block_value_cents: 1000 };
+  assert.deepEqual(loyalty.validateRules(ok), ok);
+  assert.deepEqual(loyalty.validateRules({ enabled: false, points_per_real: 10, block_points: 10000, block_value_cents: 10000 }).enabled, false);
+  assert.deepEqual(loyalty.validateRules({ enabled: true, points_per_real: 1, block_points: 10, block_value_cents: 500 }).block_points, 10); // 50%: no limite
+  const bads = [
+    null, [], 'x', { ...ok, enabled: 'sim' }, { ...ok, enabled: undefined },
+    { ...ok, points_per_real: 0 }, { ...ok, points_per_real: -1 }, { ...ok, points_per_real: 1.5 }, { ...ok, points_per_real: 11 }, { ...ok, points_per_real: '1' },
+    { ...ok, block_points: 9 }, { ...ok, block_points: 10001 }, { ...ok, block_points: -100 }, { ...ok, block_points: null },
+    { ...ok, block_value_cents: 99 }, { ...ok, block_value_cents: 10001 }, { ...ok, block_value_cents: -1000 }, { ...ok, block_value_cents: 10.5 },
+    { ...ok, block_points: 10, block_value_cents: 510 },          // 51% de volta
+    { enabled: true, points_per_real: 10, block_points: 100, block_value_cents: 1000 } // 100% de volta
+  ];
+  for (const b of bads) loyaltyThrows(() => loyalty.validateRules(b), 400, 'invalid_rules');
+});
+
 console.log(`\n${passed} testes passaram${process.exitCode ? ' (com falhas)' : ''}`);

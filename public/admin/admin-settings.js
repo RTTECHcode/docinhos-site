@@ -258,10 +258,98 @@
     });
   }
 
-  // ---------- Pontos (somente leitura) ----------
+  // ---------- Pontos (regra editável; o servidor valida e calcula tudo) ----------
+  const ptsWord = n => (n === 1 ? '1 ponto' : n.toLocaleString('pt-BR') + ' pontos');
+  // Percentual do valor gasto que volta em desconto (só para orientar; o limite de verdade é do servidor).
+  const returnPct = r => (r.points_per_real * r.block_value_cents) / r.block_points;
+  const pctText = r => returnPct(r).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+
   function pointsCard() {
-    return el('div', { class: 'card stack' }, el('p', { text: 'Cada R$ 1,00 pago (sem o frete) vale 1 ponto.' }), el('p', { text: '100 pontos valem R$ 10,00 de desconto.' }),
-      el('p', { class: 'muted small', text: 'Essa regra é fixa no sistema e hoje não pode ser alterada por aqui.' }));
+    const box = el('div', { class: 'card stack' }, DG.loading());
+    const load = async () => {
+      const r = await DG.api('points_get').catch(() => null);
+      if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar a regra de pontos.' })); return; }
+      const p = r.points, x = p.rules;
+      box.replaceChildren(
+        el('div', { class: 'row between' }, el('strong', { text: 'Programa de pontos' }),
+          el('span', { class: 'pill ' + (x.enabled ? 'ok' : 'off'), text: x.enabled ? 'Ligado' : 'Desligado' })),
+        el('dl', { class: 'kv' },
+          el('dt', { text: 'Ganho' }), el('dd', { text: ptsWord(x.points_per_real) + ' a cada R$ 1,00 pago (sem o frete)' }),
+          el('dt', { text: 'Resgate' }), el('dd', { text: ptsWord(x.block_points) + ' = ' + DG.money(x.block_value_cents) + ' de desconto' }),
+          el('dt', { text: 'Volta' }), el('dd', { text: 'cerca de ' + pctText(x) + ' do valor gasto' })),
+        x.enabled ? null : el('p', { class: 'a5-warn wrap', text: 'Desligado: os clientes não ganham pontos novos e não podem usar pontos. O saldo de cada um fica guardado.' }),
+        isAdmin() ? el('button', { class: 'btn block', type: 'button', text: 'Editar pontos', on: { click: () => pointsSheet(p, load) } })
+          : el('p', { class: 'muted small', text: 'Só o administrador edita a regra de pontos.' }));
+    };
+    load();
+    return box;
+  }
+
+  function pointsSheet(p, onSaved) {
+    DG.sheet('Regra de pontos', (body, close) => {
+      const L = p.limits, D = p.defaults;
+      const state = { ...p.rules };
+      const num = (value, [min, max], label) => el('input', { type: 'number', inputmode: 'numeric', min, max, step: 1, value: String(value), 'aria-label': label });
+      const perReal = num(state.points_per_real, L.points_per_real, 'Pontos por R$ 1,00');
+      const block = num(state.block_points, L.block_points, 'Pontos por resgate');
+      const value = el('input', { type: 'text', inputmode: 'decimal', value: DG.moneyInput(state.block_value_cents), 'aria-label': 'Desconto por resgate em reais' });
+      const stateTxt = el('span', { class: 'state ' + (state.enabled ? 'on' : 'off'), text: state.enabled ? 'Ligado' : 'Desligado' });
+      // Só muda o rascunho; grava no "Salvar pontos".
+      const sw = DG.switchEl(state.enabled, 'Programa de pontos ligado', async next => {
+        state.enabled = next; stateTxt.textContent = next ? 'Ligado' : 'Desligado'; stateTxt.className = 'state ' + (next ? 'on' : 'off'); return true;
+      }, true);
+      const preview = el('p', { class: 'muted small wrap', 'aria-live': 'polite' });
+      const msg = el('p', { class: 'error wrap', hidden: true });
+
+      // Lê os campos. Retorna { rules } ou { problem } (mensagem para a tela).
+      const read = () => {
+        const ints = [[perReal, L.points_per_real, 'Pontos por R$ 1,00'], [block, L.block_points, 'Pontos por resgate']].map(([input, [min, max], label]) => {
+          const n = Number(input.value);
+          return Number.isInteger(n) && n >= min && n <= max ? n : label + ': use um número inteiro de ' + min + ' a ' + max + '.';
+        });
+        const bad = ints.find(v => typeof v === 'string');
+        if (bad) return { problem: bad };
+        const cents = DG.parseMoney(value.value);
+        const [vmin, vmax] = L.block_value_cents;
+        if (cents === null || Number.isNaN(cents) || cents < vmin || cents > vmax) return { problem: 'Desconto por resgate: use um valor de ' + DG.money(vmin) + ' a ' + DG.money(vmax) + '.' };
+        const rules = { enabled: state.enabled, points_per_real: ints[0], block_points: ints[1], block_value_cents: cents };
+        if (returnPct(rules) > L.max_return_pct) return { problem: 'Com essa regra o cliente receberia mais de ' + L.max_return_pct + '% do valor gasto de volta. Aumente os pontos por resgate ou diminua o desconto.' };
+        return { rules };
+      };
+      const paintPreview = () => {
+        const { rules } = read();
+        if (!rules) { preview.textContent = ''; return; }
+        const spend = Math.ceil(rules.block_points / rules.points_per_real);
+        preview.textContent = 'Exemplo: uma compra de ' + DG.money(5000) + ' rende ' + ptsWord(50 * rules.points_per_real) + '. Para ganhar '
+          + DG.money(rules.block_value_cents) + ' de desconto o cliente precisa gastar ' + DG.money(spend * 100) + ' (volta cerca de ' + pctText(rules) + ').';
+      };
+      for (const i of [perReal, block, value]) i.addEventListener('input', () => { msg.hidden = true; paintPreview(); });
+      paintPreview();
+
+      const save = el('button', { class: 'btn primary block', type: 'button', text: 'Salvar pontos' });
+      save.addEventListener('click', async () => {
+        const { rules, problem } = read();
+        if (problem) { msg.textContent = problem; msg.hidden = false; return; }
+        if (p.rules.enabled && !rules.enabled && !(await DG.confirm('Desligar o programa de pontos? Os clientes param de ganhar e de usar pontos até você ligar de novo. O saldo deles fica guardado.', 'Desligar', true))) return;
+        msg.hidden = true; save.disabled = true;
+        const r = await DG.run(() => DG.api('points_save', { body: rules }), 'Regra de pontos salva.');
+        if (r) { close(); onSaved(); } else save.disabled = false;
+      });
+      const reset = el('button', { class: 'btn block', type: 'button', text: 'Voltar ao padrão', on: { click: () => {
+        perReal.value = String(D.points_per_real); block.value = String(D.block_points); value.value = DG.moneyInput(D.block_value_cents);
+        msg.hidden = true; paintPreview(); DG.toast('Valores padrão preenchidos. Lembre de salvar.');
+      } } });
+
+      body.append(
+        el('div', { class: 'card row between' }, el('div', { class: 'grow' }, el('strong', { text: 'Programa de pontos' }), el('p', {}, stateTxt)), sw),
+        el('label', { class: 'field' }, el('span', { text: 'Pontos ganhos a cada R$ 1,00 pago (' + L.points_per_real[0] + ' a ' + L.points_per_real[1] + ')' }), perReal),
+        el('div', { class: 'grid2' },
+          el('label', { class: 'field' }, el('span', { text: 'Pontos por resgate' }), block),
+          el('label', { class: 'field' }, el('span', { text: 'Desconto (R$)' }), value)),
+        preview,
+        el('p', { class: 'muted small wrap', text: 'Vale para os próximos pagamentos aprovados. Pontos já creditados e descontos já usados não mudam. O desconto nunca passa do valor dos produtos do pedido.' }),
+        msg, save, reset);
+    });
   }
 
   // ---------- Etiqueta padrão da pausa ----------
