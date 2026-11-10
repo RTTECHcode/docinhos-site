@@ -16,7 +16,7 @@ Status: pendente | andamento | feito | bloqueado
 | M1-M5 | pendente | a5-settings | F3 |
 | C2-C8 | pendente | a6-store | F3 |
 | U1-U6 | pendente | a10-account | F3, revisão A1 antes do merge |
-| R0 | andamento | a11-promo-doc | só documento |
+| R0 | feito | a11-promo-doc | merge; docs/planos/promocoes-whatsapp.md; preços Meta a confirmar |
 | V1-V3 | pendente | a7-design | F4 |
 | Acabamento | pendente | a9-polish | F5 |
 | QA | pendente | — | F5 |

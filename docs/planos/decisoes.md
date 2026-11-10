@@ -27,3 +27,8 @@ Futuro: e-mail ou WhatsApp substituem ou complementam a pergunta.
 - B1 do checklist do QA = C1 (bug do carrinho). Usar só C1.
 - Retirada tem frete R$ 0 (O5).
 - Faixas de frete: valores de exemplo até o Renan definir no admin.
+
+## 2026-11-10 — Consentimento de WhatsApp no cadastro (U1), vindo do plano R0
+- Caixa separada, opcional, nunca pré-marcada, com link da política de privacidade e opção de sair ("SAIR" ou pela conta).
+- Gravar versão do texto, data, IP e origem; histórico de aceite/saída/retorno em customer_consent_events.
+- Campo para dupla confirmação futura; telefone em E.164; dia e mês de nascimento opcionais.
