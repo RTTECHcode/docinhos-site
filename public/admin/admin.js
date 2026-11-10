@@ -196,6 +196,10 @@
     DG.go(DG.state.tab);
   }
 
+  // Rótulos em pt-BR para eventos da atividade; os de AUDIT_WARN aparecem em destaque (pedem ação de alguém).
+  const AUDIT_LABELS = { pagamento_apos_cancelamento: 'Pagamento recebido após cancelamento – verificar devolução' };
+  const AUDIT_WARN = new Set(['pagamento_apos_cancelamento']);
+
   // ---- aba Conta ----
   DG.tabs.account = {
     async render(view) {
@@ -209,7 +213,8 @@
       DG.api('audit').then(r => {
         const box = $('#audit-box');
         if (!box) return;
-        box.replaceChildren(...(r.rows.length ? r.rows.map(a => el('div', { class: 'audit' }, el('strong', { text: a.action.replace(/_/g, ' ') }),
+        box.replaceChildren(...(r.rows.length ? r.rows.map(a => el('div', { class: 'audit' + (AUDIT_WARN.has(a.action) ? ' warn' : ''), role: AUDIT_WARN.has(a.action) ? 'note' : null },
+          el('strong', { text: AUDIT_LABELS[a.action] || a.action.replace(/_/g, ' ') }),
           el('span', { class: 'muted wrap', text: DG.fmtDate(a.at) + ' - ' + (a.username || 'sistema') + (a.detail ? ' - ' + a.detail : '') }))) : [DG.empty('Nada registrado ainda.')]));
       }).catch(() => {});
       if (u.role === 'admin') loadUsers();

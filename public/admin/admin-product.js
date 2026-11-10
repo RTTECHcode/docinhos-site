@@ -143,11 +143,12 @@
           c.kind === 'additional' ? el('label', { class: 'field' }, el('span', { text: 'Grupo' }), group) : null,
           el('button', { class: 'btn primary block', type: 'button', text: 'Salvar', on: { click: async () => {
             const payload = { product_id: product.id, complement_id: c.id, paused: l.paused, max_quantity: Number(maxQ.value) || 1, group_id: group.value ? Number(group.value) : null };
-            if (await DG.run(() => DG.api('link_save', { body: payload }), 'Salvo.')) {
-              // atualiza na hora, no mesmo lugar da lista, sem esperar o servidor (B4)
-              l.max_quantity = payload.max_quantity; l.group_id = payload.group_id;
-              close(); paintKeepScroll(); refresh();
-            }
+            // B4: atualização otimista. Fecha e repinta na hora; se o servidor recusar, volta ao valor anterior e mostra o erro.
+            const prev = { max_quantity: l.max_quantity, group_id: l.group_id };
+            l.max_quantity = payload.max_quantity; l.group_id = payload.group_id;
+            close(); paintKeepScroll();
+            if (await DG.run(() => DG.api('link_save', { body: payload }), 'Salvo.')) refresh();
+            else { Object.assign(l, prev); paintKeepScroll(); }
           } } }),
           el('button', { class: 'btn danger block', type: 'button', text: 'Desvincular', on: { click: async () => {
             if (!(await DG.confirm('Desvincular ' + c.name + ' deste produto?', 'Desvincular', true))) return;
@@ -199,18 +200,39 @@
       const order = el('input', { type: 'number', inputmode: 'numeric', min: 0, value: String(product.sort_order) });
       // P2 / B2: produto novo leva "active" no Criar. Produto existente chama product_toggle na hora (a API já suporta) e o
       // "Salvar alterações" NÃO reenvia "active", então um valor antigo do modal nunca reativa um item pausado.
+      // Produto ativo precisa de preço ou de pelo menos um tamanho vinculado (senão a loja não tem o que cobrar).
+      const hasSizes = () => !isNew && catalog.links.some(l => l.product_id === product.id && (catalog.complements.find(c => c.id === l.complement_id) || {}).kind === 'size');
+      const NO_PRICE_MSG = isNew
+        ? 'Informe o preço. Se o produto vai ter tamanhos, desligue "Disponível no cardápio", crie o item e vincule os tamanhos antes de ativar.'
+        : 'Este produto está sem preço e sem tamanhos. Informe o preço ou vincule um tamanho antes de deixá-lo disponível.';
+      const priceMissing = () => { const p = DG.parseMoney(price.value); return (p === null || Number.isNaN(p)) && !hasSizes(); };
       const active = DG.switchEl(product.active, 'Produto ativo', async next => {
+        if (next && priceMissing()) { DG.toast(NO_PRICE_MSG, true); return false; }
         if (isNew) { product.active = next; return true; }
         const r = await DG.run(() => DG.api('product_toggle', { body: { id: product.id, active: next } }), next ? 'Produto ativado.' : 'Produto pausado.');
         if (!r) return false;
         product.active = next; syncCatalog({ active: next }); changed = true;
         return true;
       });
-      // TODO(O2): aqui entra o campo "texto da pausa" (ex.: "volto logo <3"), quando o backend (fase F2) tiver o campo novo.
+      // O2: texto próprio da pausa ("volto logo"). Vazio = usa a etiqueta padrão (Ajustes), mostrada como exemplo.
+      // Gravado por product_pause (mantém o estado de pausa atual); só existe depois de criar o produto.
+      const defaultLabel = (catalog.settings && catalog.settings.defaultPauseLabel) || 'volto logo <3';
+      const pauseLabel = isNew ? null : el('input', { type: 'text', maxlength: 60, placeholder: defaultLabel, value: product.pause_label || '' });
       const saveBtn = el('button', { class: 'btn primary block', type: 'button', text: isNew ? 'Criar item' : 'Salvar alterações' });
       saveBtn.addEventListener('click', async () => {
         const cents = DG.parseMoney(price.value);
         if (Number.isNaN(cents)) { DG.toast('Preço inválido. Use o formato 12,50.', true); return; }
+        if (product.active && priceMissing()) { DG.toast(NO_PRICE_MSG, true); return; }
+        if (pauseLabel) {
+          const label = pauseLabel.value.trim();
+          if (label !== (product.pause_label || '')) {
+            saveBtn.disabled = true;
+            const pr = await DG.run(() => DG.api('product_pause', { body: { id: product.id, paused: !!product.paused, pause_label: label || null } }));
+            saveBtn.disabled = false;
+            if (!pr) return;
+            product.pause_label = pr.product.pause_label; syncCatalog({ pause_label: pr.product.pause_label }); changed = true;
+          }
+        }
         const payload = { name: name.value, description: desc.value, price_cents: cents, category_id: Number(cat.value), sort_order: Number(order.value) || 0 };
         if (isNew) payload.active = product.active; else payload.id = product.id;
         saveBtn.disabled = true;
@@ -228,13 +250,15 @@
         el('label', { class: 'field' }, el('span', { text: 'Descrição' }), desc),
         el('div', { class: 'grid2' }, el('label', { class: 'field' }, el('span', { text: 'Preço (R$)' }), price), el('label', { class: 'field' }, el('span', { text: 'Ordem' }), order)),
         el('label', { class: 'field' }, el('span', { text: 'Categoria' }), cat),
-        el('div', { class: 'card row between' }, el('div', {}, el('strong', { text: 'Disponível no cardápio' }), el('p', { class: 'muted small', text: 'Desligue para pausar' })), active)];
+        el('div', { class: 'card row between' }, el('div', {}, el('strong', { text: 'Disponível no cardápio' }), el('p', { class: 'muted small', text: 'Desligue para pausar' })), active),
+        pauseLabel ? el('label', { class: 'field' }, el('span', { text: 'Texto da pausa (aparece quando o produto está em pausa)' }), pauseLabel,
+          el('small', { class: 'muted', text: 'Deixe vazio para usar o texto padrão: "' + defaultLabel + '".' })) : null];
       if (isNew) {
         // P1: "Criar item" no topo, visível sem rolar.
-        body.append(saveBtn, ...fields, el('p', { class: 'muted small', text: 'Depois de criar, você poderá enviar a foto e vincular complementos.' }));
+        body.append(saveBtn, ...fields.filter(Boolean), el('p', { class: 'muted small', text: 'Depois de criar, você poderá enviar a foto e vincular complementos.' }));
       } else {
         // P1: "Salvar alterações" logo depois do bloco da foto.
-        body.append(...fields, photoBox(product, () => { changed = true; syncCatalog({ image_path: product.image_path }); }), saveBtn, linksBox(product, catalog),
+        body.append(...fields.filter(Boolean), photoBox(product, () => { changed = true; syncCatalog({ image_path: product.image_path }); }), saveBtn, linksBox(product, catalog),
           el('button', { class: 'btn danger block', type: 'button', text: 'Excluir produto', on: { click: async () => {
             if (!(await DG.confirm('Excluir "' + product.name + '" de vez? Pedidos antigos não são afetados.', 'Excluir', true))) return;
             if (await DG.run(() => DG.api('product_delete', { body: { id: product.id } }), 'Produto excluído.')) { changed = true; close(); }
