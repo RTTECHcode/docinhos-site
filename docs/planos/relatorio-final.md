@@ -26,7 +26,7 @@ Preview: https://docinhos-site-2da5ohigw-renantmgame-7908s-projects.vercel.app (
 - Visual: identidade preservada, painel com o topo de chocolate da loja, contraste AA, botões de 44px.
 
 ## Como testar
-- Testes: `node -r ./scripts/dev-env.js scripts/test-<nome>.js` (11 arquivos em scripts/). Última rodada completa (A2, mesmo backend): todos passaram. Rodada final do orquestrador interrompida por falta de memória do PC; repetir antes do merge na main.
+- Testes: `node -r ./scripts/dev-env.js scripts/test-<nome>.js` (12 arquivos em scripts/). Rodada final do orquestrador (10/11): todos passaram.
 - Navegador: abrir o Preview no celular e no computador.
 
 ## Antes de publicar em produção (ordem importa)
@@ -41,9 +41,8 @@ Preview: https://docinhos-site-2da5ohigw-renantmgame-7908s-projects.vercel.app (
 
 ## Riscos e pendências
 - Pagamento real e frete real não foram testados de ponta a ponta (MP dev responde 401; origem falsa no banco dev).
-- Banco dev com frete, origem e etiqueta alterados por um teste interrompido; corrigir na aba Ajustes do Preview.
 - Limite de consultas em acompanhamento e cotação fica na memória da função (fraco na Vercel; risco baixo).
-- OWASP ZAP não rodou: sem Docker/Java.
+- OWASP ZAP passivo (local, 10/11): 0 Alto, 1 Médio (fonte do Google sem SRI, aceito: o Google não fornece hash estável), 6 informativos. Formulários ganharam method="post" para senha nunca ir na URL. Varredura ativa (ataque) não rodou.
 - GitHub: ligar secret scanning com push protection e Dependabot.
 - Página "Quem somos" aguarda textos da Gigi.
 - Regra de pontos fixa no código; editar pelo painel exige trabalho novo.

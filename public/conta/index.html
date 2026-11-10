@@ -36,7 +36,7 @@
   <section id="view-entrar" class="panel" data-view="entrar" hidden aria-labelledby="t-entrar">
     <h1 id="t-entrar" class="panel-title" tabindex="-1">Entrar</h1>
     <p class="muted">Entre para ver seus pedidos e seus pontos. Você também pode comprar sem conta.</p>
-    <form id="form-entrar" novalidate autocomplete="on">
+    <form method="post" id="form-entrar" novalidate autocomplete="on">
       <label class="field">Telefone com DDD
         <input name="phone" type="tel" inputmode="tel" autocomplete="username" placeholder="(11) 91234-5678" maxlength="20" required data-phone>
       </label>
@@ -54,7 +54,7 @@
   <section id="view-cadastro" class="panel" data-view="cadastro" hidden aria-labelledby="t-cadastro">
     <h1 id="t-cadastro" class="panel-title" tabindex="-1">Criar conta</h1>
     <p class="muted">Com a conta você junta pontos a cada compra paga. Comprar sem conta continua possível.</p>
-    <form id="form-cadastro" novalidate autocomplete="on">
+    <form method="post" id="form-cadastro" novalidate autocomplete="on">
       <label class="field">Seu nome
         <input name="name" autocomplete="name" placeholder="Ex.: Maria Souza" maxlength="80" required>
       </label>
@@ -115,7 +115,7 @@
     <h1 id="t-recuperar" class="panel-title" tabindex="-1">Recuperar acesso</h1>
     <div id="rec-etapa1">
       <p class="muted">Informe o telefone da conta. Vamos mostrar a pergunta de segurança que você escolheu no cadastro.</p>
-      <form id="form-rec1" novalidate>
+      <form method="post" id="form-rec1" novalidate>
         <label class="field">Telefone com DDD
           <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(11) 91234-5678" maxlength="20" required data-phone>
         </label>
@@ -124,7 +124,7 @@
       </form>
     </div>
     <div id="rec-etapa2" hidden>
-      <form id="form-rec2" novalidate autocomplete="off">
+      <form method="post" id="form-rec2" novalidate autocomplete="off">
         <p class="question-box"><span class="question-label">Sua pergunta</span><strong id="rec-pergunta"></strong></p>
         <label class="field">Sua resposta
           <input name="answer" autocomplete="off" autocapitalize="none" maxlength="200" required>
@@ -208,7 +208,7 @@
 
       <div class="subpanel">
         <h2>Trocar senha</h2>
-        <form id="form-senha" novalidate autocomplete="off">
+        <form method="post" id="form-senha" novalidate autocomplete="off">
           <label class="field">Senha atual
             <input name="current_password" type="password" autocomplete="current-password" maxlength="128" required>
           </label>
