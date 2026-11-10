@@ -138,11 +138,14 @@ const insertRow = (sql, { customerId, orderId, kind, points, note }) =>
  *  refunded | charged_back           -> estorno (tira o ganho, devolve o gasto)
  */
 async function onPaymentStatus(sql, orderId) {
-  const [o] = await sql.query('select id, customer_id, subtotal_cents, discount_cents, points_redeemed, payment_status from orders where id = $1', [orderId]);
+  const [o] = await sql.query('select id, customer_id, subtotal_cents, discount_cents, points_redeemed, payment_status, fulfillment_status from orders where id = $1', [orderId]);
   if (!o || !o.customer_id) return { applied: [] };
   const applied = [];
   const customerId = o.customer_id;
   const status = o.payment_status;
+  // Pedido cancelado que recebe pagamento aprovado depois: NÃO credita pontos nem cobra de novo o resgate devolvido.
+  // O dinheiro precisa ser estornado à mão no Mercado Pago (o webhook grava o aviso na auditoria).
+  if (status === 'approved' && o.fulfillment_status === 'cancelled') return { applied, skipped: 'cancelled' };
   if (status === 'approved') {
     const rows = await orderRows(sql, orderId);
     const has = k => rows.some(r => r.kind === k);

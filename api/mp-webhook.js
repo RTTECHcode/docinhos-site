@@ -127,6 +127,9 @@ module.exports = async (req, res) => {
     );
     // Pontos (O11): só chega aqui com moeda e valor conferidos. Idempotente: aprovado credita e confirma o resgate;
     // rejeitado/cancelado devolve a reserva; estornado reverte. Roda a cada notificação para consertar execução interrompida.
+    // Pedido já cancelado e pagamento aprovado depois: os pontos não são creditados (loyalty.onPaymentStatus) e o admin
+    // recebe um aviso na auditoria (Atividade) para estornar à mão. Nada é estornado automaticamente no Mercado Pago.
+    await noteCancelledPaid(sql, order.id, String(pay.id));
     await require('./_lib/loyalty').onPaymentStatus(sql, order.id);
     return res.status(200).json({ ok: true });
   } catch (error) {
@@ -135,4 +138,18 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { parseSignature, verifySignature, tsToSeconds, parseNotification, paymentMethodOf };
+// Grava no máximo um aviso por pedido + pagamento (o Mercado Pago reenvia a mesma notificação várias vezes).
+const CANCELLED_PAID_ACTION = 'pagamento_apos_cancelamento';
+async function noteCancelledPaid(sql, orderId, paymentId) {
+  await sql.query(
+    `insert into admin_audit (username, action, detail)
+     select 'mercadopago', $2::text,
+            'Pedido ' || public_code || ' estava cancelado e recebeu pagamento aprovado (pagamento ' || $3::text || '). '
+            || 'Pontos não creditados. Estorne o valor manualmente no Mercado Pago.'
+       from orders
+      where id = $1 and fulfillment_status = 'cancelled' and payment_status = 'approved'
+        and not exists (select 1 from admin_audit where action = $2::text and detail like 'Pedido ' || orders.public_code || ' %(pagamento ' || $3::text || ')%')`,
+    [orderId, CANCELLED_PAID_ACTION, paymentId]);
+}
+
+module.exports._internal = { CANCELLED_PAID_ACTION, noteCancelledPaid, parseSignature, verifySignature, tsToSeconds, parseNotification, paymentMethodOf };
