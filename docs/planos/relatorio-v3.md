@@ -47,17 +47,19 @@ Revisão de segurança (A1) dos endpoints novos: aprovada. As ressalvas foram co
 
 QA (A6): _em andamento_. O resultado vai para `docs/planos/qa-v3.md`.
 
-## 3. Passos de produção (para você aprovar, nesta ordem)
+## 3. Passos de produção
 
-1. **Horários antes de tudo.** Hoje a tabela de horários da produção está VAZIA. Com a regra nova, a loja abriria FECHADA logo depois do deploy. Cadastre os horários no admin atual, antes do deploy. Com o código de hoje, isso não muda nada para o cliente.
-2. **Segredo do webhook.** No Mercado Pago, abra Suas integrações, escolha a aplicação e vá em Webhooks. Copie a **assinatura secreta**. Na Vercel, abra Settings e depois Environment Variables. Troque `MERCADOPAGO_WEBHOOK_SECRET` em **Production** por esse valor, sem espaços. Ele só vale depois do próximo deploy.
-3. **Migrações no banco de produção** (você roda, uma por vez):
-   - `! node --env-file=.env scripts/migrate-2026-11-10-v3-schema.js`
-   - `! node --env-file=.env scripts/migrate-2026-11-10-v3-categoria-familia.js`
-   As duas são só aditivas e podem rodar com o site no ar.
-4. **Publicar**: juntar `ajustes-v3` na `main` e enviar (push). A Vercel publica sozinha.
-5. **Corrigir DG-7747 e DG-5401**: no admin, abra cada pedido e clique em **Conferir pagamento**. O site consulta o Mercado Pago e marca como pago, com pontos, se o valor bater.
-6. **Teste rápido depois de publicar**: faça um Pix de valor baixo, veja a tela mudar sozinha e o pedido virar pago no admin. No painel do Mercado Pago, o histórico de Webhooks deve mostrar 200.
+Já feitos em 11/11, com sua autorização:
+- Segredo do webhook trocado por você na Vercel (Production e Preview) e no `.env`.
+- Migrações `migrate-2026-11-10-v3-schema.js` e `migrate-2026-11-10-v3-categoria-familia.js` rodadas no banco de produção. As duas são só aditivas, e o código atual continua funcionando.
+- Horários de produção temporários: 00:00 às 23:59 todos os dias. Assim a loja não fecha sozinha com a regra nova. Cadastre os horários reais quando quiser.
+- Senha do usuário `admin` redefinida para a que você pediu. Ela foi marcada como fraca, e o painel avisa até você trocar. **Troque logo:** 4 números é pouco para um painel na internet.
+
+Faltam (você faz, nesta ordem):
+1. **Publicar**: juntar `ajustes-v3` na `main` e enviar (push). A Vercel publica sozinha. O segredo novo do webhook só passa a valer nesse deploy, porque variável da Vercel exige deploy novo. Tentei fazer um redeploy antes, mas o Claude Code bloqueia deploy de produção.
+2. **Corrigir DG-7747 e DG-5401**: no admin, abra cada pedido e clique em **Conferir pagamento**. O site consulta o Mercado Pago e marca como pago, com pontos, se o valor bater.
+3. **Teste rápido depois de publicar**: faça um Pix de valor baixo, veja a tela mudar sozinha e o pedido virar pago no admin. No Mercado Pago, abra Suas integrações e depois Webhooks: o histórico deve mostrar 200.
+4. Cadastrar os horários reais e trocar a senha do admin.
 
 ## 4. Como testar antes de publicar
 
