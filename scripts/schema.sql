@@ -71,6 +71,13 @@ create table if not exists admin_users (
      created_at timestamptz not null default now(),
      last_login_at timestamptz
    );
+-- v3 D1: endereço do cliente (1 por conta). Preenche o checkout. Migração: scripts/migrate-2026-11-10-v3-schema.js
+alter table customers add column if not exists address_cep text;
+alter table customers add column if not exists address_street text;
+alter table customers add column if not exists address_number text;
+alter table customers add column if not exists address_complement text;
+alter table customers add column if not exists address_district text;
+alter table customers add column if not exists address_city text;
 alter table admin_users add column if not exists active boolean not null default true;
 create table if not exists admin_sessions (
      token_hash text primary key,
@@ -235,6 +242,8 @@ create table if not exists loyalty_ledger (
 create unique index if not exists loyalty_ledger_order_kind_uq on loyalty_ledger(order_id, kind) where order_id is not null;
 create index if not exists loyalty_ledger_customer_idx on loyalty_ledger(customer_id, created_at);
 alter table products add column if not exists paused boolean not null default false;
+-- OBSOLETO (v3 D6): products.pause_label, settings 'default_pause_label', ingredient_pause_batches.pause_label e ingredient_pause_items.prev_pause_label.
+-- A etiqueta da pausa agora é fixa (a API só informa paused: true). As colunas e a chave continuam no banco, mas ninguém lê nem grava.
 alter table products add column if not exists pause_label text;
 create table if not exists store_hours (
      id serial primary key,
@@ -257,6 +266,15 @@ create table if not exists geocode_cache (
      lat double precision not null,
      lon double precision not null,
      display text,
+     created_at timestamptz not null default now()
+   );
+-- v3 D3: cache de CEP -> endereço (ViaCEP). Só CEP encontrado; expira em 90 dias (lido em api/_lib/shipping.js lookupCep)
+create table if not exists cep_cache (
+     cep text primary key,
+     logradouro text not null default '',
+     bairro text not null default '',
+     localidade text not null default '',
+     uf text not null default '',
      created_at timestamptz not null default now()
    );
 create table if not exists route_cache (
@@ -299,6 +317,6 @@ create table if not exists ingredient_pause_items (
    );
 create index if not exists ingredient_pause_items_batch_idx on ingredient_pause_items (batch_id);
 create index if not exists ingredient_pause_items_product_idx on ingredient_pause_items (product_id, complement_id);
-insert into settings (key, value) values ('default_pause_label', 'volto logo <3') on conflict (key) do nothing;
+-- (v3 D6) a chave 'default_pause_label' não é mais criada nem lida (obsoleta).
 insert into settings (key, value) values ('shipping_bands', '[{"max_km":3,"fee_cents":600},{"max_km":6,"fee_cents":900},{"max_km":10,"fee_cents":1400}]') on conflict (key) do nothing;
 insert into settings (key, value) values ('store_origin_address', 'Rua Manoel Hare Peralta, 101, Ayrosa, Osasco, SP') on conflict (key) do nothing;

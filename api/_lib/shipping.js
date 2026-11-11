@@ -198,6 +198,32 @@ async function routeKm(sql, origin, dest) {
   }
 }
 
+// ---------- CEP -> endereço (v3 D3) ----------
+// Devolve rua, bairro, cidade e UF de um CEP. Reaproveita fetchViaCep (a mesma consulta do frete) e guarda o resultado
+// na tabela cep_cache (scripts/migrate-2026-11-10-v3-schema.js) por CEP_CACHE_DAYS dias, para não repetir chamadas ao ViaCEP.
+// Só guarda CEP encontrado (CEP inexistente não vai para o cache, e o limite por IP já segura quem insiste).
+// Erros: 400 invalid_cep; 404 cep_not_found; 503 cep_unavailable (ViaCEP fora do ar: o front deixa preencher à mão).
+const CEP_CACHE_DAYS = 90;
+async function lookupCep(sql, input) {
+  const cep = normalizeCep(input);
+  if (!cep) throw new ShippingError(400, 'Informe o CEP com 8 números.', 'invalid_cep');
+  const view = r => ({ cep, street: r.logradouro || '', district: r.bairro || '', city: r.localidade || '', uf: r.uf || '' });
+  const [hit] = await sql.query(
+    `select logradouro, bairro, localidade, uf from cep_cache where cep = $1 and created_at > now() - make_interval(days => $2::int)`, [cep, CEP_CACHE_DAYS]);
+  if (hit) return view(hit);
+  let via;
+  try { via = await fetchViaCep(cep); } catch (e) {
+    console.error('cep: ViaCEP falhou:', e.message);
+    throw new ShippingError(503, 'Não foi possível consultar o CEP agora. Preencha o endereço à mão.', 'cep_unavailable');
+  }
+  if (!via) throw new ShippingError(404, 'CEP não encontrado. Confira o número ou preencha o endereço à mão.', 'cep_not_found');
+  await sql.query(
+    `insert into cep_cache (cep, logradouro, bairro, localidade, uf) values ($1, $2, $3, $4, $5)
+     on conflict (cep) do update set logradouro = excluded.logradouro, bairro = excluded.bairro, localidade = excluded.localidade, uf = excluded.uf, created_at = now()`,
+    [cep, via.logradouro.slice(0, 200), via.bairro.slice(0, 120), via.localidade.slice(0, 120), via.uf.slice(0, 2)]);
+  return view(via);
+}
+
 // Teto global de consultas externas novas (cada endereço novo vira uma linha em geocode_cache).
 async function tooManyNewLookups(sql) {
   const [{ n }] = await sql.query(`select count(*)::int n from geocode_cache where created_at > now() - interval '1 minute'`);
@@ -252,5 +278,5 @@ async function quoteDelivery(sql, input) {
 module.exports = {
   USER_AGENT, DEFAULT_BANDS, DEFAULT_ORIGIN_ADDRESS, STRAIGHT_LINE_FACTOR, ShippingError, setFetch,
   normalizeCep, extractNumber, validateBands, getBands, saveBands, bandForKm, maxKmOf, haversineKm,
-  getOrigin, setOrigin, routeKm, geocode, fetchViaCep, quoteDelivery, MAX_NEW_LOOKUPS_PER_MINUTE, tooManyNewLookups
+  getOrigin, setOrigin, routeKm, geocode, fetchViaCep, lookupCep, CEP_CACHE_DAYS, quoteDelivery, MAX_NEW_LOOKUPS_PER_MINUTE, tooManyNewLookups
 };

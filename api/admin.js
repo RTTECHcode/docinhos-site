@@ -30,8 +30,8 @@ const DEFAULT_SETTINGS = {
   store_address: 'Manoel Hare Peralta, 101',
   delivery_fee_cents: '0',
   store_paused: '0',
-  store_paused_message: 'Estamos com os pedidos pausados no momento. Volte em instantes!',
-  default_pause_label: 'volto logo <3'
+  store_paused_message: 'Estamos com os pedidos pausados no momento. Volte em instantes!'
+  // default_pause_label: OBSOLETO (D6, v3). A etiqueta da pausa agora é fixa; a chave pode existir no banco, mas ninguém lê nem grava.
 };
 
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
@@ -463,7 +463,7 @@ async function getSettings() {
   return out;
 }
 const publicSettings = s => ({ storeAddress: s.store_address, deliveryFeeCents: Number(s.delivery_fee_cents) || 0,
-  storePaused: s.store_paused === '1', storePausedMessage: s.store_paused_message, defaultPauseLabel: s.default_pause_label });
+  storePaused: s.store_paused === '1', storePausedMessage: s.store_paused_message });
 const setSetting = (key, value) => q('insert into settings (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value', [key, String(value)]);
 async function getPinned() {
   const r = await q(`select value from settings where key = 'pinned_complements'`);
@@ -505,7 +505,7 @@ A.me = { m: 'GET', fn: async ({ user }) => ({ user: { username: user.username, r
 A.catalog = { m: 'GET', fn: async () => {
   const [categories, products, complements, links, groups, pinned, settings] = await Promise.all([
     q('select id, name, sort_order, active from categories order by sort_order, id'),
-    q('select id, category_id, name, description, price_cents, image_path, active, sort_order, paused, pause_label from products order by sort_order, name'),
+    q('select id, category_id, name, description, price_cents, image_path, active, sort_order, paused from products order by sort_order, name'),
     q(`select c.id, c.name, c.price_cents, c.kind, c.active,
               (select count(*) from product_complements pc where pc.complement_id = c.id)::int as uses
          from complements c order by uses desc, c.name`),
@@ -1014,37 +1014,31 @@ A.recovery_codes_new = { m: 'POST', fn: async ({ body, user }) => {
 
 // ---------- Pausa de produtos (O2) ----------
 // "paused" (volto logo) é diferente de "active" (ativo/oculto): produto pausado continua aparecendo no cardápio, sem poder ser pedido.
+// D6 (v3): a etiqueta da pausa é fixa; `pause_label` no corpo é ignorado (sem erro) e nada é lido nem gravado nessa coluna.
 A.product_pause = { m: 'POST', fn: async ({ body, user }) => {
   const id = vId(body.id), paused = vBool(body.paused, 'Pausado');
-  let label;
-  if (Object.prototype.hasOwnProperty.call(body, 'pause_label')) label = body.pause_label === null || body.pause_label === '' ? null : vStr(body.pause_label, 1, 60, 'Etiqueta');
-  const row = own(await q(
-    `update products set paused = $2, pause_label = case when $3::boolean then $4::text else pause_label end where id = $1
-     returning id, name, paused, pause_label`, [id, paused, label !== undefined, label === undefined ? null : label]), 'Produto não encontrado.');
+  const row = own(await q('update products set paused = $2 where id = $1 returning id, name, paused', [id, paused]), 'Produto não encontrado.');
   await audit(user.username, paused ? 'produto_em_pausa' : 'produto_retomado', `#${row.id} ${row.name}`);
   return { ok: true, product: row };
 } };
 
-A.pause_default_label = { m: 'POST', fn: async ({ body, user }) => {
-  const label = vStr(body.label, 1, 60, 'Etiqueta padrão');
-  await setSetting('default_pause_label', label);
-  await audit(user.username, 'etiqueta_padrao_alterada', label);
-  return { ok: true, defaultPauseLabel: label };
-} };
+// OBSOLETA (D6, v3): a etiqueta padrão virou texto fixo. A ação continua respondendo ok (para telas antigas) e não grava nada.
+A.pause_default_label = { m: 'POST', fn: async () => ({ ok: true, obsolete: true }) };
 
 // ---------- Horários e estado da loja (O3, O4) ----------
-A.store_hours = { m: 'GET', fn: async () => ({ hours: await storeHours.loadHours(getSql()), timezone: storeHours.TZ }) };
+A.store_hours = { m: 'GET', fn: async () => { const hours = await storeHours.loadHours(getSql()); return { hours, timezone: storeHours.TZ, hours_warning: storeHours.hoursWarning(hours) }; } };
 
 A.store_hours_save = { m: 'POST', fn: async ({ body, user }) => {
   const rows = await storeHours.saveHours(getSql(), body.hours);
   await audit(user.username, 'horarios_salvos', `${rows.length} faixas`);
-  return { ok: true, hours: rows };
+  // D8: lista vazia é aceita, mas a loja fica FECHADA; hours_warning: 'no_hours' pede ao painel um aviso.
+  return { ok: true, hours: rows, hours_warning: storeHours.hoursWarning(rows) };
 } };
 
 A.store_state = { m: 'GET', fn: async () => {
   const state = await storeHours.getStoreState(getSql());
   const manual = await storeHours.loadManual(getSql());
-  return { state, manual: manual && { closed_until: manual.closed_until && manual.closed_until.toISOString(), closed_indefinitely: manual.closed_indefinitely, closed_message: manual.closed_message, updated_by: manual.updated_by, updated_at: manual.updated_at } };
+  return { hours_warning: state.hours_warning, state, manual: manual && { closed_until: manual.closed_until && manual.closed_until.toISOString(), closed_indefinitely: manual.closed_indefinitely, closed_message: manual.closed_message, updated_by: manual.updated_by, updated_at: manual.updated_at } };
 } };
 
 A.store_close = { m: 'POST', fn: async ({ body, user }) => {
@@ -1164,7 +1158,7 @@ function searchByTerms(termList, { products, complements, links }) {
   for (const p of products) {
     const inName = textMatches(p.name, termList);
     const inDesc = inName ? null : textMatches(p.description || '', termList);
-    if (inName || inDesc) foundProducts.push({ id: p.id, name: p.name, matched_in: inName ? 'nome' : 'descrição', matched_term: inName || inDesc, active: p.active, paused: p.paused, pause_label: p.pause_label, builder: !!p.builder });
+    if (inName || inDesc) foundProducts.push({ id: p.id, name: p.name, matched_in: inName ? 'nome' : 'descrição', matched_term: inName || inDesc, active: p.active, paused: p.paused, builder: !!p.builder });
   }
   const foundComplements = [];
   for (const c of complements) {
@@ -1184,7 +1178,7 @@ A.pause_preview = { m: 'POST', fn: async ({ body }) => {
   if (norm(term).length < 2) bad('Escreva o nome do ingrediente.');
   const [syn, products, complements, links] = await Promise.all([
     q('select canonical_norm, synonym_norm from ingredient_synonyms'),
-    q('select id, name, description, active, paused, pause_label, exists (select 1 from product_groups g where g.product_id = products.id) as builder from products order by name'),
+    q('select id, name, description, active, paused, exists (select 1 from product_groups g where g.product_id = products.id) as builder from products order by name'),
     q('select id, name, active from complements order by name'),
     q(`select pc.product_id, pc.complement_id, pc.paused, p.name as product_name, g.label as group_label from product_complements pc join products p on p.id = pc.product_id left join product_groups g on g.id = pc.group_id`)
   ]);
@@ -1211,17 +1205,15 @@ A.pause_apply = { m: 'POST', fn: async ({ body, user }) => {
   const pids = [...new Set(productIds.map(v => vId(v, 'Produto')))];
   const pairs = linkList.map(l => { if (!l || typeof l !== 'object') bad('Vínculo inválido.'); return [vId(l.product_id, 'Produto'), vId(l.complement_id, 'Complemento')]; });
   const pairKeys = [...new Set(pairs.map(p => p.join(':')))].map(k => k.split(':').map(Number));
-  let label = null, setLabel = false;
-  if (body.pause_label !== undefined) { setLabel = true; label = body.pause_label === null || body.pause_label === '' ? null : vStr(body.pause_label, 1, 60, 'Etiqueta'); }
+  // D6 (v3): `pause_label` no corpo é ignorado (a etiqueta da pausa é fixa); o lote não grava etiqueta.
 
   // Uma instrução só (CTEs que alteram dados): pausa o que estava ativo, acha o que já é segurado por outro lote aberto,
   // cria o lote e grava os itens. Tudo ou nada.
   const [r] = await q(
     `with cand_p as (
-       select id, pause_label from products where id = any($1::int[]) and paused = false for update),
+       select id from products where id = any($1::int[]) and paused = false for update),
      upd_p as (
-       update products p set paused = true, pause_label = case when $5::boolean then $6::text else p.pause_label end
-         from cand_p where p.id = cand_p.id returning p.id, cand_p.pause_label as prev),
+       update products p set paused = true from cand_p where p.id = cand_p.id returning p.id),
      want_l as (select * from unnest($2::int[], $3::int[]) as t(pid, cid)),
      cand_l as (
        select pc.product_id, pc.complement_id from product_complements pc join want_l w on w.pid = pc.product_id and w.cid = pc.complement_id
@@ -1231,27 +1223,27 @@ A.pause_apply = { m: 'POST', fn: async ({ body, user }) => {
         where pc.product_id = cand_l.product_id and pc.complement_id = cand_l.complement_id returning pc.product_id, pc.complement_id),
      held as (
        select distinct i.product_id, i.complement_id from ingredient_pause_items i join ingredient_pause_batches b on b.id = i.batch_id
-        where b.released_at is null and b.term_norm <> $7::text -- o mesmo termo reaplicado não cria dependência nova
+        where b.released_at is null and b.term_norm <> $5::text -- o mesmo termo reaplicado não cria dependência nova
           and ((i.complement_id is null and i.product_id = any($1::int[]))
             or (i.complement_id is not null and exists (select 1 from want_l w where w.pid = i.product_id and w.cid = i.complement_id)))),
      rows_all as (
-       select id as pid, null::int as cid, prev, true as changed from upd_p
-       union all select product_id, complement_id, null, true from upd_l
-       union all select h.product_id, h.complement_id, null, false from held h
+       select id as pid, null::int as cid, true as changed from upd_p
+       union all select product_id, complement_id, true from upd_l
+       union all select h.product_id, h.complement_id, false from held h
         where not exists (select 1 from upd_p u where h.complement_id is null and u.id = h.product_id)
           and not exists (select 1 from upd_l u where h.complement_id is not null and u.product_id = h.product_id and u.complement_id = h.complement_id)),
      b as (
-       insert into ingredient_pause_batches (term, term_norm, created_by, pause_label)
-       select $4::text, $7::text, $8::text, case when $5::boolean then $6::text end where exists (select 1 from rows_all) returning id),
+       insert into ingredient_pause_batches (term, term_norm, created_by)
+       select $4::text, $5::text, $6::text where exists (select 1 from rows_all) returning id),
      ins as (
-       insert into ingredient_pause_items (batch_id, product_id, complement_id, changed, prev_pause_label)
-       select b.id, r.pid, r.cid, r.changed, r.prev from b cross join rows_all r returning 1)
+       insert into ingredient_pause_items (batch_id, product_id, complement_id, changed)
+       select b.id, r.pid, r.cid, r.changed from b cross join rows_all r returning 1)
      select (select id from b) as batch_id,
             (select count(*)::int from upd_p) as products_changed,
             (select count(*)::int from upd_l) as links_changed,
             (select count(*)::int from held) as shared,
             (select count(*)::int from ins) as items`,
-    [pids, pairKeys.map(p => p[0]), pairKeys.map(p => p[1]), term, setLabel, label, termNorm, user.username]);
+    [pids, pairKeys.map(p => p[0]), pairKeys.map(p => p[1]), term, termNorm, user.username]);
   const touched = [...new Set([...pids, ...pairKeys.map(p => p[0])])];
   const emptied = touched.length ? await q(
     `select g.product_id, p.name as product_name, g.label as group_label from product_groups g join products p on p.id = g.product_id
@@ -1273,7 +1265,7 @@ async function openBatchesFor(term) {
   const syn = await q('select canonical_norm, synonym_norm from ingredient_synonyms');
   const terms = expandTerms(term, syn);
   const keys = new Set(terms.map(stemKey).filter(Boolean));
-  const open = await q('select id, term, term_norm, created_by, created_at, pause_label from ingredient_pause_batches where released_at is null order by id');
+  const open = await q('select id, term, term_norm, created_by, created_at from ingredient_pause_batches where released_at is null order by id');
   return { terms, batches: open.filter(b => keys.has(stemKey(b.term_norm))) };
 }
 
@@ -1281,7 +1273,7 @@ async function openBatchesFor(term) {
 async function releasePlan(batchIds) {
   if (!batchIds.length) return [];
   const items = await q(
-    `select i.batch_id, i.product_id, i.complement_id, i.changed, i.prev_pause_label, p.name as product_name, c.name as complement_name,
+    `select i.batch_id, i.product_id, i.complement_id, i.changed, p.name as product_name, c.name as complement_name,
             case when i.complement_id is null then p.paused else pc.paused end as is_paused,
             (i.complement_id is not null and pc.product_id is null) as link_gone
        from ingredient_pause_items i join products p on p.id = i.product_id
@@ -1305,19 +1297,11 @@ async function releasePlan(batchIds) {
     if (!e) {
       e = { type: i.complement_id ? 'link' : 'product', product_id: i.product_id, complement_id: i.complement_id || null,
             name: i.complement_id ? `${i.complement_name} em ${i.product_name}` : i.product_name,
-            held_by: [...(heldBy.get(k) || [])], batch_ids: [], restore: false, restore_label: null };
+            held_by: [...(heldBy.get(k) || [])], batch_ids: [] };
       e.action = !i.is_paused ? 'already_active' : e.held_by.length ? 'keep_paused' : 'resume';
       plan.set(k, e);
     }
     e.batch_ids.push(i.batch_id);
-  }
-  // Produto que volta: restaura a etiqueta que ele tinha antes da pausa em lote mais recente que o alterou.
-  const resumingProducts = [...plan.values()].filter(e => e.type === 'product' && e.action === 'resume').map(e => e.product_id);
-  if (resumingProducts.length) {
-    const prev = await q(
-      `select distinct on (i.product_id) i.product_id, i.prev_pause_label from ingredient_pause_items i
-        where i.complement_id is null and i.changed and i.product_id = any($1::int[]) order by i.product_id, i.batch_id desc`, [resumingProducts]);
-    for (const r of prev) { const e = plan.get(`${r.product_id}:0`); if (e) { e.restore = true; e.restore_label = r.prev_pause_label || null; } }
   }
   return [...plan.values()];
 }
@@ -1333,9 +1317,7 @@ async function executeRelease(plan, batchIds, username) {
   const rp = plan.filter(e => e.action === 'resume' && e.type === 'product'), rl = plan.filter(e => e.action === 'resume' && e.type === 'link');
   const queries = [];
   if (rp.length) queries.push(getSql().query(
-    `update products p set paused = false, pause_label = case when t.restore then nullif(t.label, '') else p.pause_label end
-       from unnest($1::int[], $2::boolean[], $3::text[]) as t(id, restore, label) where p.id = t.id and p.paused = true returning p.id`,
-    [rp.map(e => e.product_id), rp.map(e => e.restore), rp.map(e => e.restore_label || '')]));
+    'update products set paused = false where id = any($1::int[]) and paused = true returning id', [rp.map(e => e.product_id)]));
   if (rl.length) queries.push(getSql().query(
     `update product_complements pc set paused = false from unnest($1::int[], $2::int[]) as t(pid, cid)
       where pc.product_id = t.pid and pc.complement_id = t.cid and pc.paused = true returning pc.product_id`,
@@ -1389,7 +1371,7 @@ A.pause_undo = { m: 'POST', fn: async ({ body, user }) => {
 A.pause_batches = { m: 'GET', fn: async ({ query }) => {
   const all = query.get('all') === '1';
   const rows = await q(
-    `select b.id, b.term, b.created_by, b.created_at, b.released_at, b.released_by, b.pause_label,
+    `select b.id, b.term, b.created_by, b.created_at, b.released_at, b.released_by,
             count(*) filter (where i.complement_id is null)::int as products, count(*) filter (where i.complement_id is not null)::int as links
        from ingredient_pause_batches b left join ingredient_pause_items i on i.batch_id = b.id
       where ($1::boolean or b.released_at is null) group by b.id order by b.id desc limit 50`, [all]);

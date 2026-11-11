@@ -16,7 +16,6 @@ const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
 const STORE_ADDRESS = 'Manoel Hare Peralta, 101';
 
 const DELIVERY_METHODS = ['delivery', 'pickup'];
-const DEFAULT_PAUSE_LABEL = 'volto logo <3';
 const MAX_ITEMS = 30;
 const MAX_ITEM_QTY = 20;
 const MAX_ORDERS_PER_PHONE = 5; // por janela de 10 minutos
@@ -75,10 +74,8 @@ function priceItems(rawItems, catalog) {
 
     const product = catalog.products.get(raw.product_id);
     if (!product) fail(`Item ${n}: produto indisponível.`);
-    if (product.paused) {
-      const label = product.pause_label || catalog.defaultPauseLabel || DEFAULT_PAUSE_LABEL;
-      fail(`Item ${n}: "${product.name}" está pausado no momento (${label}). Remova o item do carrinho para continuar.`);
-    }
+    // D6 (v3): a etiqueta da pausa é fixa (sem texto próprio por produto); a mensagem não usa mais pause_label.
+    if (product.paused) fail(`Item ${n}: "${product.name}" está pausado no momento. Remova o item do carrinho para continuar.`);
     const links = catalog.complements.get(product.id) || new Map();
     const sizes = [...links.values()].filter(c => c.kind === 'size');
 
@@ -179,7 +176,7 @@ function validateCustomer(b, storeAddress = STORE_ADDRESS) {
 // Carrega do banco só produtos ativos (de categorias ativas) e seus complementos ativos.
 async function loadCatalog(sql, productIds) {
   const products = await sql.query(
-    `select p.id, p.name, p.price_cents, p.paused, p.pause_label
+    `select p.id, p.name, p.price_cents, p.paused
        from products p join categories c on c.id = p.category_id
       where p.active and c.active and p.id = any($1::int[])`,
     [productIds]
@@ -379,7 +376,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    const settingRows = await sql.query(`select key, value from settings where key in ('store_address', 'default_pause_label')`);
+    const settingRows = await sql.query(`select key, value from settings where key in ('store_address')`);
     const st = {};
     for (const r of settingRows) st[r.key] = r.value;
 
@@ -394,7 +391,6 @@ module.exports = async (req, res) => {
     const ids = [...new Set(b.items.map(i => (i && isId(i.product_id) ? i.product_id : null)).filter(Boolean))];
 
     const catalog = await loadCatalog(sql, ids);
-    catalog.defaultPauseLabel = st.default_pause_label || DEFAULT_PAUSE_LABEL;
     const priced = priceItems(b.items, catalog);
 
     // Frete: retirada R$ 0; entrega por faixa de km, recalculado aqui (o cliente nunca informa valor).
@@ -509,4 +505,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };
+module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError, loadCatalog, isId, MAX_ITEMS };

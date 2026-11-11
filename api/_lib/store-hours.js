@@ -3,8 +3,20 @@
  * Horários e estado da loja (O3, O4). Fuso America/Sao_Paulo calculado com Intl (sem dependências).
  * Tudo que "expira" é derivado de timestamps: nada de cron. Funções puras recebem `now` para teste.
  *
- * Sem horários cadastrados = agenda não configurada = a loja é considerada aberta pelo horário
- * (só o fechamento manual fecha). Assim o Renan pode configurar com calma sem travar os pedidos.
+ * CAUSA DO BUG D8 (v3): "apaguei o horário de abertura e a loja abriu quando devia estar fechada".
+ * Na tela de horários, o "×" remove a faixa. Ao remover a última faixa de todos os dias, o painel salva a lista
+ * vazia (store_hours_save com hours: []) e saveHours apaga a tabela inteira. Sem nenhuma linha, a regra antiga
+ * dizia "agenda não configurada = aberta o tempo todo": isConfigured() dava false e scheduleAt() devolvia
+ * { configured: false, open: true }. Resultado: apagar o horário ABRIA a loja, justamente quando a agenda mandava
+ * ficar fechada. Quem chama é o evaluateStoreState (via getStoreState), usado por api/order.js (aceitar pedido),
+ * api/menu.js, api/store.js (?a=state) e pelas ações store_* e catalog do admin. O texto do painel ("Nenhum horário
+ * cadastrado: a loja fica aberta o tempo todo") reforçava a regra errada.
+ *
+ * Regra nova (v3):
+ *  - dia sem horário = fechado nesse dia;
+ *  - nenhum horário cadastrado em nenhum dia = FECHADA (reason 'schedule') e o admin recebe hours_warning: 'no_hours'
+ *    para o painel avisar "cadastre os horários";
+ *  - fechamento manual (com prazo, até reabrir ou pausa antiga) sempre vence o horário.
  */
 const TZ = 'America/Sao_Paulo';
 const DAY_MS = 24 * 3600 * 1000;
@@ -64,10 +76,13 @@ function groupHours(rows) {
   return byDay;
 }
 const isConfigured = rows => Array.isArray(rows) && rows.length > 0;
+// Aviso para o painel: 'no_hours' quando não há nenhum horário (a loja não abre sozinha); senão null.
+const hoursWarning = rows => (isConfigured(rows) ? null : 'no_hours');
 
-// Primeiro instante >= t em que a loja está aberta pela agenda (t se já aberta). null se a agenda está vazia.
+// Primeiro instante >= t em que a loja está aberta pela agenda (t se já aberta). null se a agenda está vazia
+// (sem horários a loja nunca abre sozinha).
 function nextOpenAfter(rows, t) {
-  if (!isConfigured(rows)) return t;
+  if (!isConfigured(rows)) return null;
   const byDay = groupHours(rows);
   const p = zoneParts(t);
   const m = p.hour * 60 + p.minute + p.second / 60;
@@ -84,9 +99,9 @@ function nextOpenAfter(rows, t) {
   return null;
 }
 
-// Estado pela agenda em `now`: { configured, open, closes_at }.
+// Estado pela agenda em `now`: { configured, open, closes_at }. Sem nenhum horário cadastrado: fechada (D8).
 function scheduleAt(rows, now = new Date()) {
-  if (!isConfigured(rows)) return { configured: false, open: true, closes_at: null };
+  if (!isConfigured(rows)) return { configured: false, open: false, closes_at: null };
   const byDay = groupHours(rows);
   const p = zoneParts(now);
   const m = p.hour * 60 + p.minute + p.second / 60;
@@ -131,17 +146,20 @@ function evaluateStoreState({ hoursRows, manual, legacy, now = new Date() }) {
   }
   if (timed) {
     const reopens = timed.closed_until;
-    const next = nextOpenAfter(hoursRows, reopens);
     const base = timed.closed_message || 'Estamos fechados no momento.';
+    if (!sched.configured) { // sem horários a loja não reabre sozinha: não promete previsão
+      return { open: false, reason: 'manual', reopens_at: null, next_open_at: null, closes_at: null, schedule_configured: false, message: base };
+    }
+    const next = nextOpenAfter(hoursRows, reopens);
     return {
-      open: false, reason: 'manual', reopens_at: iso(reopens), next_open_at: iso(next), closes_at: null, schedule_configured: sched.configured,
+      open: false, reason: 'manual', reopens_at: iso(reopens), next_open_at: iso(next), closes_at: null, schedule_configured: true,
       message: `${base} Previsão de reabertura: ${whenLabel(next || reopens, now)}.`
     };
   }
   if (!sched.open) {
     const next = nextOpenAfter(hoursRows, now);
     return {
-      open: false, reason: 'schedule', reopens_at: null, next_open_at: iso(next), closes_at: null, schedule_configured: true,
+      open: false, reason: 'schedule', reopens_at: null, next_open_at: iso(next), closes_at: null, schedule_configured: sched.configured,
       message: next ? `Estamos fechados agora. Abrimos ${whenLabel(next, now)}.` : 'Estamos fechados no momento.'
     };
   }
@@ -175,7 +193,8 @@ async function getStoreState(sql, now = new Date()) {
   const st = {};
   for (const r of settingRows) st[r.key] = r.value;
   const state = evaluateStoreState({ hoursRows, manual, legacy: { paused: st.store_paused === '1', message: st.store_paused_message || '' }, now });
-  return { ...state, hours: hoursRows };
+  // hours_warning: 'no_hours' = nenhum horário cadastrado (a loja fica fechada). Só o painel do admin mostra.
+  return { ...state, hours: hoursRows, hours_warning: hoursWarning(hoursRows) };
 }
 
 // Valida e normaliza a grade semanal enviada pelo admin.
@@ -249,5 +268,5 @@ async function reopenStore(sql, user) {
 
 module.exports = {
   TZ, WEEKDAYS_PT, StoreError, zoneParts, zonedToUtc, parseHHMM, toHHMM, groupHours, scheduleAt, nextOpenAfter, whenLabel,
-  evaluateStoreState, loadHours, loadManual, getStoreState, validateHours, saveHours, closeStore, reopenStore
+  evaluateStoreState, hoursWarning, loadHours, loadManual, getStoreState, validateHours, saveHours, closeStore, reopenStore
 };

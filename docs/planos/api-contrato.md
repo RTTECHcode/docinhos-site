@@ -8,7 +8,7 @@ Quem usa: A3 (admin), A4 (admin), A5 (admin), A9 (loja), A10 (conta do cliente).
 - Todas as respostas de `/api/admin`, `/api/order`, `/api/order-status` e `/api/store` vêm com `Cache-Control: no-store`.
 - `POST` do admin, da conta do cliente e de `/api/order`: cabeçalho `Content-Type: application/json` e `Origin` igual ao host (senão 415 e 403). O `fetch` do próprio site já manda os dois.
 - IP do cliente (limites e bloqueios): `x-real-ip` (preenchido pela Vercel); o primeiro valor do `x-forwarded-for` é só reserva (`auth.clientIp`).
-- Limite de funções: 9 arquivos em `api/` hoje (`admin`, `customer`, `health`, `img`, `menu`, `mp-webhook`, `order`, `order-status`, `store`); máximo de 12 no total.
+- Limite de funções: 9 arquivos em `api/` hoje (`admin`, `customer`, `health`, `img`, `menu`, `mp-webhook`, `order`, `order-status`, `store`); máximo de 12 no total. A rodada v3 não criou arquivo novo em `api/`: tudo entrou como `?a=` nos endpoints existentes.
 
 ## 1. Cardápio público: GET /api/menu
 
@@ -20,17 +20,17 @@ Campos novos (os antigos continuam):
     { "id": 7, "name": "Brigadeiro de Ninho", "description": "...", "priceCents": 800, "imagePath": "x.avif",
       "complements": [{ "id": 3, "name": "Morango", "priceCents": 0, "kind": "additional", "maxQuantity": 1, "groupId": 12 }],
       "groups": [{ "id": 12, "key": "frutas", "label": "Frutas", "minChoices": 0, "maxChoices": 2 }],
-      "unavailable": true, "label": "volto logo <3" }
+      "unavailable": true, "paused": true }
   ]}],
-  "settings": { "storeAddress": "...", "deliveryFeeCents": 0, "storePaused": false, "storePausedMessage": "", "defaultPauseLabel": "volto logo <3" },
+  "settings": { "storeAddress": "...", "deliveryFeeCents": 0, "storePaused": false, "storePausedMessage": "" },
   "store": { "open": true, "reason": null, "reopens_at": null, "next_open_at": null, "closes_at": "2026-11-10T21:00:00.000Z", "message": null },
   "shipping": { "bands": [{ "max_km": 3, "fee_cents": 600 }, { "max_km": 6, "fee_cents": 900 }, { "max_km": 10, "fee_cents": 1400 }], "maxKm": 10, "pickupFeeCents": 0 }
 }
 ```
 
-- Produto pausado: aparece com `unavailable: true` e `label` (a etiqueta própria ou a padrão). Não pode ser pedido (o pedido recusa com 400).
-- Produto sem preço (`priceCents: null`) e sem nenhum tamanho disponível (A2 rodada 3): também vem com `unavailable: true` e `label: "Consulte pelo WhatsApp"`. Antes aparecia como "Consulte", entrava no carrinho por R$ 0,00 e o pedido recusava só no fim.
-- Complemento pausado em um produto (vínculo pausado, inclui as opções do "Monte seu copo" e do "Monte seu açaí") NÃO aparece em `complements` daquele produto.
+- Produto pausado (v3 D6): aparece com `unavailable: true` e `paused: true`, SEM `label`. A etiqueta da pausa agora é fixa e fica na tela (a loja escreve o texto; sugestão "volto logo <3"). `settings.defaultPauseLabel` deixou de existir. Não pode ser pedido (o pedido recusa com 400).
+- Produto sem preço (`priceCents: null`) e sem nenhum tamanho disponível (A2 rodada 3): também vem com `unavailable: true` e `label: "Consulte pelo WhatsApp"` (este é o único caso com `label`). Antes aparecia como "Consulte", entrava no carrinho por R$ 0,00 e o pedido recusava só no fim.
+- Complemento pausado em um produto (vínculo pausado, inclui as opções do "Monte seu copo" e do "Monte seu açaí") (v3 D5) AGORA aparece em `complements` daquele produto com `unavailable: true` (antes sumia). O pedido continua recusando (400 `adicional inválido para este produto`; um tamanho pausado também é recusado). A tela deve mostrar a opção apagada/desabilitada e não deixar escolher. Tamanho (`kind: "size"`) pausado também vem com `unavailable: true`: um produto sem preço próprio só fica `unavailable` se NÃO restar tamanho disponível.
 - `store.reason`: `null` (aberta), `"schedule"` (fora do horário) ou `"manual"` (fechada pelo painel ou pausa antiga). `settings.storePaused` continua existindo (true quando fechada por qualquer motivo) por compatibilidade.
 - `settings.deliveryFeeCents` é legado: o frete real vem de `shipping.bands`.
 
@@ -39,7 +39,9 @@ Campos novos (os antigos continuam):
 Sem login. Só leitura. Outros métodos: 405.
 
 - `a=state` retorna `{ open, reason, reopens_at, next_open_at, closes_at, message, hours: [{ weekday, opens, closes }] }` (weekday 0 = domingo; horas "HH:MM").
+- (v3 D8) `a=state` não traz `hours_warning`; sem horário cadastrado a loja pública aparece fechada (`open: false`, `reason: "schedule"`, `next_open_at: null`).
 - `a=shipping` retorna `{ bands, max_km, pickup_fee_cents }`.
+- `a=cep&cep=06000000` (v3 D3) retorna `{ "cep": "06000000", "street": "Rua X", "district": "Centro", "city": "Osasco", "uf": "SP" }` (campos que o ViaCEP não souber vêm como `""`). Aceita `06000-000`. Usa o ViaCEP, com cache em banco (`cep_cache`, 90 dias) para não repetir consulta. Erros: 400 `invalid_cep` (não tem 8 dígitos); 404 `cep_not_found` `CEP não encontrado. Confira o número ou preencha o endereço à mão.`; 503 `cep_unavailable` (ViaCEP fora; a tela deve deixar preencher à mão); 429 `rate_limited` (mais de 30 consultas do mesmo IP em 10 min, escopo próprio `cep_lookup`, não gasta o limite da cotação).
 - `a=quote&cep=06000000&address=Rua X, 100[&number=100]` retorna `{ "km": 4.2, "fee_cents": 900, "faixa": { "max_km": 6, "fee_cents": 900 }, "max_km": 10 }`. Só informativo: o pedido recalcula.
 - Erros do `quote`: 400 `invalid_cep` | `invalid_address`; 422 `cep_not_found` | `address_not_found` | `out_of_area` (com `max_km`); 429 `rate_limited` `Muitas consultas de frete. Aguarde alguns minutos.` (mais de 30 cotações do mesmo IP em 10 min, contadas no banco, valem para todas as instâncias); 429 `shipping_busy` `Muitas consultas de frete agora. Tente de novo em instantes.` (teto global de 40 endereços novos por minuto); 503 `origin_unavailable`.
 - Ação desconhecida: 404.
@@ -141,14 +143,14 @@ Públicas (sem sessão), só POST:
 
 #### Pausa de produto (O2)
 
-- `product_pause` POST `{ id, paused: bool, pause_label?: string|null }` retorna `{ ok, product: { id, name, paused, pause_label } }`. `pause_label` ausente mantém a etiqueta; `null` ou `""` limpa (volta a usar a padrão). 404 produto inexistente.
-- `pause_default_label` POST `{ label }` retorna `{ ok, defaultPauseLabel }`. Padrão inicial: `volto logo <3`.
+- `product_pause` POST `{ id, paused: bool }` retorna `{ ok, product: { id, name, paused } }`. 404 produto inexistente. (v3 D6) `pause_label` no corpo é IGNORADO sem erro; a resposta não traz mais `pause_label`.
+- `pause_default_label` (v3 D6): OBSOLETA. Continua respondendo `{ ok: true, obsolete: true }` (para telas antigas) e não grava nada. A tela nova deve parar de chamar. `settings.defaultPauseLabel` saiu do `catalog`/`settings` do admin e do cardápio.
 
 #### Horários e estado da loja (O3, O4)
 
-- `store_hours` GET retorna `{ hours: [{ weekday, opens, closes }], timezone: "America/Sao_Paulo" }`.
-- `store_hours_save` POST `{ hours: [{ weekday: 0-6, opens: "09:00", closes: "18:00" }] }` (várias faixas por dia, no máximo 6; lista vazia = sem horário configurado = aberta pelo horário) retorna `{ ok, hours }`. 400 formato, fechamento antes da abertura, sobreposição.
-- `store_state` GET retorna `{ state: { open, reason, reopens_at, next_open_at, closes_at, message, hours, schedule_configured }, manual: { closed_until, closed_indefinitely, closed_message, updated_by, updated_at } | null }`.
+- `store_hours` GET retorna `{ hours: [{ weekday, opens, closes }], timezone: "America/Sao_Paulo", hours_warning }`.
+- `store_hours_save` POST `{ hours: [{ weekday: 0-6, opens: "09:00", closes: "18:00" }] }` (várias faixas por dia, no máximo 6) retorna `{ ok, hours, hours_warning }`. 400 formato, fechamento antes da abertura, sobreposição. (v3 D8) Lista vazia é aceita, mas a loja FICA FECHADA e `hours_warning` vem `"no_hours"` (a tela deve avisar: "Sem horário cadastrado: a loja fica fechada"). Com algum horário, `hours_warning` é `null`.
+- `store_state` GET retorna `{ hours_warning, state: { open, reason, reopens_at, next_open_at, closes_at, message, hours, schedule_configured, hours_warning }, manual: { closed_until, closed_indefinitely, closed_message, updated_by, updated_at } | null }`.
 - `store_close` POST `{ minutes: 1..1440 }` ou `{ indefinite: true }`, mais `message?` retorna `{ ok, state }`. A mensagem exibida ganha " Previsão de reabertura: <quando>." Vence sozinho (sem cron).
 - `store_reopen` POST `{}` retorna `{ ok, state }`.
 
@@ -179,8 +181,8 @@ Fluxo da tela: digitar o ingrediente, ver a PRÉVIA, marcar o que vale, CONFIRMA
 
 ```json
 { "ok": true, "term": "morango", "terms": ["morango", "morangos"],
-  "products": [{ "id": 7, "name": "Torta de Morango", "matched_in": "nome", "matched_term": "morango", "active": true, "paused": false, "pause_label": null, "builder": false },
-               { "id": 9, "name": "Monte seu copo", "matched_in": "descrição", "matched_term": "morango", "active": true, "paused": false, "pause_label": null, "builder": true }],
+  "products": [{ "id": 7, "name": "Torta de Morango", "matched_in": "nome", "matched_term": "morango", "active": true, "paused": false, "builder": false },
+               { "id": 9, "name": "Monte seu copo", "matched_in": "descrição", "matched_term": "morango", "active": true, "paused": false, "builder": true }],
   "complements": [{ "id": 3, "name": "Morango", "matched_term": "morango", "active": true,
                     "links": [{ "product_id": 9, "product_name": "Monte seu copo", "group_label": "Frutas", "paused": false }] }],
   "summary": { "products": 2, "complements": 1, "links": 1 } }
@@ -191,7 +193,7 @@ Fluxo da tela: digitar o ingrediente, ver a PRÉVIA, marcar o que vale, CONFIRMA
 `pause_apply` POST. Exige `confirm: true` e `term`:
 
 ```json
-{ "term": "morango", "confirm": true, "pause_label": "sem morango hoje",
+{ "term": "morango", "confirm": true,
   "product_ids": [7], "links": [{ "product_id": 9, "complement_id": 3 }] }
 ```
 
@@ -208,7 +210,7 @@ Sucesso:
 - O lote grava só o que ESTA aplicação mudou. O que já estava pausado antes (pausa manual) NÃO entra: nunca volta por reativação em lote. `already_paused` conta esses.
 - Item já pausado por OUTRO lote aberto entra no lote como compartilhado (`shared_with_other_batches`): só volta quando todos os lotes que o seguram forem liberados.
 - `warnings` só aparece quando um grupo de escolha obrigatória (mínimo maior que 0) ficou sem nenhuma opção ativa.
-- `pause_label` é opcional (vale para os produtos pausados; `null` ou `""` limpa).
+- (v3 D6) `pause_label` no corpo é ignorado sem erro; lotes novos não gravam etiqueta, e desfazer/reativar não restauram etiqueta.
 - Erros: 400 sem confirmação, lista vazia ou inválida; ids inexistentes são ignorados (contam em `already_paused`).
 
 `resume_preview` POST `{ term }` (só lê). Procura lotes ABERTOS do termo (com sinônimos): "voltou morango" acha o lote de "morango" e de "morangos".
@@ -231,7 +233,7 @@ Sucesso:
 
 `pause_undo` POST `{ batch_id }` (botão Desfazer logo após pausar) retorna `{ ok, batch_id, term, products_resumed, links_resumed, will_resume, keep_paused, already_active, summary }`. Mesmas regras de itens compartilhados. 400 id inválido; 404 lote inexistente; 409 `Esse lote já foi desfeito.`
 
-`pause_batches` GET `?all=1` (opcional) retorna `{ batches: [{ id, term, created_by, created_at, released_at, released_by, pause_label, products, links }] }`: lotes abertos (ou os 50 mais recentes com `all=1`).
+`pause_batches` GET `?all=1` (opcional) retorna `{ batches: [{ id, term, created_by, created_at, released_at, released_by, products, links }] }`: lotes abertos (ou os 50 mais recentes com `all=1`).
 
 Caixa de comandos (`command`, POST `{ text }`): se o texto tem um verbo de reativar ("voltou morango", "reativar morango") e existe lote aberto do ingrediente, a resposta é a prévia da reativação em lote:
 
@@ -288,15 +290,37 @@ F5: `node scripts/migrate-2026-11-10-scopes.js` (idempotente, aditiva; rodar ANT
 
 A2: `node scripts/migrate-2026-11-10-order-attempts.js` (idempotente, aditiva; rodar ANTES do deploy): cria `order_attempts (id, ip, at)` com índice `(ip, at)`. Uma linha por tentativa de pedido; o próprio `/api/order` apaga, de vez em quando, linhas com mais de 1 dia.
 
+v3 (A2): rodar ANTES do deploy do código da v3, nesta ordem (ambas idempotentes e não destrutivas; `node --env-file=.env ...` em produção, só com ordem do Renan; em desenvolvimento `node -r ./scripts/dev-env.js ...`):
+
+1. `scripts/migrate-2026-11-10-v3-schema.js`: colunas de endereço em `customers` (`address_cep`, `address_street`, `address_number`, `address_complement`, `address_district`, `address_city`, todas `text` nulas) e tabela `cep_cache (cep pk, logradouro, bairro, localidade, uf, created_at)`. O código novo falha sem elas.
+2. `scripts/migrate-2026-11-10-v3-categoria-familia.js`: renomeia a categoria "Sobremesas tamanho família" para "Para família" (só renomeia; ids e produtos iguais).
+
+Colunas `products.pause_label`, `ingredient_pause_batches.pause_label`, `ingredient_pause_items.prev_pause_label` e a chave `settings.default_pause_label` ficam no banco, OBSOLETAS (ninguém lê nem grava; nada foi apagado).
+
 ## 8. Decisões e pontos de atenção
 
 - Usuário criado em `user_create` não tem pergunta: cadastra no primeiro login (portão `security_setup_required`).
 - `password_change` mantém a sessão atual e derruba as outras; recuperação derruba todas.
 - Histórico = pedidos com mais de 24 h; o dia nos filtros é o de São Paulo.
 - Desconto maior que o subtotal é recusado (400), não cortado. Mínimo a pagar R$ 1,00.
-- Sem horário cadastrado = aberta pelo horário (só o fechamento manual fecha).
+- (v3 D8) Sem horário cadastrado = FECHADA (`reason: "schedule"`, `next_open_at: null`). Dia sem faixa = fechado naquele dia. Fechamento manual vence a agenda, sempre. Texto antigo "Nenhum horário cadastrado: a loja fica aberta o tempo todo" (`public/admin/admin-settings.js`) está errado agora: A3/A4 devem trocar e usar `hours_warning`.
 - `shipping_save` é só do admin; a equipe (staff) pausa, fecha a loja e edita horários.
 - O parser de comandos (`command`) não usa sinônimos; a busca com sinônimos é o fluxo `pause_preview`/`pause_apply`. Exceção: o verbo de reativar abre a prévia de lote quando há lote aberto.
 - Complementos do "Monte seu copo" e do "Monte seu açaí" são pausados por vínculo (`links`), sempre só no produto escolhido. Pausar a opção em todos os produtos exige marcar todos os vínculos da prévia.
 - Reativar em lote nunca mexe no que já estava pausado antes do lote nem no que foi pausado à mão depois.
 - Tentativas de recuperação do admin têm tabela própria (`admin_recovery_attempts`) e não afetam o bloqueio de login.
+
+## 9. Conta do cliente e carrinho: /api/customer?a=... (v3, A2)
+
+Mesmas convenções de `/api/customer` (sessão por cookie, `no-store`, POST com `Content-Type: application/json` e `Origin`). Erros: `{ error, code }`. Nenhum dado pessoal é registrado em log; só o dono da sessão vê e altera o próprio endereço (o corpo nunca escolhe a conta).
+
+Objeto `address` (entrada e saída): `{ cep, street, number, complement, district, city }`. Limites validados no servidor: `cep` com 8 dígitos (aceita `06000-000`; sai sempre só com dígitos), `street` 3 a 120, `number` 1 a 10, `complement` até 60, `district` até 80, `city` até 80, sem caracteres de controle; espaços repetidos viram um só. Opcionais vazios saem como `""`.
+
+- `address` GET: retorna `{ address }` (`address: null` se a conta não tem). 401 `login_required`.
+- `address_save` POST: corpo `{ address: {...} }` ou os campos soltos. Troca o endereço salvo. Retorna `{ ok: true, address }`. 400 `invalid_cep` (CEP sem 8 dígitos) ou `invalid_address` (rua/número/limites); 401 `login_required`. Em erro nada é gravado.
+- `address_clear` POST `{}`: apaga o endereço salvo. Retorna `{ ok: true, address: null }`. 401.
+- `register` POST agora aceita `address` OPCIONAL (mesmo formato). Ausente ou todo em branco = conta sem endereço. Endereço inválido recusa o cadastro com 400 (`invalid_cep` ou `invalid_address`) e NÃO cria a conta.
+- `prefill` GET (D2): para o checkout. Visitante: `{ logged_in: false }`. Logado: `{ logged_in: true, name, phone, phone_national, address }` (`phone` em E.164, `phone_national` só com DDD e número, `address` ou `null`). Sempre `Cache-Control: no-store`. Nunca devolve dados de outra conta.
+- `points_preview` POST (D4): prévia de pontos do carrinho, para visitante e logado. Corpo `{ items: [{ product_id, qty, size_id?, extras?: [{ id, qty }] }], use_points?: inteiro }` (mesmo formato do pedido; preço e adicionais vêm do servidor, valores do cliente são ignorados). Retorna `{ points, enabled, rules: { enabled, points_per_real, block_points, block_value_cents }, subtotal_cents }`. `points` = o que o pedido pago renderia (mesma regra do pedido: `earnPoints(subtotal, desconto)`; frete não conta). `use_points` (múltiplo do bloco) só abate o desconto do resgate no cálculo; não confere saldo; valor inválido é ignorado. Programa de pontos desligado: `{ points: 0, enabled: false, rules, subtotal_cents: null }`. 400 `invalid_items` (carrinho vazio, mais de 50 itens, produto/tamanho/adicional inexistente ou pausado, quantidade inválida; a mensagem diz o que corrigir).
+
+Resumo das ações novas de outros endpoints: `GET /api/store?a=cep` (seção 2); no admin, `hours_warning` em `store_hours`, `store_hours_save` e `store_state` (seção 5.1); `pause_default_label` obsoleta.

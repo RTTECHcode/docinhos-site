@@ -8,6 +8,7 @@ const auth = require('./auth');
 const orders = require('./orders');
 const loyalty = require('./loyalty');
 const { hasControlChars } = require('./validate');
+const { normalizeCep } = require('./shipping');
 
 const COOKIE_NAME = '__Host-dg_cliente';
 const SESSION_TTL_S = 30 * 24 * 3600;
@@ -64,6 +65,74 @@ function vBirth(day, month) {
   const d = Number(day), m = Number(month);
   if (none(day) || none(month) || !Number.isInteger(d) || !Number.isInteger(m) || m < 1 || m > 12 || d < 1 || d > DAYS_IN_MONTH[m - 1]) bad('Data de nascimento inválida (informe dia e mês).', 'invalid_birth');
   return { day: d, month: m };
+}
+
+// ---------- Endereço do cliente (v3 D1) ----------
+// 1 endereço por conta, em colunas de customers (address_*). Tudo validado aqui; o id da conta vem sempre da sessão.
+const ADDRESS_LIMITS = { street: [3, 120], number: [1, 10], complement: [0, 60], district: [0, 80], city: [0, 80] };
+const ADDRESS_COLUMNS = 'address_cep, address_street, address_number, address_complement, address_district, address_city';
+const isBlank = v => v === undefined || v === null || (typeof v === 'string' && !v.trim());
+// Texto limpo (trim + espaços únicos). Não-texto vira erro; vazio vira ''.
+function addrText(v, key, label) {
+  if (isBlank(v)) v = '';
+  if (typeof v !== 'string') bad(`${label} inválido.`, 'invalid_address');
+  const s = v.trim().replace(/\s+/g, ' ');
+  const [min, max] = ADDRESS_LIMITS[key];
+  if (hasControlChars(s, false)) bad(`${label} contém caracteres inválidos.`, 'invalid_address');
+  if (s.length < min || s.length > max) bad(min > 0 ? `${label}: use de ${min} a ${max} caracteres.` : `${label}: use até ${max} caracteres.`, 'invalid_address');
+  return s;
+}
+/**
+ * Valida o endereço { cep, street, number, complement?, district?, city? }. Retorna { cep (8 dígitos), street, number,
+ * complement, district, city } (opcionais vazios viram null). optional = true: ausente ou todo em branco devolve null.
+ */
+function vAddress(input, { optional = false } = {}) {
+  if (isBlank(input) || (typeof input === 'object' && !Array.isArray(input) && Object.values(input).every(isBlank))) {
+    if (optional) return null;
+    bad('Informe o endereço.', 'invalid_address');
+  }
+  if (typeof input !== 'object' || Array.isArray(input)) bad('Endereço inválido.', 'invalid_address');
+  const cep = normalizeCep(input.cep);
+  if (!cep) bad('Informe o CEP com 8 números.', 'invalid_cep');
+  const out = {
+    cep, street: addrText(input.street, 'street', 'Rua'), number: addrText(input.number, 'number', 'Número'),
+    complement: addrText(input.complement, 'complement', 'Complemento') || null,
+    district: addrText(input.district, 'district', 'Bairro') || null, city: addrText(input.city, 'city', 'Cidade') || null
+  };
+  return out;
+}
+const addressView = row => (row && row.address_cep ? {
+  cep: row.address_cep, street: row.address_street || '', number: row.address_number || '', complement: row.address_complement || '',
+  district: row.address_district || '', city: row.address_city || ''
+} : null);
+const addressParams = a => [a ? a.cep : null, a ? a.street : null, a ? a.number : null, a ? a.complement : null, a ? a.district : null, a ? a.city : null];
+
+/** Endereço salvo da conta (ou null). */
+async function getAddress(sql, customerId) {
+  const [row] = await sql.query(`select ${ADDRESS_COLUMNS} from customers where id = $1 and active`, [customerId]);
+  if (!row) throw new CustomerError(404, 'Conta não encontrada.', 'not_found');
+  return addressView(row);
+}
+/** Grava (troca) o endereço da conta. input obrigatório e validado. Retorna o endereço salvo. */
+async function saveAddress(sql, customerId, input) {
+  const a = vAddress(input);
+  const rows = await sql.query(
+    `update customers set address_cep = $2, address_street = $3, address_number = $4, address_complement = $5, address_district = $6, address_city = $7
+      where id = $1 and active returning ${ADDRESS_COLUMNS}`, [customerId, ...addressParams(a)]);
+  if (!rows.length) throw new CustomerError(404, 'Conta não encontrada.', 'not_found');
+  return addressView(rows[0]);
+}
+/** Apaga o endereço salvo. */
+async function clearAddress(sql, customerId) {
+  await sql.query(
+    `update customers set address_cep = null, address_street = null, address_number = null, address_complement = null, address_district = null, address_city = null
+      where id = $1 and active`, [customerId]);
+  return { ok: true };
+}
+/** Dados para preencher o checkout (D2): nome, telefone e endereço da própria conta. row = linha de customers (getSession). */
+function checkoutPrefill(row) {
+  const national = String(row.phone || '').replace(/^\+55/, '').replace(/\D/g, '');
+  return { name: row.name, phone: row.phone, phone_national: national, address: addressView(row) };
 }
 
 // ---------- Visão pública ----------
@@ -211,6 +280,7 @@ async function createAccount(sql, input, ctx = {}) {
   const question = auth.validateQuestionId(b.security_question);
   const answer = auth.validateAnswer(b.security_answer); // normalizada (mín. 3 caracteres)
   const birth = vBirth(b.birth_day, b.birth_month);
+  const address = vAddress(b.address, { optional: true }); // opcional; validado ANTES de criar a conta
   if (b.whatsapp_consent !== undefined && typeof b.whatsapp_consent !== 'boolean') bad('Consentimento inválido.', 'invalid_consent');
   const consent = b.whatsapp_consent === true; // nunca pré-marcado: só true explícito vale
   // Duplicado ANTES do scrypt: o 409 sai barato (o hash é a parte cara). O 23505 abaixo continua cobrindo corrida.
@@ -231,6 +301,7 @@ async function createAccount(sql, input, ctx = {}) {
     throw e;
   }
   if (consent) await recordConsentEvent(sql, row.id, 'opt_in', { ip: ctx.ip, source: ctx.source || 'cadastro' });
+  if (address) await saveAddress(sql, row.id, address);
   const token = await createSession(sql, row.id, ctx);
   return { customer: customerView(row), token };
 }
@@ -389,5 +460,6 @@ module.exports = {
   SECURITY_QUESTIONS: auth.SECURITY_QUESTIONS,
   normalizePhone, customerView, sessionCookie, clearSessionCookie,
   createAccount, login, logout, logoutFromRequest, getSession, recoveryQuestion, recover,
+  vAddress, getAddress, saveAddress, clearAddress, checkoutPrefill, ADDRESS_LIMITS,
   getProfile, updateProfile, changePassword, changeSecurity, setWhatsappConsent, listOrders, getPoints, killSessions
 };

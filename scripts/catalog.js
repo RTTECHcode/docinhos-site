@@ -31,8 +31,8 @@ const products = [
 ['Açaí 500ml - Monte seu copo','Açaí 500ml - Monte seu copo.avif','Açaí',2000,'Delicioso açaí cremoso, servido em copo de 500ml. Monte o seu com até 5 complementos.'],
 ['Açaí Trufado 300ml - Brigadeiro de Chocolate','Açaí Trufado - Brigadeiro de Chocolate.avif','Açaí',1800,''],
 ['Açaí Trufado 300ml - Brigadeiro de Ninho','Açaí Trufado - Brigadeiro de Ninho.avif','Açaí',1800,''],
-['Surpresa de Morango - Na Travessa - Tamanho familia','Surpresa de Morango - Na Travessa - Tamanho familia.avif','Sobremesas tamanho família',6000,'Deliciosas camadas de brigadeiro de ninho, com pedaços de morango e finalizada com brigadeiro de chocolate.'],
-['Surpresa de Uva - Na Travessa - Tamanho familia','Surpresa de Uva - Na Travessa - Tamanho familia.avif','Sobremesas tamanho família',5500,'Deliciosas camadas de brigadeiro de ninho, com pedaços de uva finalizadas com brigadeiro de chocolate.']
+['Surpresa de Morango - Na Travessa - Tamanho familia','Surpresa de Morango - Na Travessa - Tamanho familia.avif','Para família',6000,'Deliciosas camadas de brigadeiro de ninho, com pedaços de morango e finalizada com brigadeiro de chocolate.'],
+['Surpresa de Uva - Na Travessa - Tamanho familia','Surpresa de Uva - Na Travessa - Tamanho familia.avif','Para família',5500,'Deliciosas camadas de brigadeiro de ninho, com pedaços de uva finalizadas com brigadeiro de chocolate.']
 ];
 
 // Complementos: kind = size (escolha 1) | additional (adicionais)
