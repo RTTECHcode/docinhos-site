@@ -214,25 +214,11 @@
         product.active = next; syncCatalog({ active: next }); changed = true;
         return true;
       });
-      // O2: texto próprio da pausa ("volto logo"). Vazio = usa a etiqueta padrão (Ajustes), mostrada como exemplo.
-      // Gravado por product_pause (mantém o estado de pausa atual); só existe depois de criar o produto.
-      const defaultLabel = (catalog.settings && catalog.settings.defaultPauseLabel) || 'volto logo <3';
-      const pauseLabel = isNew ? null : el('input', { type: 'text', maxlength: 60, placeholder: defaultLabel, value: product.pause_label || '' });
       const saveBtn = el('button', { class: 'btn primary block', type: 'button', text: isNew ? 'Criar item' : 'Salvar alterações' });
       saveBtn.addEventListener('click', async () => {
         const cents = DG.parseMoney(price.value);
         if (Number.isNaN(cents)) { DG.toast('Preço inválido. Use o formato 12,50.', true); return; }
         if (product.active && priceMissing()) { DG.toast(NO_PRICE_MSG, true); return; }
-        if (pauseLabel) {
-          const label = pauseLabel.value.trim();
-          if (label !== (product.pause_label || '')) {
-            saveBtn.disabled = true;
-            const pr = await DG.run(() => DG.api('product_pause', { body: { id: product.id, paused: !!product.paused, pause_label: label || null } }));
-            saveBtn.disabled = false;
-            if (!pr) return;
-            product.pause_label = pr.product.pause_label; syncCatalog({ pause_label: pr.product.pause_label }); changed = true;
-          }
-        }
         const payload = { name: name.value, description: desc.value, price_cents: cents, category_id: Number(cat.value), sort_order: Number(order.value) || 0 };
         if (isNew) payload.active = product.active; else payload.id = product.id;
         saveBtn.disabled = true;
@@ -250,9 +236,7 @@
         el('label', { class: 'field' }, el('span', { text: 'Descrição' }), desc),
         el('div', { class: 'grid2' }, el('label', { class: 'field' }, el('span', { text: 'Preço (R$)' }), price), el('label', { class: 'field' }, el('span', { text: 'Ordem' }), order)),
         el('label', { class: 'field' }, el('span', { text: 'Categoria' }), cat),
-        el('div', { class: 'card row between' }, el('div', {}, el('strong', { text: 'Disponível no cardápio' }), el('p', { class: 'muted small', text: 'Desligue para pausar' })), active),
-        pauseLabel ? el('label', { class: 'field' }, el('span', { text: 'Texto da pausa (aparece quando o produto está em pausa)' }), pauseLabel,
-          el('small', { class: 'muted', text: 'Deixe vazio para usar o texto padrão: "' + defaultLabel + '".' })) : null];
+        el('div', { class: 'card row between' }, el('div', {}, el('strong', { text: 'Disponível no cardápio' }), el('p', { class: 'muted small', text: 'Desligue para pausar' })), active)];
       if (isNew) {
         // P1: "Criar item" no topo, visível sem rolar.
         body.append(saveBtn, ...fields.filter(Boolean), el('p', { class: 'muted small', text: 'Depois de criar, você poderá enviar a foto e vincular complementos.' }));

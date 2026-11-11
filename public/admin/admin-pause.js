@@ -1,5 +1,5 @@
 'use strict';
-/* Aba Pausa rápida: comando (ingrediente com prévia, desfazer e lotes), fechar/reabrir loja, produtos e complementos. */
+/* Aba Pausa rápida: comando (ingrediente com prévia, desfazer e lotes), produtos e complementos. */
 (function () {
   const DG = window.DG;
   const { el } = DG;
@@ -66,7 +66,6 @@
     const products = r.products || [], comps = r.complements || [];
     if (!products.length && !comps.length) { out.replaceChildren(el('p', { class: 'wrap', text: 'Não achei "' + r.term + '" em nenhum produto ou complemento.' })); return; }
     const prodBoxes = [], linkBoxes = [];
-    const label = el('input', { type: 'text', maxlength: 60, placeholder: 'Ex.: sem ' + r.term + ' hoje' });
     const check = (checked, disabled) => el('input', { type: 'checkbox', checked: checked, disabled: disabled });
     const prodRows = products.map(p => {
       const c = check(!p.builder && !p.paused && p.active !== false, p.paused);
@@ -88,7 +87,6 @@
       if (!product_ids.length && !links.length) { DG.toast('Marque pelo menos um item.', true); return; }
       apply.disabled = true;
       const body = { term: r.term, confirm: true, product_ids, links };
-      if (label.value.trim()) body.pause_label = label.value.trim();
       const a = await DG.run(() => DG.api('pause_apply', { body }));
       if (!a) { apply.disabled = false; return; }
       after();
@@ -107,7 +105,6 @@
       el('p', { class: 'muted small', text: 'Pausar "' + r.term + '": marque o que vale e confirme.' }),
       prodRows.length ? el('div', { class: 'card stack' }, el('strong', { text: 'Produtos' }), ...prodRows) : null,
       ...compRows,
-      el('label', { class: 'field' }, el('span', { text: 'Etiqueta nos produtos pausados (opcional)' }), label),
       el('div', { class: 'grid2' }, el('button', { class: 'btn', type: 'button', text: 'Cancelar', on: { click: () => out.replaceChildren() } }), apply));
   }
 
@@ -230,7 +227,8 @@
     });
   }
 
-  function storeBox(catalog) {
+  // Usado pela seção Horários dos Ajustes (admin-settings.js): estado da loja, fechar com prazo e reabrir.
+  DG.storeBox = function storeBox(catalog, onChange) {
     const box = el('div', { class: 'card stack' }, DG.loading());
     const load = async () => {
       const r = await DG.api('store_state').catch(() => null);
@@ -239,14 +237,15 @@
       DG.setStoreBadge(!s.open);
       const manualOn = !!(r.manual && (r.manual.closed_indefinitely || (r.manual.closed_until && new Date(r.manual.closed_until) > new Date())));
       box.replaceChildren(
-        el('div', { class: 'row between' }, el('strong', { text: 'Loja' }), el('span', { class: 'pill ' + (s.open ? 'ok' : 'warn'), text: s.open ? 'Aberta' : 'Fechada' })),
+        el('div', { class: 'row between' }, el('strong', { text: 'Loja agora' }), el('span', { class: 'pill ' + (s.open ? 'ok' : 'warn'), text: s.open ? 'Aberta' : 'Fechada' })),
         el('p', { class: 'wrap', text: stateLine(s, manualOn ? r.manual : null) }),
-        s.open ? el('button', { class: 'btn danger block', type: 'button', text: 'Fechar loja', on: { click: () => closeSheet(catalog, load) } }) : null,
-        manualOn ? el('button', { class: 'btn primary block', type: 'button', text: 'Reabrir agora', on: { click: async () => { if (await DG.run(() => DG.api('store_reopen', { body: {} }), 'Loja reaberta.')) load(); } } }) : null);
+        s.open ? el('button', { class: 'btn danger block', type: 'button', text: 'Fechar loja', on: { click: () => closeSheet(catalog, () => { load(); if (onChange) onChange(); }) } }) : null,
+        manualOn ? el('button', { class: 'btn primary block', type: 'button', text: 'Reabrir agora', on: { click: async () => { if (await DG.run(() => DG.api('store_reopen', { body: {} }), 'Loja reaberta.')) { load(); if (onChange) onChange(); } } } }) : null);
     };
+    box.reload = load;
     load();
     return box;
-  }
+  };
 
   function toggleRow(label, sub, checked, onChange, extra) {
     return el('div', { class: 'card' }, el('div', { class: 'row' },
@@ -294,7 +293,7 @@
         DG.api('catalog').then(c => { if (DG.state.tab === 'pause') { DG.state.catalog = c; catalog = c; pinned = new Set(c.pinned); paint(); } }).catch(() => {});
       };
       search.addEventListener('input', () => { st.search = search.value; paint(); });
-      view.replaceChildren(commandBox(after), el('h2', { class: 'section-title', text: 'Pausas por ingrediente abertas' }), batches, storeBox(catalog), search, list);
+      view.replaceChildren(commandBox(after), el('h2', { class: 'section-title', text: 'Pausas por ingrediente abertas' }), batches, search, list);
       batches.load();
       paint();
     }

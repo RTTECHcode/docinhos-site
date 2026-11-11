@@ -97,6 +97,36 @@
     return changeStatus(id, act.to, act.msg);
   }
 
+  // P6: conferir no Mercado Pago um pedido com pagamento pendente (POST payment_check). Resultado em linguagem simples.
+  const canCheckPay = o => (o.payment_status === 'pending' || o.payment_status === 'in_process') && o.fulfillment_status !== 'cancelled';
+  function payCheckText(r) {
+    const ps = r.order && r.order.payment_status;
+    if (r.outcome === 'updated') return ps === 'approved' ? 'Pagamento aprovado, pedido atualizado.' : 'Pagamento atualizado: ' + (PAY[ps] || ps) + '.';
+    if (r.outcome === 'unchanged') return ps === 'pending' || ps === 'in_process' ? 'Ainda pendente no Mercado Pago.' : 'Nada mudou: o pedido já estava igual ao Mercado Pago.';
+    if (r.outcome === 'not_found') return 'Sem pagamento encontrado no Mercado Pago para este pedido.';
+    return r.message || 'Conferência concluída.';
+  }
+  async function checkPayment(id) {
+    if (st.busy.has(id)) return false;
+    st.busy.add(id);
+    renderAll();
+    try {
+      const r = await DG.api('payment_check', { body: { id } });
+      st.version++;
+      const cur = byId(id);
+      if (cur && r.order) { cur.payment_status = r.order.payment_status; if (r.order.payment_method) cur.payment_method = r.order.payment_method; }
+      DG.toast(payCheckText(r), !(r.outcome === 'updated' || r.outcome === 'unchanged' || r.outcome === 'not_found'));
+      return true;
+    } catch (e) {
+      DG.toast(e.message || 'Não foi possível conferir o pagamento. Tente de novo.', true);
+      return false;
+    } finally {
+      st.busy.delete(id);
+      renderAll();
+      refresh(false).catch(() => {});
+    }
+  }
+
   function nextAction(o) {
     switch (o.fulfillment_status) {
       case 'new': return { label: 'Aceitar', to: 'accepted', msg: 'Pedido aceito.' };
@@ -131,6 +161,7 @@
         el('span', { class: 'muted small', text: o.fulfillment_status === 'awaiting_delivery' || o.fulfillment_status === 'ready' ? statusText(o) : '' })),
       el('div', { class: 'ord-actions' },
         act ? el('button', { class: 'btn primary', type: 'button', text: act.label, disabled: busy, on: { click: () => advance(o.id, act) } }) : null,
+        canCheckPay(o) ? el('button', { class: 'btn', type: 'button', text: 'Conferir pagamento', disabled: busy, on: { click: () => checkPayment(o.id) } }) : null,
         el('a', { class: 'btn', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer', text: 'Chamar cliente no WhatsApp' }),
         el('button', { class: 'btn danger ord-cancel', type: 'button', text: 'Cancelar pedido', disabled: busy, on: { click: () => { const c = byId(o.id); if (c) cancelOrder(c); } } })));
   }
@@ -178,7 +209,10 @@
       const paintStatus = () => {
         const cur = byId(o.id) || o;
         const now = cur.fulfillment_status === 'delivered' ? 'completed' : cur.fulfillment_status;
-        statusBox.replaceChildren(...STEPS.map(k => el('button', {
+        // P3: o status não volta. Mostra só o atual (marcado) e as etapas à frente; concluído e cancelado são finais.
+        const idx = STEPS.indexOf(now);
+        const shown = now === 'cancelled' || now === 'completed' ? [now] : STEPS.filter((k, i) => i >= idx);
+        statusBox.replaceChildren(...shown.map(k => el('button', {
           class: 'btn', type: 'button', text: k === 'awaiting_delivery' ? waitLabel(o) : STATUS[k], 'aria-pressed': String(k === now),
           disabled: st.busy.has(o.id),
           on: { click: async () => {
@@ -210,6 +244,7 @@
           el('div', { class: 'row between' }, el('span', { text: 'Entrega' }), el('span', { text: DG.money(o.delivery_fee_cents) })),
           el('div', { class: 'row between' }, el('strong', { text: 'Total' }), el('strong', { text: DG.money(o.total_cents) }))),
         el('h3', { class: 'section-title', text: 'Andamento' }), statusBox,
+        canCheckPay(o) ? el('button', { class: 'btn block', type: 'button', text: 'Conferir pagamento', on: { click: async function () { this.disabled = true; await checkPayment(o.id); const c = byId(o.id) || o; Object.assign(o, c); this.disabled = false; if (!canCheckPay(c)) { this.hidden = true; } paintStatus(); } } }) : null,
         el('a', { class: 'btn primary block', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer', text: 'Chamar cliente no WhatsApp' }),
         el('button', { class: 'btn block', type: 'button', text: 'Fechar', on: { click: close } }));
     });
