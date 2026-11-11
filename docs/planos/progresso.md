@@ -35,8 +35,8 @@ Base: ajustes-v3 criada da painel-v3 (v2.1), que vai para a main.
 | F1 W2-W4, W6 | feito | v3-a1-webhook | fbaa7c9; conferência de reserva, back_urls, testes novos |
 | F1 W5 | pendente | — | corrigir DG-7747 e DG-5401 só com aprovação |
 | F2 D1-D8 | feito | v3-a2-backend | e429856; 2 migrações rodadas só na dev |
-| F3 P1-P6 | andamento | v3-a3-admin | F1+F2 juntos em ajustes-v3 (40636b4) |
-| F3 L1-L8 | andamento | v3-a4-loja | inclui W4 no front (L8) |
-| F4 V1-V7 | pendente | v3-a5-design | após F3 |
-| F5 QA | pendente | v3-a6-qa | A6 + revisão A1 |
+| F3 P1-P6 | feito | v3-a3-admin | ed7dd10; navegador ok; test-admin rerodar com banco parado |
+| F3 L1-L8 | feito | v3-a4-loja | 609a508; 90 checagens no navegador ok |
+| F4 V1-V7 | andamento | v3-a5-design | base d2f625b; V6 só após aprovar proposta |
+| F5 QA | andamento | v3-a6-qa | revisão A1 D1-D4 aprovada com ressalvas; A2 corrigindo |
 | F6 Relatório | pendente | ajustes-v3 | passos de produção para aprovação |
