@@ -742,3 +742,32 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
   background: url("/images/branding/doce.svg") center / contain no-repeat;
 }
 /* fim A9 */
+
+/* v3 A4 — funcional; A5 refina na V7 */
+/* L1: quantidade no carrinho */
+.cart-item { flex-wrap: wrap; padding-right: 16px; }
+.cart-item .ci-qty { flex: 1 1 100%; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.cart-item .ci-qty button { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--brand-soft); color: var(--brand-deep); font-size: 1.3rem; font-weight: 800; cursor: pointer; display: grid; place-items: center; }
+.cart-item .ci-qty .ci-inc { background: var(--brand); color: #fff; }
+.cart-item .ci-qty button:disabled { opacity: .35; cursor: default; }
+.cart-item .ci-qty .n { min-width: 28px; text-align: center; font-weight: 800; font-size: 1.05rem; }
+.cart-item .ci-confirm { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; font-weight: 800; color: var(--brand-deep); }
+.cart-item .ci-confirm span { flex: 1 1 100%; text-align: right; }
+.cart-item .ci-confirm .button { width: auto; min-height: 44px; padding: 0 18px; }
+/* L3: CEP */
+.cep-status { margin: -6px 0 12px; font-size: .82rem; font-weight: 700; color: var(--ink-soft); }
+.cep-status.ok { color: #2f6b3a; }
+.cep-status.warn { color: var(--brand-deep); }
+/* L6: pontos no checkout */
+.points-earn { font-weight: 800; color: var(--brand-deep); }
+.points-login { margin-top: 6px; min-height: 44px; }
+/* L7: complemento e tamanho pausados */
+.comp-item.is-unavailable { opacity: .55; background: #faf4f1; border-style: dashed; filter: grayscale(.6); }
+.chip.is-unavailable { cursor: not-allowed; }
+.chip.is-unavailable .chip-text { opacity: .5; border-style: dashed; background: #f6ece7; color: var(--ink-soft); }
+.chip.is-unavailable input { cursor: not-allowed; }
+.comp-left .unavail-tag, .chip-text .unavail-tag { margin: 2px 0 0; font-size: .68rem; padding: 1px 8px; }
+/* L8: aviso do pagamento em pedido.html */
+.pay-banner { padding: 10px 14px; border-radius: var(--radius-md); background: var(--manteiga); color: var(--cacau); font-weight: 800; }
+.pay-banner.ok { background: #e4f3e6; color: #1f5a2b; }
+.pay-banner.warn { background: var(--brand-soft); color: var(--brand-deep); }
