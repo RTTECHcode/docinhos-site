@@ -37,6 +37,9 @@ Base: ajustes-v3 criada da painel-v3 (v2.1), que vai para a main.
 | F2 D1-D8 | feito | v3-a2-backend | e429856; 2 migrações rodadas só na dev |
 | F3 P1-P6 | feito | v3-a3-admin | ed7dd10; navegador ok; test-admin rerodar com banco parado |
 | F3 L1-L8 | feito | v3-a4-loja | 609a508; 90 checagens no navegador ok |
-| F4 V1-V7 | andamento | v3-a5-design | base d2f625b; V6 só após aprovar proposta |
-| F5 QA | andamento | v3-a6-qa | revisão A1 D1-D4 aprovada com ressalvas; A2 corrigindo |
+| F4 V1-V7 | andamento | v3-a5-design | relançado em ab9464b; V6 só após aprovar proposta |
+| F5 ressalvas A2 | feito | v3-a2-fix | 1cdb19b; testes ok no dev novo |
+| F5 QA | andamento | v3-a6-qa | W/D/P/L agora; V depois do merge do A5 |
 | F6 Relatório | pendente | ajustes-v3 | passos de produção para aprovação |
+
+Banco dev trocado em 11/11 (antigo expirou): cópia da produção; migrações v3 rodadas; horários 00:00-23:59 só no dev.
