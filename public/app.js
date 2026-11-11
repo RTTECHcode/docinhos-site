@@ -91,6 +91,9 @@ function toast(msg, ms = 1800) {
    X / fundo / Esc chamam history.back() quando o estado atual é do modal, então há um só caminho de fechamento. */
 const modalStack = [];      // ids abertos; o último é o do topo
 const closing = new Set();  // ids com history.back() em andamento (evita voltar duas vezes)
+let modalSeq = 0;           // V4: cada abertura ganha um número crescente, gravado no estado do histórico (dgSeq)
+const abandoned = new Set(); // V4: números cujo history.back() demorou demais e o fechamento foi resolvido pelo temporizador
+const BACK_WAIT_MS = 500;   // espera pelo popstate antes de fechar por conta própria
 const modalHooks = {
   '#cat-sheet': {
     open() {
@@ -112,7 +115,9 @@ function openModal(id, opts = {}) {
   clearTimeout(modal._hideTimer);
   modal._opener = opts.opener || document.activeElement;
   modalStack.push(id);
-  if (opts.replace) history.replaceState({ dgModal: id }, ''); else history.pushState({ dgModal: id }, '');
+  modal._seq = ++modalSeq;
+  const hState = { dgModal: id, dgSeq: modal._seq };
+  if (opts.replace) history.replaceState(hState, ''); else history.pushState(hState, '');
   modal.hidden = false;
   document.body.classList.add('modal-open');
   void modal.offsetWidth; // reflow: a transição parte do estado fechado
@@ -147,21 +152,30 @@ function hideModal(id) {
 function requestClose(id, after) {
   if (!modalStack.includes(id) || closing.has(id)) return;
   if (after) modalEl(id)._after = after;
-  if (history.state && history.state.dgModal === id) {
+  const seq = modalEl(id)._seq;
+  if (history.state && history.state.dgModal === id && history.state.dgSeq === seq) {
     closing.add(id);
     history.back();
-    // rede de segurança: se o popstate não chegar, fecha mesmo assim
-    setTimeout(() => { if (closing.has(id)) hideModal(id); }, 800);
+    // Rede de segurança: se o popstate não chegar, fecha mesmo assim. A volta que chegar depois (aparelho lento,
+    // navegador embutido) é reconhecida como atrasada em 'abandoned' e não derruba o modal que abriu nesse meio tempo (V4).
+    setTimeout(() => { if (closing.has(id)) { abandoned.add(seq); hideModal(id); } }, BACK_WAIT_MS);
   } else {
     hideModal(id);
   }
 }
 
 window.addEventListener('popstate', () => {
-  const want = history.state && history.state.dgModal;
-  while (modalStack.length && modalStack[modalStack.length - 1] !== want) hideModal(modalStack[modalStack.length - 1]);
+  const wantSeq = (history.state && history.state.dgSeq) || 0;
+  if (wantSeq && abandoned.has(wantSeq)) {
+    // Volta atrasada de um fechamento que o temporizador já resolveu. Se há modal aberto depois dela, ele continua valendo:
+    // volta uma entrada para o estado dele, em vez de fechá-lo.
+    abandoned.delete(wantSeq);
+    if (modalStack.length) history.forward(); else history.replaceState(null, '');
+    return;
+  }
+  while (modalStack.length && (modalEl(modalStack[modalStack.length - 1])._seq || 0) > wantSeq) hideModal(modalStack[modalStack.length - 1]);
   // "avançar" para uma entrada de modal que não está aberto: neutraliza a entrada
-  if (want && !modalStack.includes(want)) history.replaceState(null, '');
+  if (wantSeq && !modalStack.some(id => modalEl(id)._seq === wantSeq)) history.replaceState(null, '');
 });
 // recarregar com estado de modal no histórico: esse estado não vale mais
 if (history.state && history.state.dgModal) history.replaceState(null, '');
