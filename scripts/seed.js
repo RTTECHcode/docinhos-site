@@ -11,7 +11,11 @@ const fs = require('fs');
       where name = ${oldName} and not exists (select 1 from products where name = ${newName})`;
   }
 
-  const categoryOrder = ['Copos da felicidade', 'Doces no pote', 'Geladinhos Gourmet', 'Açaí', 'Sobremesas tamanho família'];
+  // D7 (v3): a categoria "Sobremesas tamanho família" virou "Para família". Renomeia em place (preserva ids) antes do upsert.
+  await sql.query(`update categories set name = 'Para família' where name = 'Sobremesas tamanho família'
+    and not exists (select 1 from categories where name = 'Para família')`);
+
+  const categoryOrder = ['Copos da felicidade', 'Doces no pote', 'Geladinhos Gourmet', 'Açaí', 'Para família'];
   for (let i = 0; i < categoryOrder.length; i++) {
     await sql`insert into categories (name, sort_order) values (${categoryOrder[i]}, ${i}) on conflict (name) do update set sort_order = excluded.sort_order, active = true`;
   }

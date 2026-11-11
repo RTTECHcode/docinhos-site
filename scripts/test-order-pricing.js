@@ -174,15 +174,16 @@ test('retirada não exige CEP e devolve o número informado na entrega', () => {
   assert.equal(validateCustomer({ ...base, delivery_method: 'delivery', cep: '06000001', address: 'Rua das Flores', address_number: '45' }).number, '45');
 });
 
-test('produto pausado é recusado com o rótulo do produto, o padrão da loja ou "volto logo <3"', () => {
+test('produto pausado é recusado (D6: sem etiqueta própria nem padrão; a mensagem só diz que está pausado)', () => {
   const mk = product => ({ ...catalog, products: new Map([[2, { id: 2, name: 'Geladinho', price_cents: 600, ...product }]]), complements: new Map() });
   const err = c => { try { priceItems([{ product_id: 2, qty: 1 }], c); } catch (e) { return e; } return null; };
-  let e = err(mk({ paused: true, pause_label: 'volta amanhã' }));
-  assert.ok(e instanceof ValidationError); assert.match(e.message, /Geladinho/); assert.match(e.message, /volta amanhã/);
+  let e = err(mk({ paused: true, pause_label: 'volta amanhã' })); // pause_label legado no banco é ignorado
+  assert.ok(e instanceof ValidationError); assert.match(e.message, /Geladinho/); assert.match(e.message, /pausado/);
+  assert.doesNotMatch(e.message, /volta amanhã/);
   e = err({ ...mk({ paused: true }), defaultPauseLabel: 'já já' });
-  assert.match(e.message, /já já/);
+  assert.doesNotMatch(e.message, /já já/);
   e = err(mk({ paused: true }));
-  assert.match(e.message, /volto logo <3/);
+  assert.match(e.message, /pausado no momento/); assert.doesNotMatch(e.message, /volto logo/);
   assert.equal(err(mk({ paused: false })), null);
 });
 

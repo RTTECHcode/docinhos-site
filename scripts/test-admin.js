@@ -495,7 +495,7 @@ async function catalogTests() {
     assert.equal((await post(S.adm, 'group_delete', { id: tmp.json.group.id })).status, 200);
     assert.equal((await post(S.adm, 'group_delete', { id: tmp.json.group.id })).status, 404);
   });
-  await t('vínculo: vincular com max_quantity e grupo, pausar só no produto, /api/menu esconde o pausado, desvincular', async () => {
+  await t('vínculo: vincular com max_quantity e grupo, pausar só no produto, /api/menu marca o pausado como indisponível (D5), desvincular', async () => {
     const l = await post(S.adm, 'link_save', { product_id: ctx.prod, complement_id: ctx.comp, max_quantity: 2, group_id: ctx.group });
     assert.equal(l.status, 200, JSON.stringify(l.json));
     await post(S.adm, 'link_save', { product_id: ctx.prod, complement_id: ctx.size, max_quantity: 1, group_id: ctx.group });
@@ -505,9 +505,9 @@ async function catalogTests() {
     const find = m => m.body.categories.flatMap(c => c.products).find(p => p.id === ctx.prod);
     let m = await menuCall();
     assert.equal(m.code, 200); assert.ok(find(m).complements.some(c => c.id === ctx.comp));
-    assert.deepEqual(Object.keys(m.body.settings).sort(), ['defaultPauseLabel', 'deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
+    assert.deepEqual(Object.keys(m.body.settings).sort(), ['deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: ctx.comp, paused: true })).status, 200);
-    m = await menuCall(); assert.ok(!find(m).complements.some(c => c.id === ctx.comp));
+    m = await menuCall(); const pausedLink = find(m).complements.find(c => c.id === ctx.comp); assert.ok(pausedLink && pausedLink.unavailable === true, 'D5: vínculo pausado continua no cardápio, marcado como indisponível');
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: ctx.comp, paused: false })).status, 200);
     assert.equal((await post(S.adm, 'link_save', { product_id: ctx.prod, complement_id: ctx.comp, max_quantity: 0 })).status, 400);
     assert.equal((await post(S.adm, 'link_save', { product_id: ctx.prod, complement_id: ctx.comp, max_quantity: 51 })).status, 400);
@@ -557,7 +557,7 @@ async function catalogTests() {
     assert.equal(c.status, 200);
     assert.ok(c.json.products.some(p => p.id === S.ctx.prod)); assert.ok(c.json.complements.some(x => x.id === S.ctx.comp && x.uses === 1));
     assert.ok(c.json.groups.some(g => g.id === S.ctx.group)); assert.ok(c.json.links.some(l => l.complement_id === S.ctx.comp && l.paused === false));
-    assert.deepEqual(Object.keys(c.json.settings).sort(), ['defaultPauseLabel', 'deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
+    assert.deepEqual(Object.keys(c.json.settings).sort(), ['deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
   });
 }
 

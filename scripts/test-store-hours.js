@@ -52,11 +52,65 @@ test('o dia da semana é o de São Paulo, não o de UTC', () => {
   assert.equal(sh.scheduleAt(rows, at('2026-11-10T02:30:00Z')).open, false); // segunda 23:30 SP
 });
 
-test('sem horários cadastrados: agenda não configurada, considerada aberta', () => {
-  const s = sh.scheduleAt([], at('2026-11-10T15:00:00Z'));
-  assert.deepEqual([s.configured, s.open], [false, true]);
-  const st = sh.evaluateStoreState({ hoursRows: [], manual: null, legacy: null, now: at('2026-11-10T15:00:00Z') });
-  assert.equal(st.open, true);
+// ---------- D8 (v3): apagar o horário NÃO pode abrir a loja ----------
+test('D8: sem horários cadastrados (lista vazia, undefined ou null): FECHADA, nunca aberta', () => {
+  for (const rows of [[], undefined, null]) {
+    const s = sh.scheduleAt(rows, at('2026-11-10T15:00:00Z'));
+    assert.deepEqual([s.configured, s.open, s.closes_at], [false, false, null]);
+    const st = sh.evaluateStoreState({ hoursRows: rows, manual: null, legacy: null, now: at('2026-11-10T15:00:00Z') });
+    assert.deepEqual([st.open, st.reason, st.schedule_configured, st.next_open_at], [false, 'schedule', false, null]);
+    assert.equal(st.message, 'Estamos fechados no momento.');
+  }
+});
+
+test('D8: reproduz o bug — loja programada para fechar, Renan apaga o horário: continua fechada', () => {
+  const rows = week('09:00', '18:00');
+  const night = at('2026-11-10T23:00:00Z'); // 20:00 SP, fora do expediente
+  assert.equal(sh.evaluateStoreState({ hoursRows: rows, manual: null, legacy: null, now: night }).open, false);
+  assert.equal(sh.evaluateStoreState({ hoursRows: [], manual: null, legacy: null, now: night }).open, false, 'apagar o horário não pode abrir');
+  const day = at('2026-11-10T15:00:00Z'); // 12:00 SP, dentro do expediente
+  assert.equal(sh.evaluateStoreState({ hoursRows: rows, manual: null, legacy: null, now: day }).open, true);
+  assert.equal(sh.evaluateStoreState({ hoursRows: [], manual: null, legacy: null, now: day }).open, false, 'sem horário nunca abre, nem em horário comercial');
+});
+
+test('D8: dia sem horário = fechado (agenda só com quarta; terça fecha o dia todo)', () => {
+  const rows = week('09:00', '18:00', [3]);
+  assert.equal(sh.scheduleAt(rows, at('2026-11-10T15:00:00Z')).open, false); // terça 12:00 SP
+  assert.equal(sh.scheduleAt(rows, at('2026-11-11T15:00:00Z')).open, true);  // quarta 12:00 SP
+  const st = sh.evaluateStoreState({ hoursRows: rows, manual: null, legacy: null, now: at('2026-11-10T15:00:00Z') });
+  assert.deepEqual([st.open, st.reason, st.schedule_configured], [false, 'schedule', true]);
+  assert.equal(st.next_open_at, '2026-11-11T12:00:00.000Z');
+});
+
+test('D8: fechamento manual vence o horário aberto, em todas as formas (prazo, até reabrir, pausa antiga)', () => {
+  const rows = week('00:00', '23:59');
+  const now = at('2026-11-10T15:00:00Z');
+  assert.equal(sh.evaluateStoreState({ hoursRows: rows, manual: null, legacy: null, now }).open, true);
+  const timed = sh.evaluateStoreState({ hoursRows: rows, manual: { closed_until: at('2026-11-10T16:00:00Z'), closed_indefinitely: false, closed_message: null }, legacy: null, now });
+  assert.deepEqual([timed.open, timed.reason], [false, 'manual']);
+  const indef = sh.evaluateStoreState({ hoursRows: rows, manual: { closed_until: null, closed_indefinitely: true, closed_message: null }, legacy: null, now });
+  assert.deepEqual([indef.open, indef.reason], [false, 'manual']);
+  const legacy = sh.evaluateStoreState({ hoursRows: rows, manual: null, legacy: { paused: true, message: '' }, now });
+  assert.deepEqual([legacy.open, legacy.reason], [false, 'manual']);
+});
+
+test('D8: fechamento manual com prazo e SEM horários não promete reabertura (a loja não abre sozinha)', () => {
+  const now = at('2026-11-10T15:00:00Z');
+  const manual = { closed_until: at('2026-11-10T16:00:00Z'), closed_indefinitely: false, closed_message: 'Acabou o doce' };
+  const st = sh.evaluateStoreState({ hoursRows: [], manual, legacy: null, now });
+  assert.deepEqual([st.open, st.reason, st.reopens_at, st.next_open_at, st.message], [false, 'manual', null, null, 'Acabou o doce']);
+  const later = sh.evaluateStoreState({ hoursRows: [], manual, legacy: null, now: at('2026-11-10T16:00:01Z') });
+  assert.deepEqual([later.open, later.reason], [false, 'schedule'], 'depois que o prazo vence, sem horários continua fechada');
+});
+
+test('D8: hoursWarning avisa o painel só quando não há nenhum horário', () => {
+  assert.equal(sh.hoursWarning([]), 'no_hours');
+  assert.equal(sh.hoursWarning(undefined), 'no_hours');
+  assert.equal(sh.hoursWarning(week('09:00', '18:00', [1])), null);
+});
+
+test('D8: nextOpenAfter sem horários = null (nunca abre sozinha)', () => {
+  assert.equal(sh.nextOpenAfter([], at('2026-11-10T15:00:00Z')), null);
 });
 
 test('nextOpenAfter: hoje mais tarde, amanhã, e pula dias sem atendimento', () => {
