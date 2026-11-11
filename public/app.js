@@ -276,17 +276,18 @@ function renderMenu() {
     <section class="category" id="cat-${c.id}">
       <h2>${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
-        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
+        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
           ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
           <span class="body">
             <span class="name">${esc(p.name)}</span>
             ${p.description ? `<span class="desc">${esc(p.description)}</span>` : ''}
-            ${p.unavailable ? '<span class="unavail-tag">Indisponível no momento</span>' : ''}
+            ${p.unavailable && !p.paused ? '<span class="unavail-tag">Indisponível no momento</span>' : ''}
             <span class="price-row">
               <span class="price">${p.priceCents != null ? (p.complements?.some(x => x.kind === 'size') ? `<span class="from">a partir de</span> ${brl(p.priceCents)}` : brl(p.priceCents)) : 'Consulte'}</span>
             </span>
           </span>
           ${p.unavailable ? '' : '<span class="add-hint" aria-hidden="true">+</span>'}
+          ${p.paused ? '<span class="pause-clip"><span class="pause-band">Volto logo</span></span>' : ''}
         </button>`).join('')}</div>
     </section>`).join('');
 }

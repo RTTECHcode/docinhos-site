@@ -771,3 +771,25 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
 .pay-banner { padding: 10px 14px; border-radius: var(--radius-md); background: var(--manteiga); color: var(--cacau); font-weight: 800; }
 .pay-banner.ok { background: #e4f3e6; color: #1f5a2b; }
 .pay-banner.warn { background: var(--brand-soft); color: var(--brand-deep); }
+
+/* v3 A5 */
+/* V2: produto pausado, faixa diagonal "Volto logo" cruzando o card (texto fixo; o produto continua visível) */
+.card.is-paused { overflow: hidden; }
+.pause-clip { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
+.pause-band {
+  position: absolute; left: -12%; right: -12%; top: 58%;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  height: 30px; margin-top: -15px;
+  transform: rotate(-7deg);
+  font-family: var(--display); font-weight: 400; font-size: 1.05rem; letter-spacing: .02em; line-height: 1;
+  color: #fff;
+  background: var(--brand);
+  border-block: 2px dashed rgba(255, 255, 255, .8);
+  box-shadow: 0 6px 12px -6px rgba(94, 40, 30, .55);
+  opacity: .96;
+}
+.pause-band::before, .pause-band::after {
+  content: ""; flex: none; width: 22px; height: 22px;
+  background: url("/images/branding/brigadeiro.svg") center / contain no-repeat;
+}
+.card.is-paused .name, .card.is-paused .desc { opacity: .75; }
