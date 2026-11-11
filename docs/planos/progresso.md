@@ -40,7 +40,7 @@ Base: ajustes-v3 criada da painel-v3 (v2.1), que vai para a main.
 | F4 V1-V7 | feito | v3-a5-design | c1ab0a8; V6 aprovada e aplicada; causa V4: popstate atrasado |
 | F5 ressalvas A2 | feito | v3-a2-fix | 1cdb19b; testes ok no dev novo |
 | F5 QA W/D/P/L | feito | v3-a6-qa | de5a64a; 14/14 scripts, 28 IDs ok, 1 Baixo corrigido |
-| F5 QA V | andamento | v3-a6-qa | rodada 2 em dc46511 |
-| F6 Relatório | andamento | ajustes-v3 | docs/planos/relatorio-v3.md; migrações prod e horários temporários feitos |
+| F5 QA V | feito | v3-a6-qa | 1035de3; V1-V7 ok; 20 adições ok em 4 tamanhos |
+| F6 Relatório | feito | ajustes-v3 | docs/planos/relatorio-v3.md; aguarda Renan publicar e rodar W5 |
 
 Banco dev trocado em 11/11 (antigo expirou): cópia da produção; migrações v3 rodadas; horários 00:00-23:59 só no dev.

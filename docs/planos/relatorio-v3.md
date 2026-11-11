@@ -1,6 +1,6 @@
 # Relatório da rodada v3 — Painel Gigi
 
-Status: RASCUNHO (F4 design e F5 QA em andamento). Nada foi publicado. Branch: `ajustes-v3`. Produção: `main` (643aa03).
+Status: PRONTO PARA PUBLICAR. Tudo está na branch `ajustes-v3` e ainda não foi publicado. Produção: `main` (643aa03).
 
 ## 1. Por que os pagamentos não confirmavam (DG-7747 e DG-5401)
 
@@ -41,11 +41,23 @@ Loja e conta (A4):
 - Complementos pausados escurecidos.
 - Pix e cartão confirmam sozinhos.
 
-Design (A5): _em andamento_. Inclui o brigadeiro, a faixa "Volto logo", o botão "Acompanhe", a correção dos botões flutuantes e a reorganização do topo.
+Design (A5):
+- O brigadeiro entra no carrinho vazio e na categoria "Para família".
+- Produto pausado mostra a faixa "Volto logo".
+- Novo botão flutuante "Acompanhe", que abre o pedido em andamento.
+- O topo agora tem uma linha só, nos dois casos:
+  - visitante: selo da loja, recibo e Entrar. "Criar conta" foi para a tela de entrar;
+  - logado: selo, recibo, pontos e conta.
+- O aviso "Adicionado ao carrinho" foi para o topo da tela.
+- Bug dos botões flutuantes. Causa: o "voltar" do navegador chegava atrasado e fechava o modal errado, travando a tela. Corrigido.
 
 Revisão de segurança (A1) dos endpoints novos: aprovada. As ressalvas foram corrigidas: cadastro gravado de uma vez, teto global de consultas ao ViaCEP e limite na prévia de pontos.
 
-QA (A6): _em andamento_. O resultado vai para `docs/planos/qa-v3.md`.
+QA (A6), detalhes em `docs/planos/qa-v3.md`:
+- Os 14 scripts de teste passaram.
+- Todos os itens W2–W6, D, P, L e V passaram.
+- O cenário das 20 adições com abrir e fechar telas passou em 360, 390, celular deitado e computador, como visitante e como logado.
+- Bugs: só 1 Baixo (log de erro podia conter telefone), já corrigido.
 
 ## 3. Passos de produção
 
@@ -57,10 +69,24 @@ Já feitos em 11/11, com sua autorização:
 
 Faltam (você faz, nesta ordem):
 1. **Publicar**: juntar `ajustes-v3` na `main` e enviar (push). A Vercel publica sozinha. O segredo novo do webhook só passa a valer nesse deploy, porque variável da Vercel exige deploy novo. Tentei fazer um redeploy antes, mas o Claude Code bloqueia deploy de produção.
-2. **Corrigir DG-7747 e DG-5401**: no admin, abra cada pedido e clique em **Conferir pagamento**. O site consulta o Mercado Pago e marca como pago, com pontos, se o valor bater.
+2. **Corrigir DG-7747 e DG-5401**: já conferi no Mercado Pago, só com leitura. Os dois estão **aprovados**, com R$ 12,00, valor igual ao do pedido. Para gravar, escolha um dos dois caminhos:
+   - depois de publicar, abra cada pedido no admin e clique em **Conferir pagamento**;
+   - ou, mesmo antes de publicar, rode na pasta do projeto: `! node --env-file=.env scripts/conferir-pagamento.js 208 211 --aplicar`. Tentei rodar, mas o Claude Code bloqueou a escrita no banco de produção.
 3. **Teste rápido depois de publicar**: faça um Pix de valor baixo, veja a tela mudar sozinha e o pedido virar pago no admin. No Mercado Pago, abra Suas integrações e depois Webhooks: o histórico deve mostrar 200.
 4. Cadastrar os horários reais e trocar a senha do admin.
 
 ## 4. Como testar antes de publicar
 
-_A completar depois da F5._
+- No computador, na pasta do projeto: `node scripts/dev-server.js 3000` e abra http://localhost:3000. O servidor usa o banco dev, que é uma cópia da produção.
+- No celular, teste:
+  - adicionar itens e abrir/fechar carrinho, categorias e Acompanhe;
+  - CEP no checkout;
+  - entrar na conta e ver o checkout preenchido e os pontos;
+  - no admin: fechar a loja com prazo e apagar os horários de um dia (o site pede confirmação).
+- Quer ver na internet antes? Envie a branch com `git push origin ajustes-v3`. A Vercel cria um link de Preview com o banco dev. Não mexe na produção.
+
+## 5. Observações
+
+- A "Atividade recente" ficou na aba Conta do admin, e não em Ajustes, como o pedido dizia. Funciona igual.
+- O banco dev atual é cópia da produção e pode expirar, como o anterior. A senha dele apareceu num log local: troque quando der.
+- A ferramenta de varredura de segurança ZAP segue pendente desde a v2, porque precisa de Docker ou Java.
