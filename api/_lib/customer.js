@@ -291,17 +291,18 @@ async function createAccount(sql, input, ctx = {}) {
   try {
     [row] = await sql.query(
       `insert into customers (name, phone, email, password_hash, security_question, security_answer_hash, whatsapp_consent,
-                              whatsapp_consent_at, whatsapp_consent_text, whatsapp_consent_version, whatsapp_consent_ip, birth_day, birth_month)
+                              whatsapp_consent_at, whatsapp_consent_text, whatsapp_consent_version, whatsapp_consent_ip, birth_day, birth_month,
+                              ${ADDRESS_COLUMNS})
        values ($1, $2, $3, $4, $5, $6, $7, case when $7 then now() end, case when $7 then $8::text end, case when $7 then $9::text end,
-               case when $7 then $10::text end, $11, $12)
+               case when $7 then $10::text end, $11, $12, $13, $14, $15, $16, $17, $18)
        returning ${CUSTOMER_COLUMNS}`,
-      [name, phone, email, passwordHash, question, answerHash, consent, CONSENT_TEXT, CONSENT_VERSION, ctx.ip || null, birth.day, birth.month]);
+      [name, phone, email, passwordHash, question, answerHash, consent, CONSENT_TEXT, CONSENT_VERSION, ctx.ip || null, birth.day, birth.month,
+       ...addressParams(address)]); // endereço no MESMO insert: um comando só, então nunca fica conta sem o endereço informado
   } catch (e) {
     if (e && e.code === '23505') throw new CustomerError(409, MSG_DUPLICATE, 'duplicate');
     throw e;
   }
   if (consent) await recordConsentEvent(sql, row.id, 'opt_in', { ip: ctx.ip, source: ctx.source || 'cadastro' });
-  if (address) await saveAddress(sql, row.id, address);
   const token = await createSession(sql, row.id, ctx);
   return { customer: customerView(row), token };
 }

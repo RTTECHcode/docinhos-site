@@ -14,10 +14,12 @@ const auth = require('./_lib/auth');
 const customerLib = require('./_lib/customer');
 const loyalty = require('./_lib/loyalty');
 const orderApi = require('./order')._internal; // D4: a prévia de pontos reaproveita a precificação do pedido (priceItems/loadCatalog)
+const { hitExceeded } = require('./_lib/rate-limit');
 const getSql = () => require('./_lib/db'); // carregado sob demanda, como no admin
 
 const MAX_BODY_BYTES = 20 * 1024;
 const REGISTER_MAX_PER_HOUR = 15;   // tentativas de cadastro por IP em 1 h (inclusive as que dão 400 e 409)
+const PREVIEW_WINDOW_MINUTES = 10, PREVIEW_MAX_PER_IP = 120; // points_preview: por IP em 10 min (escopo próprio, banco)
 const MSG_LOGIN_REQUIRED = 'Entre na sua conta para continuar.';
 const MSG_METHOD = 'Método não permitido.';
 
@@ -191,11 +193,15 @@ const A = {
 
   // D4: quantos pontos o carrinho vai gerar. Preço recalculado no servidor (mesma precificação do pedido) e mesma regra de
   // loyalty.earnPoints. Funciona para visitante e logado. use_points (opcional) só abate o desconto para a conta; não confere saldo.
-  points_preview: { m: 'POST', async fn({ sql, body }) {
+  points_preview: { m: 'POST', async fn({ sql, req, body }) {
+    if (await hitExceeded(sql, 'points_preview', auth.clientIp(req), { windowMinutes: PREVIEW_WINDOW_MINUTES, max: PREVIEW_MAX_PER_IP })) {
+      throw new HttpError(429, 'Muitas consultas de pontos. Aguarde alguns minutos.', 'rate_limited');
+    }
     const rules = await loyalty.getRules(sql);
     const resp = (points, subtotal) => ({ body: { points, enabled: rules.enabled, rules, subtotal_cents: subtotal } });
     const items = body.items;
-    if (!Array.isArray(items) || items.length === 0 || items.length > orderApi.MAX_ITEMS) throw new HttpError(400, 'O carrinho está vazio.', 'invalid_items');
+    if (!Array.isArray(items) || items.length === 0) throw new HttpError(400, 'O carrinho está vazio.', 'invalid_items');
+    if (items.length > orderApi.MAX_ITEMS) throw new HttpError(400, `O carrinho tem itens demais (máximo ${orderApi.MAX_ITEMS}).`, 'invalid_items');
     if (!rules.enabled) return resp(0, null);
     const ids = [...new Set(items.map(i => (i && orderApi.isId(i.product_id) ? i.product_id : null)).filter(Boolean))];
     let priced;
@@ -285,4 +291,4 @@ async function handler(req, res) {
 }
 
 module.exports = handler;
-module.exports._internal = { orderView, ledgerDescription, paymentLabel, profileView };
+module.exports._internal = { PREVIEW_MAX_PER_IP, orderView, ledgerDescription, paymentLabel, profileView };
