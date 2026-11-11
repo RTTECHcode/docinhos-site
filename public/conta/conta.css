@@ -144,3 +144,16 @@ footer.conta-foot { margin-top: 28px; padding: 26px 16px calc(26px + env(safe-ar
   .points-balance { font-size: 3.6rem; }
 }
 @media (prefers-reduced-motion: reduce) { .field input, .field select, .conta-tabs a { transition: none; } }
+
+/* v3 A4 — funcional; A5 refina na V7 */
+.cep-status { margin: -6px 0 12px; font-size: .82rem; font-weight: 700; }
+.cep-status.warn { color: var(--brand-deep); }
+#form-endereco .button + .button { margin-top: 10px; }
+
+/* V7: endereço em Meus dados e no cadastro */
+.cep-status { margin: -4px 0 14px; padding: 6px 12px; border-radius: var(--radius-sm); background: #f7efe9; font-size: .84rem; line-height: 1.35; font-weight: 700; color: var(--ink-soft); }
+.cep-status.ok { background: #e4f3e6; color: #1f5a2b; }
+.cep-status.warn { background: var(--brand-soft); color: var(--brand-deep); }
+.address-box .hint { margin-bottom: 10px; }
+#form-endereco .button + .button { margin-top: 12px; }
+#form-endereco .button.secondary { color: var(--brand-deep); }

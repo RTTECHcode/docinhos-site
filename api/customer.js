@@ -13,10 +13,13 @@
 const auth = require('./_lib/auth');
 const customerLib = require('./_lib/customer');
 const loyalty = require('./_lib/loyalty');
+const orderApi = require('./order')._internal; // D4: a prévia de pontos reaproveita a precificação do pedido (priceItems/loadCatalog)
+const { hitExceeded } = require('./_lib/rate-limit');
 const getSql = () => require('./_lib/db'); // carregado sob demanda, como no admin
 
 const MAX_BODY_BYTES = 20 * 1024;
 const REGISTER_MAX_PER_HOUR = 15;   // tentativas de cadastro por IP em 1 h (inclusive as que dão 400 e 409)
+const PREVIEW_WINDOW_MINUTES = 10, PREVIEW_MAX_PER_IP = 120; // points_preview: por IP em 10 min (escopo próprio, banco)
 const MSG_LOGIN_REQUIRED = 'Entre na sua conta para continuar.';
 const MSG_METHOD = 'Método não permitido.';
 
@@ -130,7 +133,8 @@ const A = {
     const input = {
       name: body.name, phone: body.phone, email: body.email, password: body.password,
       security_question: body.security_question, security_answer: body.security_answer,
-      whatsapp_consent: body.whatsapp_consent === true, birth_day: body.birth_day, birth_month: body.birth_month
+      whatsapp_consent: body.whatsapp_consent === true, birth_day: body.birth_day, birth_month: body.birth_month,
+      address: body.address // opcional (D1): { cep, street, number, complement?, district?, city? }
     };
     const { customer, token } = await customerLib.createAccount(sql, input, ctx);
     return { status: 201, cookie: customerLib.sessionCookie(token), body: { ok: true, customer: { name: customer.name }, whatsapp_consent: customer.whatsapp_consent } };
@@ -160,6 +164,55 @@ const A = {
   profile: { m: 'GET', async fn({ sql, req }) {
     const { customer } = await requireSession(sql, req);
     return { body: { customer: profileView(customerLib.customerView(customer)) } };
+  } },
+
+  // D1: endereço da própria conta (1 por cliente). A conta vem SEMPRE da sessão; nenhum id vem do navegador.
+  address: { m: 'GET', async fn({ sql, req }) {
+    const { customer } = await requireSession(sql, req);
+    return { body: { address: await customerLib.getAddress(sql, customer.id) } };
+  } },
+
+  address_save: { m: 'POST', async fn({ sql, req, body }) {
+    const { customer } = await requireSession(sql, req);
+    const input = body.address && typeof body.address === 'object' ? body.address : body; // aceita { address: {...} } ou os campos soltos
+    return { body: { ok: true, address: await customerLib.saveAddress(sql, customer.id, input) } };
+  } },
+
+  address_clear: { m: 'POST', async fn({ sql, req }) {
+    const { customer } = await requireSession(sql, req);
+    await customerLib.clearAddress(sql, customer.id);
+    return { body: { ok: true, address: null } };
+  } },
+
+  // D2: dados da conta para preencher o checkout. Só do próprio cliente; visitante recebe { logged_in: false } (sem erro). Sempre no-store.
+  prefill: { m: 'GET', async fn({ sql, req }) {
+    const session = await customerLib.getSession(sql, req);
+    if (!session) return { body: { logged_in: false } };
+    return { body: { logged_in: true, ...customerLib.checkoutPrefill(session.customer) } };
+  } },
+
+  // D4: quantos pontos o carrinho vai gerar. Preço recalculado no servidor (mesma precificação do pedido) e mesma regra de
+  // loyalty.earnPoints. Funciona para visitante e logado. use_points (opcional) só abate o desconto para a conta; não confere saldo.
+  points_preview: { m: 'POST', async fn({ sql, req, body }) {
+    if (await hitExceeded(sql, 'points_preview', auth.clientIp(req), { windowMinutes: PREVIEW_WINDOW_MINUTES, max: PREVIEW_MAX_PER_IP })) {
+      throw new HttpError(429, 'Muitas consultas de pontos. Aguarde alguns minutos.', 'rate_limited');
+    }
+    const rules = await loyalty.getRules(sql);
+    const resp = (points, subtotal) => ({ body: { points, enabled: rules.enabled, rules, subtotal_cents: subtotal } });
+    const items = body.items;
+    if (!Array.isArray(items) || items.length === 0) throw new HttpError(400, 'O carrinho está vazio.', 'invalid_items');
+    if (items.length > orderApi.MAX_ITEMS) throw new HttpError(400, `O carrinho tem itens demais (máximo ${orderApi.MAX_ITEMS}).`, 'invalid_items');
+    if (!rules.enabled) return resp(0, null);
+    const ids = [...new Set(items.map(i => (i && orderApi.isId(i.product_id) ? i.product_id : null)).filter(Boolean))];
+    let priced;
+    try { priced = orderApi.priceItems(items, await orderApi.loadCatalog(sql, ids)); } catch (e) {
+      if (e instanceof orderApi.ValidationError) throw new HttpError(400, e.message, 'invalid_items');
+      throw e;
+    }
+    let discount = 0;
+    const up = body.use_points;
+    if (Number.isInteger(up) && up > 0 && up % rules.block_points === 0) discount = Math.min(loyalty.discountForPoints(up, rules), priced.subtotal_cents);
+    return resp(loyalty.earnPoints(priced.subtotal_cents, discount, rules), priced.subtotal_cents);
   } },
 
   orders: { m: 'GET', async fn({ sql, req, query }) {
@@ -238,4 +291,4 @@ async function handler(req, res) {
 }
 
 module.exports = handler;
-module.exports._internal = { orderView, ledgerDescription, paymentLabel, profileView };
+module.exports._internal = { PREVIEW_MAX_PER_IP, orderView, ledgerDescription, paymentLabel, profileView };

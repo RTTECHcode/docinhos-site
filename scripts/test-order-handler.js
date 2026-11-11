@@ -25,7 +25,7 @@ const NAME = '__TESTE__';
 const CAT = 'ZZ-TESTE categoria';
 const P_OK = 'ZZ-TESTE Doce';
 const P_BIG = 'ZZ-TESTE Caixa';
-const SETTING_KEYS = ['store_paused', 'store_paused_message', 'store_origin_lat', 'store_origin_lon', 'shipping_bands', 'default_pause_label'];
+const SETTING_KEYS = ['store_paused', 'store_paused_message', 'store_origin_lat', 'store_origin_lon', 'shipping_bands'];
 const rnd = n => Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join('');
 const phoneSeq = () => '119' + rnd(8); // telefone de pedido, único por teste (limite de 5 por 10 min)
 const accountPhone = () => '119' + rnd(8);
@@ -156,10 +156,11 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
   await cleanup();
   snap = await snapshot();
   shipping.setFetch(fakeFetch);
-  // estado conhecido: sem horários (aberta), sem fechamento manual, origem fixa, faixas padrão
+  // estado conhecido: aberta o dia todo (D8: sem horário = fechada, então o teste cadastra 00:00–23:59 nos 7 dias), sem fechamento manual, origem fixa, faixas padrão
   await sql.query('delete from store_hours');
+  await storeHours.saveHours(sql, [0, 1, 2, 3, 4, 5, 6].map(weekday => ({ weekday, opens: '00:00', closes: '23:59' })));
   await sql.query('delete from store_state where id = 1');
-  await sql.query(`delete from settings where key in ('store_paused', 'shipping_bands', 'default_pause_label', 'store_origin_lat', 'store_origin_lon')`);
+  await sql.query(`delete from settings where key in ('store_paused', 'shipping_bands', 'store_origin_lat', 'store_origin_lon')`);
   await shipping.setOrigin(sql, BASE_LAT, BASE_LON);
   const [cat] = await sql.query('insert into categories (name, sort_order, active) values ($1, 999, true) returning id', [CAT]);
   prodOk = (await sql.query('insert into products (category_id, name, price_cents, active) values ($1, $2, 1000, true) returning id', [cat.id, P_OK]))[0];
@@ -244,21 +245,14 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
   });
 
   // ===== O2: pausa =====
-  await test('O2: produto pausado é recusado com o rótulo do produto ou o padrão "volto logo <3"', async () => {
-    await sql.query('update products set paused = true, pause_label = null where id = $1', [prodOk.id]);
+  await test('O2/D6: produto pausado é recusado (a mensagem não usa etiqueta própria nem padrão)', async () => {
+    await sql.query(`update products set paused = true, pause_label = 'volta amanhã' where id = $1`, [prodOk.id]); // coluna legada: ignorada
     const a = await call(fresh());
     assert.equal(a.status, 400);
-    assert.match(a.body.error, /volto logo <3/);
+    assert.match(a.body.error, /pausado no momento/);
     assert.match(a.body.error, /ZZ-TESTE Doce/);
-    await sql.query(`update products set pause_label = 'volta amanhã' where id = $1`, [prodOk.id]);
-    const b = await call(fresh());
-    assert.equal(b.status, 400);
-    assert.match(b.body.error, /volta amanhã/);
-    await sql.query(`insert into settings (key, value) values ('default_pause_label', 'já já') on conflict (key) do update set value = excluded.value`);
-    await sql.query('update products set pause_label = null where id = $1', [prodOk.id]);
-    assert.match((await call(fresh())).body.error, /já já/);
-    await sql.query(`delete from settings where key = 'default_pause_label'`);
-    await sql.query('update products set paused = false where id = $1', [prodOk.id]);
+    assert.doesNotMatch(a.body.error, /volta amanhã|volto logo/);
+    await sql.query('update products set paused = false, pause_label = null where id = $1', [prodOk.id]);
     assert.equal((await call(fresh())).status, 201);
   });
 
@@ -312,7 +306,6 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
     // horário que cobre o dia inteiro: aceita
     await storeHours.saveHours(sql, [0, 1, 2, 3, 4, 5, 6].map(weekday => ({ weekday, opens: '00:00', closes: '23:59' })));
     assert.equal((await call(fresh())).status, 201);
-    await sql.query('delete from store_hours');
   });
 
   // ===== O5: frete por faixa =====

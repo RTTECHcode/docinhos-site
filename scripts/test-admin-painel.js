@@ -60,6 +60,7 @@ async function login(u, ip) {
 
 const POINT_KEYS = ['points_enabled', 'points_per_real', 'points_block_points', 'points_block_value_cents'];
 const SETTINGS = ['default_pause_label', 'shipping_bands', 'store_origin_lat', 'store_origin_lon', 'store_origin_address', 'store_paused', 'store_paused_message', ...POINT_KEYS];
+const ALL_DAY = [0, 1, 2, 3, 4, 5, 6].map(weekday => ({ weekday, opens: '00:00', closes: '23:59' })); // D8: sem horário = fechada; os testes de pedido precisam da loja aberta
 let snap;
 async function snapshot() {
   return {
@@ -94,6 +95,8 @@ async function cleanup() {
 (async () => {
   await cleanup();
   snap = await snapshot();
+  await Q('delete from store_hours');
+  for (const h of ALL_DAY) await Q('insert into store_hours (weekday, opens, closes) values ($1,$2,$3)', [h.weekday, h.opens, h.closes]);
   const adm = await mkUser('admin'), staff = await mkUser('staff');
   const A = (await login(adm)).cookie, ST = (await login(staff)).cookie;
   assert.ok(A && ST);
@@ -212,29 +215,31 @@ async function cleanup() {
   console.log('\nO2: pausa de produtos');
   const [cat] = await Q(`insert into categories (name, sort_order, active) values ('ZZ-TESTE cat pn', 998, true) returning id`);
   const prod = (await Q(`insert into products (category_id, name, description, price_cents, active) values ($1, 'ZZ-TESTE Brigadeiro de Ninho', 'com biscoito Oreo e morangos', 800, true) returning id`, [cat.id]))[0];
-  await t('product_pause: pausa com etiqueta própria, aparece no cardápio como unavailable com label; retoma', async () => {
+  await t('product_pause (D6): pausa sem etiqueta (pause_label no corpo é ignorado sem erro); cardápio diz só paused/unavailable; retoma', async () => {
     const r = await post(A, 'product_pause', { id: prod.id, paused: true, pause_label: 'volta amanhã' });
-    assert.equal(r.status, 200); assert.deepEqual([r.json.product.paused, r.json.product.pause_label], [true, 'volta amanhã']);
+    assert.equal(r.status, 200); assert.equal(r.json.product.paused, true); assert.ok(!('pause_label' in r.json.product));
+    assert.equal((await Q('select pause_label from products where id = $1', [prod.id]))[0].pause_label, null, 'a coluna obsoleta não é gravada');
     let m = await menuCall();
     const find = () => m.body.categories.flatMap(c => c.products).find(p => p.id === prod.id);
-    assert.equal(find().unavailable, true); assert.equal(find().label, 'volta amanhã'); assert.equal(find().price_cents ?? find().priceCents ?? 800, 800);
-    await post(A, 'product_pause', { id: prod.id, paused: true, pause_label: null }); // volta ao padrão
-    m = await menuCall(); assert.equal(find().label, m.body.settings.defaultPauseLabel);
+    assert.equal(find().unavailable, true); assert.equal(find().paused, true); assert.ok(!('label' in find()), 'sem etiqueta no cardápio');
+    assert.ok(!('defaultPauseLabel' in m.body.settings));
+    await post(A, 'product_pause', { id: prod.id, paused: true, pause_label: null }); // também ignorado
     const cat2 = await get(A, 'catalog'); const row = cat2.json.products.find(p => p.id === prod.id);
-    assert.deepEqual([row.paused, row.pause_label], [true, null]); assert.equal(row.active, true);
+    assert.equal(row.paused, true); assert.ok(!('pause_label' in row)); assert.equal(row.active, true);
     assert.equal((await post(A, 'product_pause', { id: prod.id, paused: false })).json.product.paused, false);
     m = await menuCall(); assert.ok(!('unavailable' in find()) || find().unavailable !== true);
   });
-  await t('etiqueta padrão: salva, aparece no cardápio; validações; ids inexistentes -> 404; staff também pausa', async () => {
-    assert.equal((await post(A, 'pause_default_label', { label: 'já já' })).status, 200);
+  await t('etiqueta padrão obsoleta (D6): a ação não grava nada nem erra; ids inexistentes -> 404; staff também pausa', async () => {
+    const before = await Q(`select value from settings where key = 'default_pause_label'`);
+    for (const label of ['já já', '', 'x'.repeat(61), null, 5]) { const r = await post(A, 'pause_default_label', { label }); assert.equal(r.status, 200, String(label)); assert.equal(r.json.obsolete, true); }
+    assert.deepEqual(await Q(`select value from settings where key = 'default_pause_label'`), before, 'nada gravado');
     await post(A, 'product_pause', { id: prod.id, paused: true });
     const m = await menuCall();
-    assert.equal(m.body.settings.defaultPauseLabel, 'já já');
-    assert.equal(m.body.categories.flatMap(c => c.products).find(p => p.id === prod.id).label, 'já já');
-    for (const bad of ['', '   ', 'x'.repeat(61), null, 5]) assert.equal((await post(A, 'pause_default_label', { label: bad })).status, 400, String(bad));
+    assert.ok(!('defaultPauseLabel' in m.body.settings));
+    assert.ok(!('label' in m.body.categories.flatMap(c => c.products).find(p => p.id === prod.id)));
     assert.equal((await post(A, 'product_pause', { id: 2147483000, paused: true })).status, 404);
     assert.equal((await post(A, 'product_pause', { id: prod.id, paused: 'sim' })).status, 400);
-    assert.equal((await post(A, 'product_pause', { id: prod.id, paused: false, pause_label: 'x'.repeat(61) })).status, 400);
+    assert.equal((await post(A, 'product_pause', { id: prod.id, paused: false, pause_label: 'x'.repeat(61) })).status, 200, 'pause_label é ignorado, sem validar');
     assert.equal((await post(ST, 'product_pause', { id: prod.id, paused: false })).status, 200);
   });
 
@@ -247,8 +252,17 @@ async function cleanup() {
     for (const bad of [[{ weekday: 9, opens: '09:00', closes: '10:00' }], [{ weekday: 1, opens: '18:00', closes: '09:00' }], [{ weekday: 1, opens: '09:00', closes: '12:00' }, { weekday: 1, opens: '11:00', closes: '13:00' }], 'x', [{ weekday: 1, opens: 'abc', closes: '10:00' }]])
       assert.equal((await post(A, 'store_hours_save', { hours: bad })).status, 400, JSON.stringify(bad));
     assert.deepEqual((await get(A, 'store_hours')).json.hours, hours, 'erro não altera os horários salvos');
-    assert.equal((await post(A, 'store_hours_save', { hours: [] })).status, 200);
+    assert.equal(g.json.hours_warning, null, 'com horários não há aviso');
+    const e = await post(A, 'store_hours_save', { hours: [] });
+    assert.equal(e.status, 200); assert.equal(e.json.hours_warning, 'no_hours');
     assert.deepEqual((await get(A, 'store_hours')).json.hours, []);
+    assert.equal((await get(A, 'store_hours')).json.hours_warning, 'no_hours');
+    // D8: sem horário nenhum = FECHADA (antes ficava aberta o tempo todo)
+    const st = await get(A, 'store_state');
+    assert.equal(st.json.hours_warning, 'no_hours'); assert.equal(st.json.state.open, false); assert.equal(st.json.state.reason, 'schedule');
+    assert.equal((await menuCall()).body.store.open, false);
+    await post(A, 'store_hours_save', { hours: ALL_DAY }); // os testes seguintes precisam da loja aberta
+    assert.equal((await get(A, 'store_state')).json.hours_warning, null);
   });
   await t('fechar por 30 min / 1 h / minutos livres / até reabrir; mensagem; reabrir; valores inválidos', async () => {
     for (const minutes of [30, 60, 45]) {
@@ -279,7 +293,7 @@ async function cleanup() {
     await post(A, 'store_hours_save', { hours: [0, 1, 2, 3, 4, 5, 6].map(weekday => ({ weekday, opens: '03:00', closes: '03:01' })) });
     const s = (await menuCall()).body.store;
     if (s.open === false) { assert.equal(s.reason, 'schedule'); assert.ok(s.next_open_at); }
-    await post(A, 'store_hours_save', { hours: [] });
+    await post(A, 'store_hours_save', { hours: ALL_DAY });
   });
 
   console.log('\nO5: frete por faixas');
@@ -435,14 +449,15 @@ async function cleanup() {
     assert.equal((await post(A, 'pause_apply', { ...body, confirm: true, term: undefined })).status, 400, 'term obrigatório');
     assert.equal((await post(A, 'pause_apply', { ...body, confirm: true, paused: false })).status, 400, 'retomar não é por aqui');
     assert.equal((await Q('select paused from products where id = $1', [prod.id]))[0].paused, false);
-    const r = await post(A, 'pause_apply', { ...body, confirm: true, pause_label: 'sem Oreo hoje' });
+    const r = await post(A, 'pause_apply', { ...body, confirm: true, pause_label: 'sem Oreo hoje' }); // pause_label ignorado (D6)
     assert.equal(r.status, 200, JSON.stringify(r.json)); assert.deepEqual([r.json.products_changed, r.json.links_changed], [1, 1]);
     assert.ok(r.json.batch_id);
     const p = (await Q('select paused, pause_label from products where id = $1', [prod.id]))[0];
-    assert.deepEqual([p.paused, p.pause_label], [true, 'sem Oreo hoje']);
+    assert.deepEqual([p.paused, p.pause_label], [true, null]);
     assert.equal((await Q('select paused from product_complements where product_id = $1 and complement_id = $2', [prod.id, comp.id]))[0].paused, true);
     const m = await menuCall();
-    assert.ok(!m.body.categories.flatMap(c => c.products).find(x => x.id === prod.id).complements.some(c => c.id === comp.id), 'complemento pausado some do produto');
+    const pc = m.body.categories.flatMap(c => c.products).find(x => x.id === prod.id).complements.find(c => c.id === comp.id);
+    assert.ok(pc && pc.unavailable === true, 'D5: complemento pausado continua no cardápio, marcado como indisponível');
     assert.equal((await post(A, 'pause_apply', { term: 'oreo', product_ids: [], links: [], confirm: true })).status, 400);
     assert.equal((await post(A, 'pause_apply', { term: 'oreo', product_ids: ['x'], confirm: true })).status, 400);
     const undo = await post(A, 'pause_undo', { batch_id: r.json.batch_id });
@@ -460,7 +475,7 @@ async function cleanup() {
   for (const c of [lot.mor, lot.ore, lot.gra]) await Q('insert into product_complements (product_id, complement_id, max_quantity, group_id) values ($1, $2, 1, $3)', [lot.builder.id, c.id, lot.group.id]);
   await Q('insert into product_complements (product_id, complement_id, max_quantity) values ($1, $2, 1)', [prod.id, lot.mor.id]);
   lot.torta = (await Q(`insert into products (category_id, name, description, price_cents, active) values ($1, 'ZZ-TESTE Torta zzmorango zzoreo', '', 900, true) returning id`, [cat.id]))[0];
-  lot.manual = (await Q(`insert into products (category_id, name, description, price_cents, active, paused, pause_label) values ($1, 'ZZ-TESTE Mousse zzmorango', '', 700, true, true, 'pausa manual') returning id`, [cat.id]))[0];
+  lot.manual = (await Q(`insert into products (category_id, name, description, price_cents, active, paused, pause_label) values ($1, 'ZZ-TESTE Mousse zzmorango', '', 700, true, true, 'legado') returning id`, [cat.id]))[0];
   const link = (pid, cid) => ({ product_id: pid, complement_id: cid });
   const isPaused = async (pid, cid) => (await Q(cid ? 'select paused from product_complements where product_id = $1 and complement_id = $2' : 'select paused from products where id = $1', cid ? [pid, cid] : [pid]))[0].paused;
   let bMor, bOre;
@@ -480,7 +495,8 @@ async function cleanup() {
     assert.ok(!items.some(i => i.product_id === lot.manual.id), 'o que já estava pausado antes não entra no lote');
     assert.equal(await isPaused(lot.builder.id, lot.mor.id), true);
     const copo = (await menuCall()).body.categories.flatMap(x => x.products).find(x => x.id === lot.builder.id);
-    assert.ok(!copo.complements.some(c => c.id === lot.mor.id) && copo.complements.some(c => c.id === lot.gra.id), 'opção pausada some do "monte seu copo" no cardápio');
+    assert.equal(copo.complements.find(c => c.id === lot.mor.id).unavailable, true, 'D5: opção pausada fica no "monte seu copo", marcada como indisponível');
+    assert.ok(!copo.complements.find(c => c.id === lot.gra.id).unavailable, 'a outra opção segue disponível');
     assert.equal((await post(A, 'pause_apply', { term: 'zzmorango', confirm: true, product_ids: [lot.torta.id] })).json.batch_id, null, 'nada mudou: não cria lote vazio');
   });
   await t('lote: item já pausado por OUTRO lote aberto entra como compartilhado; aviso quando um grupo obrigatório fica sem opções', async () => {
@@ -532,7 +548,7 @@ async function cleanup() {
     assert.equal((await post(A, 'resume_apply', { term: 'zzmorango', confirm: true })).status, 404, 'lote já liberado: nada a fazer');
     assert.deepEqual((await get(A, 'pause_batches')).json.batches.map(b => b.id).filter(id => id === bMor || id === bOre), [bOre], 'só o lote aberto aparece');
   });
-  await t('reativar por sinônimo: "zzbiscoitinho" libera o lote do "zzoreo"; a torta volta e a etiqueta anterior é restaurada', async () => {
+  await t('reativar por sinônimo: "zzbiscoitinho" libera o lote do "zzoreo"; a torta volta (D6: sem restauração de etiqueta)', async () => {
     assert.equal((await post(A, 'synonym_save', { canonical: 'zzoreo', synonym: 'zzbiscoitinho' })).status, 200);
     const pv = await post(A, 'resume_preview', { term: 'zzbiscoitinho' });
     assert.deepEqual(pv.json.batches.map(b => b.id), [bOre]);
@@ -541,10 +557,10 @@ async function cleanup() {
     assert.equal(r.status, 200, JSON.stringify(r.json));
     assert.deepEqual([r.json.products_resumed, r.json.links_resumed], [1, 1]);
     assert.equal(await isPaused(lot.torta.id), false);
-    assert.equal((await Q('select pause_label from products where id = $1', [lot.torta.id]))[0].pause_label, null, 'etiqueta "sem morango" não fica sobrando');
+    assert.equal((await Q('select pause_label from products where id = $1', [lot.torta.id]))[0].pause_label, null, 'nenhuma etiqueta é gravada');
     assert.equal(await isPaused(lot.builder.id, lot.ore.id), false);
     assert.equal(await isPaused(lot.manual.id), true);
-    assert.equal((await Q('select pause_label from products where id = $1', [lot.manual.id]))[0].pause_label, 'pausa manual');
+    assert.equal((await Q('select pause_label from products where id = $1', [lot.manual.id]))[0].pause_label, 'legado', 'a coluna obsoleta fica intacta');
   });
   await t('desfazer lote: por batch_id logo após pausar; 2ª vez 409; inexistente 404; id inválido 400; respeita item segurado por outro lote', async () => {
     const a = await post(A, 'pause_apply', { term: 'zzmorango', confirm: true, product_ids: [lot.torta.id], links: [link(lot.builder.id, lot.mor.id)] });

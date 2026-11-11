@@ -495,10 +495,10 @@ body.modal-open { overflow: hidden; }
 /* ---------- Toast ---------- */
 #toast {
   position: fixed;
-  bottom: calc(86px + env(safe-area-inset-bottom));
+  top: calc(12px + env(safe-area-inset-top));
   left: 50%;
   width: max-content; max-width: calc(100vw - 32px);
-  transform: translateX(-50%) translateY(20px);
+  transform: translateX(-50%) translateY(-20px);
   background: var(--cacau);
   color: #fff; text-align: center;
   border: 2px solid var(--rosa);
@@ -511,9 +511,7 @@ body.modal-open { overflow: hidden; }
   z-index: 60;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-/* Com folha aberta o toast vai para o topo, na faixa livre acima dela (a folha ocupa no máximo 88% da altura) */
-body.modal-open #toast { bottom: auto; top: calc(12px + env(safe-area-inset-top)); transform: translateX(-50%) translateY(-20px); }
-body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
+/* V6: o aviso fica sempre no topo (embaixo cobria o Acompanhe e o carrinho) */
 
 /* ---------- Sheet de categorias ---------- */
 .sheet { z-index: 55; }
@@ -531,8 +529,8 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
   box-shadow: var(--shadow-sm);
   transition: transform .12s ease, background .15s ease;
 }
-.cat-item::before { counter-increment: cat; content: counter(cat, decimal-leading-zero); font-family: var(--display); font-weight: 400; font-size: .95rem; color: var(--rosa); min-width: 1.6em; }
-.cat-item span:first-of-type { margin-right: auto; }
+.cat-item::before { order: -1; counter-increment: cat; content: counter(cat, decimal-leading-zero); font-family: var(--display); font-weight: 400; font-size: .95rem; color: var(--rosa); min-width: 1.6em; }
+.cat-item span:not(.cat-brig):not(.cat-count) { margin-right: auto; }
 .cat-item:active { transform: scale(.98); }
 .cat-count { display: grid; place-items: center; min-width: 28px; height: 28px; padding: 0 8px; border-radius: var(--pill); background: var(--brand-soft); font-size: .8rem; font-weight: 800; color: var(--brand-deep); }
 .cat-item.active { color: #fff; background: var(--brand); border-color: var(--brand-deep); }
@@ -735,10 +733,155 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
 .footer-link + .footer-link { margin-left: 8px; }
 /* fim A6 */
 
-/* A9: ícone de docinho em arquivo (sem emoji) para produto sem foto e carrinho vazio */
-.card .placeholder { background: var(--blush) url("/images/branding/doce.svg") center / 58% no-repeat; }
+/* A9/V1: brigadeiro (branding/brigadeiro.svg) em arquivo (sem emoji) para produto sem foto e carrinho vazio */
+.card .placeholder { background: var(--blush) url("/images/branding/brigadeiro.svg") center / 58% no-repeat; }
 .cart-empty::before {
-  content: ""; display: block; width: 56px; height: 56px; margin: 0 auto 10px;
-  background: url("/images/branding/doce.svg") center / contain no-repeat;
+  content: ""; display: block; width: 72px; height: 72px; margin: 0 auto 10px;
+  background: url("/images/branding/brigadeiro.svg") center / contain no-repeat;
 }
 /* fim A9 */
+
+/* v3 A4 — funcional; A5 refina na V7 */
+/* L1: quantidade no carrinho */
+.cart-item { flex-wrap: wrap; padding-right: 16px; }
+.cart-item .ci-qty { flex: 1 1 100%; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.cart-item .ci-qty button { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--brand-soft); color: var(--brand-deep); font-size: 1.3rem; font-weight: 800; cursor: pointer; display: grid; place-items: center; }
+.cart-item .ci-qty .ci-inc { background: var(--brand); color: #fff; }
+.cart-item .ci-qty button:disabled { opacity: .35; cursor: default; }
+.cart-item .ci-qty .n { min-width: 28px; text-align: center; font-weight: 800; font-size: 1.05rem; }
+.cart-item .ci-confirm { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; font-weight: 800; color: var(--brand-deep); }
+.cart-item .ci-confirm span { flex: 1 1 100%; text-align: right; }
+.cart-item .ci-confirm .button { width: auto; min-height: 44px; padding: 0 18px; }
+/* L3: CEP */
+.cep-status { margin: -6px 0 12px; font-size: .82rem; font-weight: 700; color: var(--ink-soft); }
+.cep-status.ok { color: #2f6b3a; }
+.cep-status.warn { color: var(--brand-deep); }
+/* L6: pontos no checkout */
+.points-earn { font-weight: 800; color: var(--brand-deep); }
+.points-login { margin-top: 6px; min-height: 44px; }
+/* L7: complemento e tamanho pausados */
+.comp-item.is-unavailable { opacity: .55; background: #faf4f1; border-style: dashed; filter: grayscale(.6); }
+.chip.is-unavailable { cursor: not-allowed; }
+.chip.is-unavailable .chip-text { opacity: .5; border-style: dashed; background: #f6ece7; color: var(--ink-soft); }
+.chip.is-unavailable input { cursor: not-allowed; }
+.comp-left .unavail-tag, .chip-text .unavail-tag { margin: 2px 0 0; font-size: .68rem; padding: 1px 8px; }
+/* L8: aviso do pagamento em pedido.html */
+.pay-banner { padding: 10px 14px; border-radius: var(--radius-md); background: var(--manteiga); color: var(--cacau); font-weight: 800; }
+.pay-banner.ok { background: #e4f3e6; color: #1f5a2b; }
+.pay-banner.warn { background: var(--brand-soft); color: var(--brand-deep); }
+
+/* v3 A5 */
+/* V2: produto pausado, faixa diagonal "Volto logo" cruzando o card (texto fixo; o produto continua visível) */
+.card.is-paused { overflow: hidden; }
+.pause-clip { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; }
+.pause-band {
+  position: absolute; left: -12%; right: -12%; top: 58%;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  height: 30px; margin-top: -15px;
+  transform: rotate(-7deg);
+  font-family: var(--display); font-weight: 400; font-size: 1.05rem; letter-spacing: .02em; line-height: 1;
+  color: #fff;
+  background: var(--brand);
+  border-block: 2px dashed rgba(255, 255, 255, .8);
+  box-shadow: 0 6px 12px -6px rgba(94, 40, 30, .55);
+  opacity: .96;
+}
+.pause-band::before, .pause-band::after {
+  content: ""; flex: none; width: 22px; height: 22px;
+  background: url("/images/branding/brigadeiro.svg") center / contain no-repeat;
+}
+.card.is-paused .name, .card.is-paused .desc { opacity: .75; }
+/* V3: ícone do brigadeiro na categoria "Para família" (chip, lista do botão Categorias e título) */
+.cat-brig { flex: none; display: inline-block; width: 26px; height: 26px; background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; }
+.category h2 .cat-brig { width: 34px; height: 34px; }
+.cat-chip.has-brig::before { width: 20px; height: 20px; margin-top: -10px; left: 8px; border: 0; border-radius: 0; background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; }
+.cat-chip.has-brig { padding-left: 33px; }
+.cat-chip.has-brig.active::before { background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; border: 0; }
+.cat-item .cat-brig { order: 0; margin-left: -2px; }
+
+/* V5: botão flutuante "Acompanhe" (brigadeiro + texto em arco parcial), no estilo do carrinho */
+.track-fab {
+  position: fixed; z-index: 40; right: 12px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  display: grid; place-items: center;
+  width: 72px; height: 72px; padding: 0;
+  border-radius: 50%;
+  background: var(--brand); color: var(--manteiga);
+  border: 2px solid var(--brand-deep);
+  box-shadow: 0 4px 0 var(--brand-deep), 0 16px 24px -10px rgba(156, 42, 64, .7);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.track-fab[hidden] { display: none; }
+.track-fab:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--brand-deep); }
+.track-fab svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.track-arc-text { font: 800 11.5px/1 var(--font); letter-spacing: .04em; fill: #fff; }
+.track-fab-count {
+  position: absolute; top: -6px; right: -4px;
+  display: grid; place-items: center;
+  min-width: 24px; height: 24px; padding: 0 6px;
+  border-radius: var(--pill);
+  background: var(--manteiga); color: var(--cacau);
+  border: 2px solid var(--brand-deep);
+  font-size: .78rem; font-weight: 800; line-height: 1;
+}
+.track-fab-count[hidden] { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .track-fab { animation: pop .45s cubic-bezier(.3, 1.8, .5, 1); }
+}
+/* com o carrinho visível, o Acompanhe sobe para ficar acima dele (nunca em cima dele) */
+body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px + env(safe-area-inset-bottom)); }
+
+/* V7: refinamento visual dos itens novos da v3 (L1, L2, L6, L7) */
+/* L1: quantidade com − e + grandes (44px) e o número no meio */
+.cart-item .ci-qty { justify-content: flex-end; }
+.cart-item .ci-qty { gap: 4px; }
+.cart-item .ci-qty button { width: 44px; height: 44px; transition: transform .12s ease, background .12s ease; }
+.cart-item .ci-qty button:active:not(:disabled) { transform: scale(.92); }
+.cart-item .ci-qty button:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+.cart-item .ci-qty .n { min-width: 40px; font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--cacau); }
+.cart-item .ci-confirm { padding-top: 2px; }
+.cart-item .ci-confirm span { font-size: .95rem; }
+.cart-item .ci-confirm .button { flex: 1 1 120px; min-height: 48px; }
+/* L2: retirada na loja */
+.pickup-info { position: relative; display: grid; gap: 4px; padding: 12px 14px 12px 58px; border: 2px solid rgba(59, 26, 18, .14); border-radius: var(--radius-md); background: var(--manteiga); }
+.pickup-info::before { content: ""; position: absolute; left: 12px; top: 12px; width: 34px; height: 34px; background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; }
+.pickup-info p { margin: 0; }
+.pickup-where { font-size: .95rem; line-height: 1.35; overflow-wrap: anywhere; }
+.pickup-free { display: inline-block; justify-self: start; padding: 1px 10px; border-radius: var(--pill); background: #fff; color: var(--brand-deep); font-weight: 800; font-size: .8rem; box-shadow: inset 0 0 0 1.5px rgba(201, 58, 81, .3); }
+.pickup-notice { font-weight: 800; font-size: .88rem; line-height: 1.35; color: var(--brand-deep); }
+/* L6: caixa de pontos com o brigadeiro no lugar da estrela */
+.points-box::before { content: ""; width: 40px; height: 40px; border-radius: 0; background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; box-shadow: none; }
+.points-earn { font-size: .9rem; line-height: 1.35; }
+.points-login { width: 100%; margin-top: 8px; padding-inline: 10px; font-size: .92rem; font-weight: 800; white-space: nowrap; }
+#checkout-form .points-box select { width: 100%; }
+/* L7: complemento e tamanho pausados: nome apagado, etiqueta "Indisponível" sempre nítida */
+.comp-item.is-unavailable { opacity: 1; filter: none; background: #faf4f1; border-style: dashed; }
+.comp-item.is-unavailable .comp-left > :not(.unavail-tag) { opacity: .6; }
+.comp-item.is-unavailable button:disabled { opacity: .4; }
+.chip.is-unavailable .chip-text, .chip input[aria-disabled="true"] + .chip-text { opacity: 1; background: #f6ece7; border-style: dashed; border-color: rgba(59, 26, 18, .22); color: var(--ink-soft); }
+.chip.is-unavailable .chip-name, .chip.is-unavailable .comp-price { opacity: .6; }
+.chip.is-unavailable .unavail-tag { opacity: 1; background: #fff; }
+@media (prefers-reduced-motion: reduce) { .cart-item .ci-qty button { transition: none; } }
+
+/* V6: topo em uma linha só (56 px): selo da loja + até 3 itens de 44 px */
+.topbar { flex-wrap: nowrap; min-height: 56px; gap: 8px; }
+.topbar .store-badge { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.topbar-actions { flex: 0 0 auto; flex-wrap: nowrap; gap: 6px; }
+.account-area { flex-wrap: nowrap; gap: 6px; }
+.topbar-btn { white-space: nowrap; }
+.topbar-btn.icon { position: relative; justify-content: center; width: 44px; padding: 0; }
+.topbar-count { position: absolute; top: 1px; right: 1px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--rosa); color: var(--cacau); font-size: .7rem; font-weight: 800; line-height: 18px; text-align: center; box-shadow: 0 0 0 2px var(--cacau); }
+.topbar-btn.points { gap: 6px; padding: 0 12px 0 8px; }
+.topbar-btn.points::before { content: ""; flex: none; width: 22px; height: 22px; background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; }
+.topbar-btn.points .pts-word { display: none; }
+.topbar-btn.account { gap: 7px; padding: 0 12px 0 6px; }
+.topbar-btn.account .acc-av { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--rosa); color: var(--cacau); font-family: var(--display); font-weight: 400; font-size: 1rem; line-height: 1; }
+.topbar-btn.account .acc-name { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
+.store-badge .sb-short { display: none; }
+@media (max-width: 379px) {
+  .store-badge .sb-long { display: none; }
+  .store-badge .sb-short { display: inline; }
+  .topbar { padding-inline: 8px; gap: 6px; }
+}
+@media (min-width: 420px) { .topbar-btn.points .pts-word { display: inline; } .topbar-btn.account .acc-name { max-width: 14ch; } }

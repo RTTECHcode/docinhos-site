@@ -4,6 +4,8 @@ const catsEl = document.querySelector('#categorias');
 const cartFab = document.querySelector('#cart-fab');
 const cartFabCount = document.querySelector('#cart-fab-count');
 const catFab = document.querySelector('#cat-fab');
+const trackFab = document.querySelector('#track-fab');
+const trackFabCount = document.querySelector('#track-fab-count');
 const catList = document.querySelector('#cat-list');
 const toastEl = document.createElement('div');
 toastEl.id = 'toast';
@@ -91,6 +93,9 @@ function toast(msg, ms = 1800) {
    X / fundo / Esc chamam history.back() quando o estado atual é do modal, então há um só caminho de fechamento. */
 const modalStack = [];      // ids abertos; o último é o do topo
 const closing = new Set();  // ids com history.back() em andamento (evita voltar duas vezes)
+let modalSeq = 0;           // V4: cada abertura ganha um número crescente, gravado no estado do histórico (dgSeq)
+const abandoned = new Set(); // V4: números cujo history.back() demorou demais e o fechamento foi resolvido pelo temporizador
+const BACK_WAIT_MS = 500;   // espera pelo popstate antes de fechar por conta própria
 const modalHooks = {
   '#cat-sheet': {
     open() {
@@ -112,7 +117,9 @@ function openModal(id, opts = {}) {
   clearTimeout(modal._hideTimer);
   modal._opener = opts.opener || document.activeElement;
   modalStack.push(id);
-  if (opts.replace) history.replaceState({ dgModal: id }, ''); else history.pushState({ dgModal: id }, '');
+  modal._seq = ++modalSeq;
+  const hState = { dgModal: id, dgSeq: modal._seq };
+  if (opts.replace) history.replaceState(hState, ''); else history.pushState(hState, '');
   modal.hidden = false;
   document.body.classList.add('modal-open');
   void modal.offsetWidth; // reflow: a transição parte do estado fechado
@@ -147,21 +154,30 @@ function hideModal(id) {
 function requestClose(id, after) {
   if (!modalStack.includes(id) || closing.has(id)) return;
   if (after) modalEl(id)._after = after;
-  if (history.state && history.state.dgModal === id) {
+  const seq = modalEl(id)._seq;
+  if (history.state && history.state.dgModal === id && history.state.dgSeq === seq) {
     closing.add(id);
     history.back();
-    // rede de segurança: se o popstate não chegar, fecha mesmo assim
-    setTimeout(() => { if (closing.has(id)) hideModal(id); }, 800);
+    // Rede de segurança: se o popstate não chegar, fecha mesmo assim. A volta que chegar depois (aparelho lento,
+    // navegador embutido) é reconhecida como atrasada em 'abandoned' e não derruba o modal que abriu nesse meio tempo (V4).
+    setTimeout(() => { if (closing.has(id)) { abandoned.add(seq); hideModal(id); } }, BACK_WAIT_MS);
   } else {
     hideModal(id);
   }
 }
 
 window.addEventListener('popstate', () => {
-  const want = history.state && history.state.dgModal;
-  while (modalStack.length && modalStack[modalStack.length - 1] !== want) hideModal(modalStack[modalStack.length - 1]);
+  const wantSeq = (history.state && history.state.dgSeq) || 0;
+  if (wantSeq && abandoned.has(wantSeq)) {
+    // Volta atrasada de um fechamento que o temporizador já resolveu. Se há modal aberto depois dela, ele continua valendo:
+    // volta uma entrada para o estado dele, em vez de fechá-lo.
+    abandoned.delete(wantSeq);
+    if (modalStack.length) history.forward(); else history.replaceState(null, '');
+    return;
+  }
+  while (modalStack.length && (modalEl(modalStack[modalStack.length - 1])._seq || 0) > wantSeq) hideModal(modalStack[modalStack.length - 1]);
   // "avançar" para uma entrada de modal que não está aberto: neutraliza a entrada
-  if (want && !modalStack.includes(want)) history.replaceState(null, '');
+  if (wantSeq && !modalStack.some(id => modalEl(id)._seq === wantSeq)) history.replaceState(null, '');
 });
 // recarregar com estado de modal no histórico: esse estado não vale mais
 if (history.state && history.state.dgModal) history.replaceState(null, '');
@@ -202,11 +218,14 @@ let activeCat = null;
 let navLockUntil = 0;
 const scrollBehavior = () => (REDUCED.matches ? 'auto' : 'smooth');
 
+// V3: a categoria "Para família" ganha o ícone do brigadeiro (identificada pelo nome, sem acento e em minúsculas)
+const isFamilyCat = c => String(c.name || '').normalize('NFD').replace(/[^a-zA-Z ]/g, '').trim().toLowerCase() === 'para familia';
+const brigIcon = c => isFamilyCat(c) ? '<span class="cat-brig" aria-hidden="true"></span>' : '';
 function renderCats() {
   catsEl.innerHTML = menu.map(c =>
-    `<a class="cat-chip" href="#cat-${c.id}" data-cat="${c.id}">${esc(c.name)}</a>`).join('');
+    `<a class="cat-chip${isFamilyCat(c) ? ' has-brig' : ''}" href="#cat-${c.id}" data-cat="${c.id}">${esc(c.name)}</a>`).join('');
   catList.innerHTML = menu.map(c =>
-    `<li><a class="cat-item" href="#cat-${c.id}" data-cat="${c.id}"><span>${esc(c.name)}</span><span class="cat-count">${c.products.length}</span></a></li>`).join('');
+    `<li><a class="cat-item" href="#cat-${c.id}" data-cat="${c.id}">${brigIcon(c)}<span>${esc(c.name)}</span><span class="cat-count">${c.products.length}</span></a></li>`).join('');
   catFab.hidden = menu.length === 0;
   if (menu.length) setActiveCat(menu[0].id);
 }
@@ -274,19 +293,20 @@ document.addEventListener('click', e => {
 function renderMenu() {
   menuEl.innerHTML = menu.map(c => `
     <section class="category" id="cat-${c.id}">
-      <h2>${esc(c.name)}</h2>
+      <h2>${brigIcon(c)}${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
-        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
+        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
           ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
           <span class="body">
             <span class="name">${esc(p.name)}</span>
             ${p.description ? `<span class="desc">${esc(p.description)}</span>` : ''}
-            ${p.unavailable ? `<span class="unavail-tag">${esc(p.label || 'Indisponível no momento')}</span>` : ''}
+            ${p.unavailable && !p.paused ? '<span class="unavail-tag">Indisponível no momento</span>' : ''}
             <span class="price-row">
               <span class="price">${p.priceCents != null ? (p.complements?.some(x => x.kind === 'size') ? `<span class="from">a partir de</span> ${brl(p.priceCents)}` : brl(p.priceCents)) : 'Consulte'}</span>
             </span>
           </span>
           ${p.unavailable ? '' : '<span class="add-hint" aria-hidden="true">+</span>'}
+          ${p.paused ? '<span class="pause-clip"><span class="pause-band">Volto logo</span></span>' : ''}
         </button>`).join('')}</div>
     </section>`).join('');
 }
@@ -305,11 +325,13 @@ function openProduct(id, opener) {
   const comps = activeProduct.complements || [];
   const sizes = comps.filter(c => c.kind === 'size');
   const extras = comps.filter(c => c.kind !== 'size');
-  sel = { size: sizes.length ? sizes[0] : null, extras: {} };
+  const firstSize = sizes.find(c => !c.unavailable) || null;
+  sel = { size: firstSize, extras: {} };
   // Grupos de escolha: a API pode não enviar `groups` (ainda); sem eles tudo segue como complemento com +/−.
   pmGroups = (Array.isArray(activeProduct.groups) ? activeProduct.groups : []).map(g => {
     const opts = extras.filter(c => c.groupId != null && Number(c.groupId) === Number(g.id));
-    const max = Number(g.maxChoices) > 0 ? Math.min(Number(g.maxChoices), opts.length) : opts.length;
+    const free = opts.filter(c => !c.unavailable).length; // pausados não contam para o limite nem para o mínimo
+    const max = Number(g.maxChoices) > 0 ? Math.min(Number(g.maxChoices), free) : free;
     return { id: Number(g.id), label: String(g.label || ''), min: Math.min(Math.max(0, Number(g.minChoices) || 0), max), max, opts };
   }).filter(g => g.opts.length);
   const grouped = new Set(pmGroups.flatMap(g => g.opts.map(o => o.id)));
@@ -324,11 +346,12 @@ function openProduct(id, opener) {
       <div class="comp-group">
         <h4>Escolha o tamanho</h4>
         <p class="hint">Escolha 1 opção</p>
-        ${sizes.map((s, i) => `
-          <div class="comp-item">
-            <span class="comp-left">${esc(s.name)}${s.priceCents ? `<span class="comp-price">+ ${brl(s.priceCents)}</span>` : ''}</span>
-            <span class="comp-qty"><button type="button" data-size="${s.id}" aria-label="Escolher ${esc(s.name)}" ${i === 0 ? 'disabled' : ''}>${i === 0 ? '✓' : '+'}</button></span>
+        ${sizes.map(s => `
+          <div class="comp-item${s.unavailable ? ' is-unavailable' : ''}">
+            <span class="comp-left">${esc(s.name)}${s.priceCents ? `<span class="comp-price">+ ${brl(s.priceCents)}</span>` : ''}${s.unavailable ? '<span class="unavail-tag">Indisponível</span>' : ''}</span>
+            <span class="comp-qty"><button type="button" data-size="${s.id}" aria-label="${s.unavailable ? `${esc(s.name)} indisponível` : `Escolher ${esc(s.name)}`}" ${s.unavailable || (firstSize && s.id === firstSize.id) ? 'disabled' : ''}>${firstSize && s.id === firstSize.id ? '✓' : '+'}</button></span>
           </div>`).join('')}
+        ${firstSize ? '' : '<p class="group-error" role="alert">Todos os tamanhos estão indisponíveis no momento.</p>'}
       </div>` : ''}
     ${pmGroups.map(g => `
       <div class="comp-group choice-group" data-gid="${g.id}" role="group" aria-labelledby="gt-${g.id}">
@@ -337,28 +360,28 @@ function openProduct(id, opener) {
         <p class="group-error" data-gerr role="alert" hidden></p>
         <div class="chips">
           ${g.opts.map(o => `
-            <label class="chip">
-              <input type="checkbox" data-opt="${o.id}" data-opt-group="${g.id}" aria-disabled="false">
-              <span class="chip-text"><span class="chip-name">${esc(stripPrefix(o.name))}</span>${priceTag(o)}</span>
+            <label class="chip${o.unavailable ? ' is-unavailable' : ''}">
+              <input type="checkbox" data-opt="${o.id}" data-opt-group="${g.id}" aria-disabled="${o.unavailable ? 'true' : 'false'}" ${o.unavailable ? 'disabled' : ''}>
+              <span class="chip-text"><span class="chip-name">${esc(stripPrefix(o.name))}</span>${o.unavailable ? '<span class="unavail-tag">Indisponível</span>' : priceTag(o)}</span>
             </label>`).join('')}
         </div>
       </div>`).join('')}
     ${loose.length ? `
       <div class="comp-group">
         <h4>${pmGroups.length ? 'Outros complementos' : 'Complementos'}</h4>
-        <p class="hint">Opcional — até ${Math.max(...loose.map(x => x.maxQuantity))} por item</p>
+        <p class="hint">Opcional — até ${Math.max(1, ...loose.filter(x => !x.unavailable).map(x => x.maxQuantity))} por item</p>
         ${loose.map(x => `
-          <div class="comp-item">
-            <span class="comp-left">${esc(stripPrefix(x.name))}${priceTag(x)}</span>
+          <div class="comp-item${x.unavailable ? ' is-unavailable' : ''}">
+            <span class="comp-left">${esc(stripPrefix(x.name))}${x.unavailable ? '<span class="unavail-tag">Indisponível</span>' : priceTag(x)}</span>
             <span class="comp-qty">
               <button type="button" data-minus="${x.id}" aria-label="Menos ${esc(x.name)}" disabled>−</button>
               <span class="n" data-count="${x.id}">0</span>
-              <button type="button" data-plus="${x.id}" aria-label="Mais ${esc(x.name)}">+</button>
+              <button type="button" data-plus="${x.id}" aria-label="${x.unavailable ? `${esc(x.name)} indisponível` : `Mais ${esc(x.name)}`}" ${x.unavailable ? 'disabled' : ''}>+</button>
             </span>
           </div>`).join('')}
       </div>` : ''}
     <div class="pm-total-row"><span>Total</span><span id="pm-total"></span></div>
-    <button type="button" class="button primary full" id="pm-add">Adicionar ao carrinho</button>`;
+    <button type="button" class="button primary full" id="pm-add" ${sizes.length && !firstSize ? 'disabled' : ''}>Adicionar ao carrinho</button>`;
   updatePmTotal();
   openModal('#product-modal', { opener });
 }
@@ -401,13 +424,15 @@ document.addEventListener('click', e => {
   const comps = activeProduct.complements || [];
   const sizeBtn = e.target.closest('[data-size]');
   if (sizeBtn) {
+    if (sizeBtn.disabled) return;
     sel.size = comps.find(c => c.id === Number(sizeBtn.dataset.size));
-    document.querySelectorAll('[data-size]').forEach(b => { b.textContent = b === sizeBtn ? '✓' : '+'; b.disabled = b === sizeBtn; });
+    document.querySelectorAll('[data-size]').forEach(b => { b.textContent = b === sizeBtn ? '✓' : '+'; b.disabled = b === sizeBtn || !!b.closest('.is-unavailable'); });
     updatePmTotal();
     return;
   }
   const opt = e.target.closest('[data-opt]');
   if (opt) {
+    if (opt.disabled) { e.preventDefault(); return; }
     const g = pmGroups.find(x => x.id === Number(opt.dataset.optGroup));
     if (!g) return;
     // opt.checked já é o NOVO estado; groupCount ainda não conta esta opção
@@ -422,6 +447,7 @@ document.addEventListener('click', e => {
   if (plus || minus) {
     const cid = Number((plus || minus).dataset.plus || (plus || minus).dataset.minus);
     const comp = comps.find(c => c.id === cid);
+    if (!comp || comp.unavailable) return;
     const q = sel.extras[cid] || 0;
     const next = Math.max(0, Math.min(comp.maxQuantity, q + (plus ? 1 : -1)));
     if (next) sel.extras[cid] = next; else delete sel.extras[cid];
@@ -454,6 +480,7 @@ document.addEventListener('click', e => {
 // O carrinho guarda ids (enviados ao servidor, que recalcula o preço) e nomes/preços só para exibição.
 function addToCart(product, sel2) {
   if (product.unavailable) { toast('Este produto está indisponível no momento.'); return; }
+  if ((product.complements || []).some(c => c.kind === 'size') && !sel2.size) { toast('Escolha um tamanho disponível.'); return; }
   const extras = Object.entries(sel2.extras).map(([cid, q]) => {
     const c = (product.complements || []).find(x => x.id === Number(cid));
     return { id: c.id, name: c.name, qty: q, priceCents: c.priceCents };
@@ -483,7 +510,7 @@ function renderCartFab() {
   lastFabCount = n;
 }
 
-cartFab.addEventListener('click', () => { renderCart(); openModal('#cart-modal', { opener: cartFab }); });
+cartFab.addEventListener('click', () => { confirmRmKey = null; renderCart(); openModal('#cart-modal', { opener: cartFab }); });
 
 // Tira do carrinho o que saiu do ar (produto pausado, tamanho ou complemento que não existe mais). Devolve os nomes removidos.
 function pruneCart() {
@@ -494,8 +521,8 @@ function pruneCart() {
     if (!p) return true; // não está no cardápio carregado: o servidor decide
     const comps = p.complements || [];
     const ok = !p.unavailable
-      && (!i.size || comps.some(c => c.id === i.size.id))
-      && i.extras.every(x => comps.some(c => c.id === x.id));
+      && (!i.size || comps.some(c => c.id === i.size.id && !c.unavailable))
+      && i.extras.every(x => comps.some(c => c.id === x.id && !c.unavailable));
     if (!ok) removed.push(i.name);
     return ok;
   });
@@ -503,6 +530,8 @@ function pruneCart() {
   return removed;
 }
 
+let confirmRmKey = null; // item do carrinho esperando a confirmação de remover
+const CART_QTY_MAX = 50;
 function renderCart() {
   const removed = pruneCart();
   const noticeEl = document.querySelector('#cart-notice');
@@ -523,19 +552,36 @@ function renderCart() {
     return `
     <div class="cart-item">
       <div class="ci-info">
-        <div class="ci-name">${esc(i.name)}${i.qty > 1 ? ` × ${i.qty}` : ''}</div>
+        <div class="ci-name">${esc(i.name)}</div>
         ${comps ? `<div class="ci-comps">${comps}</div>` : ''}
       </div>
       <span class="ci-price">${brl(i.unitTotal * i.qty)}</span>
-      <button type="button" class="ci-remove" data-rm="${idx}" aria-label="Remover ${esc(i.name)}">×</button>
+      ${confirmRmKey === i.key ? `<div class="ci-confirm" role="alertdialog" aria-label="Remover ${esc(i.name)} do carrinho?"><span>Remover do carrinho?</span><button type="button" class="button primary" data-rm-yes="${idx}">Remover</button><button type="button" class="button secondary" data-rm-no>Manter</button></div>` : `<div class="ci-qty" role="group" aria-label="Quantidade de ${esc(i.name)}">
+        <button type="button" class="ci-dec" data-dec="${idx}" aria-label="${i.qty === 1 ? `Remover ${esc(i.name)}` : `Diminuir quantidade de ${esc(i.name)}`}">${i.qty === 1 ? '🗑' : '−'}</button>
+        <span class="n" aria-live="polite">${i.qty}</span>
+        <button type="button" class="ci-inc" data-inc="${idx}" aria-label="Aumentar quantidade de ${esc(i.name)}" ${i.qty >= CART_QTY_MAX ? 'disabled' : ''}>+</button>
+      </div>`}
     </div>`;
   }).join('');
   document.querySelector('#cart-total').innerHTML = `<span>Total</span><span>${brl(cartTotal())}</span>`;
 }
 
 document.addEventListener('click', e => {
-  const rm = e.target.closest('[data-rm]');
-  if (rm) { cart.splice(Number(rm.dataset.rm), 1); save(); renderCart(); }
+  if (!e.target.closest('#cart-modal')) return;
+  const dec = e.target.closest('[data-dec]'), inc = e.target.closest('[data-inc]');
+  const yes = e.target.closest('[data-rm-yes]'), no = e.target.closest('[data-rm-no]');
+  if (dec) {
+    const it = cart[Number(dec.dataset.dec)];
+    if (!it) return;
+    if (it.qty > 1) it.qty -= 1; else { confirmRmKey = it.key; renderCart(); return; }
+    save(); renderCart();
+  } else if (inc) {
+    const it = cart[Number(inc.dataset.inc)];
+    if (it && it.qty < CART_QTY_MAX) { it.qty += 1; save(); renderCart(); }
+  } else if (yes) {
+    const it = cart[Number(yes.dataset.rmYes)];
+    if (it && it.key === confirmRmKey) { cart.splice(Number(yes.dataset.rmYes), 1); confirmRmKey = null; save(); renderCart(); }
+  } else if (no) { confirmRmKey = null; renderCart(); }
 });
 
 /* ---------- Pedidos recentes (C7): lista no navegador, só public_code + token de acompanhamento + data ---------- */
@@ -552,9 +598,16 @@ function addRecent(order) {
   list.unshift({ public_code: order.public_code || '', token: order.token, date: new Date().toISOString() });
   writeStore(RECENT_KEY, list.slice(0, RECENT_MAX));
   renderRecentBtn();
+  refreshTrack();
 }
 const recentBtn = document.querySelector('#recent-btn');
-function renderRecentBtn() { recentBtn.hidden = loadRecent().length === 0; }
+const recentCountEl = document.querySelector('#recent-count');
+function renderRecentBtn() {
+  const n = loadRecent().length;
+  recentBtn.hidden = n === 0;
+  recentCountEl.textContent = String(n);
+  recentBtn.setAttribute('aria-label', n > 1 ? `Pedidos recentes (${n})` : 'Pedidos recentes');
+}
 const dateTimeFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 recentBtn.addEventListener('click', () => {
   const list = document.querySelector('#recent-list');
@@ -605,7 +658,11 @@ function setStoreState(st) {
   storeBadgeEl.hidden = !store;
   if (store) {
     storeBadgeEl.className = 'store-badge ' + (store.open ? 'open' : 'closed');
-    storeBadgeEl.textContent = store.open ? 'Loja aberta' : 'Loja fechada';
+    // V6: texto curto abaixo de 380 px (CSS escolhe qual aparece); o curto fica fora da leitura de tela para não repetir
+    const longT = document.createElement('span'), shortT = document.createElement('span');
+    longT.className = 'sb-long'; longT.textContent = store.open ? 'Loja aberta' : 'Loja fechada';
+    shortT.className = 'sb-short'; shortT.textContent = store.open ? 'Aberta' : 'Fechada'; shortT.setAttribute('aria-hidden', 'true');
+    storeBadgeEl.replaceChildren(longT, shortT);
     storeBadgeEl.title = store.open ? '' : closedMessage(store);
   }
   const closed = !!store && !store.open;
@@ -634,14 +691,23 @@ function topLink(text, href, cls) {
 function renderAccount() {
   accountAreaEl.replaceChildren();
   if (!account) {
-    accountAreaEl.append(topLink('Entrar', '/conta/'), topLink('Criar conta', '/conta/#cadastro', 'primary'));
+    // V6: visitante só vê "Entrar"; "Criar conta" fica na tela de entrada (/conta/) e no convite de pontos do checkout
+    accountAreaEl.append(topLink('Entrar', '/conta/', 'primary'));
     return;
   }
-  const hi = document.createElement('span');
-  hi.className = 'account-name';
-  hi.textContent = 'Olá, ' + String(account.name || '').split(' ')[0];
-  const pts = topLink(`${Number(account.points && account.points.balance) || 0} pontos`, '/conta/#pontos', 'points');
-  accountAreaEl.append(hi, pts, topLink('Meus pedidos', '/conta/#pedidos'));
+  const bal = Number(account.points && account.points.balance) || 0;
+  const first = String(account.name || '').trim().split(/\s+/)[0] || 'Conta';
+  const pts = topLink('', '/conta/#pontos', 'points');
+  const n = document.createElement('span'); n.textContent = String(bal);
+  const word = document.createElement('span'); word.className = 'pts-word'; word.textContent = ' pontos';
+  pts.append(n, word);
+  pts.setAttribute('aria-label', `${bal} pontos`);
+  const acc = topLink('', '/conta/#pedidos', 'account');
+  const av = document.createElement('span'); av.className = 'acc-av'; av.setAttribute('aria-hidden', 'true'); av.textContent = first.charAt(0).toUpperCase();
+  const nm = document.createElement('span'); nm.className = 'acc-name'; nm.textContent = first;
+  acc.append(av, nm);
+  acc.setAttribute('aria-label', `Minha conta: ${first}`);
+  accountAreaEl.append(pts, acc);
 }
 async function loadAccount() {
   try {
@@ -652,7 +718,90 @@ async function loadAccount() {
   renderAccount();
   renderPoints();
   renderSummary();
+  refreshTrack();
 }
+
+/* ---------- V5: botão flutuante "Acompanhe" ----------
+   Aparece quando há pedido não concluído: dos recentes no aparelho (dg-recent-orders, status consultado em /api/order-status)
+   ou do cliente logado (/api/customer?a=orders). Um pedido: abre direto o acompanhamento. Mais de um: lista. */
+const TRACK_DONE = new Set(['completed', 'delivered', 'cancelled']);
+const TRACK_PAY_DEAD = new Set(['rejected', 'cancelled', 'refunded', 'charged_back']);
+const TRACK_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const TRACK_CHECKS = 5;      // no máximo 5 consultas de status por rodada (limite do servidor: 300 em 10 min por IP)
+const TRACK_EVERY_MS = 60000;
+let trackItems = [];
+let trackSeq = 0;
+let trackLastAt = 0;
+const trackActive = o => !!o && !TRACK_DONE.has(o.fulfillment_status) && !TRACK_PAY_DEAD.has(o.payment_status);
+const trackFresh = iso => { const t = Date.parse(iso); return !isNaN(t) && Date.now() - t < TRACK_MAX_AGE_MS; };
+async function trackStatusOf(r) {
+  try {
+    const res = await fetch('/api/order-status?t=' + encodeURIComponent(r.token), { cache: 'no-store' });
+    if (res.status === 404) return null;        // pedido não existe mais
+    if (!res.ok) return { unknown: true };      // 429 ou erro: mantém visível, sem status
+    return await res.json();
+  } catch { return { unknown: true }; }
+}
+async function trackMyOrders() {
+  if (!account) return [];
+  try {
+    const res = await fetch('/api/customer?a=orders&limit=10', { credentials: 'same-origin', cache: 'no-store' });
+    if (!res.ok) return [];
+    const d = await res.json();
+    return Array.isArray(d.orders) ? d.orders : [];
+  } catch { return []; }
+}
+async function refreshTrack() {
+  const my = ++trackSeq;
+  trackLastAt = Date.now();
+  const recents = loadRecent().filter(r => trackFresh(r.date)).slice(0, TRACK_CHECKS);
+  const [statuses, mine] = await Promise.all([Promise.all(recents.map(trackStatusOf)), trackMyOrders()]);
+  if (my !== trackSeq) return; // chegou uma rodada mais nova
+  const items = [];
+  const seen = new Set();
+  recents.forEach((r, i) => {
+    const s = statuses[i];
+    if (s === null || (!s.unknown && !trackActive(s))) return;
+    const code = (s && s.public_code) || r.public_code || '';
+    if (code) seen.add(code);
+    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.fulfillment_label || ''), date: r.date });
+  });
+  for (const o of mine) {
+    if (!trackActive(o) || !trackFresh(o.created_at) || (o.public_code && seen.has(o.public_code))) continue;
+    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.fulfillment_label || ''), date: o.created_at });
+  }
+  items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+  trackItems = items;
+  renderTrackFab();
+}
+function renderTrackFab() {
+  const n = trackItems.length;
+  trackFab.hidden = n === 0;
+  trackFabCount.hidden = n < 2;
+  trackFabCount.textContent = n < 2 ? '' : String(n);
+  trackFab.setAttribute('aria-label', n > 1 ? `Acompanhar meus ${n} pedidos` : 'Acompanhar meu pedido');
+}
+trackFab.addEventListener('click', () => {
+  if (trackItems.length === 1) { location.href = trackItems[0].href; return; }
+  const list = document.querySelector('#track-list');
+  list.replaceChildren();
+  for (const it of trackItems) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = it.href;
+    const code = document.createElement('strong');
+    code.textContent = it.code || 'Pedido';
+    const info = document.createElement('span');
+    const d = new Date(it.date);
+    info.textContent = [it.label, isNaN(d) ? '' : dateTimeFmt.format(d).replace(',', ' às')].filter(Boolean).join(' · ');
+    a.append(code, info);
+    li.append(a);
+    list.append(li);
+  }
+  openModal('#track-modal', { opener: trackFab });
+});
+setInterval(() => { if (!document.hidden && (loadRecent().length || account)) refreshTrack(); }, TRACK_EVERY_MS);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - trackLastAt > 20000) refreshTrack(); });
 
 /* ---------- Checkout ---------- */
 const checkoutFormEl = document.querySelector('#checkout-form');
@@ -676,7 +825,7 @@ function syncSubmitState() { submitBtnEl.disabled = submitting || (!!store && !s
 function syncDelivery() {
   const pickup = isPickup();
   addressFieldEl.hidden = pickup;
-  addressFieldEl.querySelectorAll('input').forEach(i => { i.disabled = pickup; i.required = !pickup && i.name !== 'complement'; });
+  addressFieldEl.querySelectorAll('input').forEach(i => { i.disabled = pickup; i.required = !pickup && !['complement', 'district', 'city'].includes(i.name); });
   pickupInfoEl.hidden = !pickup;
   renderPoints();
   renderSummary();
@@ -689,7 +838,8 @@ let quoteSeq = 0;
 const fullAddress = () => {
   const num = field('address_number').value.trim();
   const comp = field('complement').value.trim();
-  return `${field('address').value.trim()}, ${num}${comp ? ' - ' + comp : ''}`;
+  const area = [field('district').value.trim(), field('city').value.trim()].filter(Boolean).join(', ');
+  return `${field('address').value.trim()}, ${num}${comp ? ' - ' + comp : ''}${area ? ' - ' + area : ''}`.slice(0, 200);
 };
 const quoteKey = () => [digitsOf(field('cep').value), fullAddress()].join('|');
 const kmText = n => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
@@ -701,7 +851,7 @@ function showQuote(msg, kind) {
 function quoteErrorText(status, d) {
   const code = d && d.code;
   if (code === 'invalid_cep') return 'CEP inválido. Informe os 8 números do CEP.';
-  if (code === 'invalid_address') return 'Endereço inválido. Informe a rua e o bairro (mínimo de 5 letras).';
+  if (code === 'invalid_address') return 'Endereço inválido. Confira a rua e o número.';
   if (code === 'cep_not_found') return 'CEP não encontrado. Confira o CEP digitado.';
   if (code === 'address_not_found') return 'Não encontramos esse endereço. Confira a rua, o número e o CEP.';
   if (code === 'out_of_area') return `Esse endereço fica fora da nossa área de entrega${d.max_km ? ` (até ${kmText(d.max_km)} km)` : ''}. Você pode escolher retirada.`;
@@ -715,7 +865,7 @@ function invalidateQuote() {
 async function runQuote() {
   const cep = digitsOf(field('cep').value);
   if (cep.length !== 8) { showQuote('Informe o CEP com 8 números.', 'warn'); return null; }
-  if (field('address').value.trim().length < 5) { showQuote('Informe a rua e o bairro.', 'warn'); return null; }
+  if (field('address').value.trim().length < 3) { showQuote('Informe a rua.', 'warn'); return null; }
   if (!field('address_number').value.trim()) { showQuote('Informe o número da casa (ou s/n).', 'warn'); return null; }
   const key = quoteKey();
   const mine = ++quoteSeq;
@@ -743,15 +893,55 @@ async function runQuote() {
 }
 quoteBtnEl.addEventListener('click', runQuote);
 const cepInput = field('cep');
+/* L3: ao completar os 8 números, busca rua, bairro e cidade (GET /api/store?a=cep). Os campos continuam editáveis,
+   e se o CEP falhar o cliente preenche à mão. Uma consulta por CEP (o servidor limita por IP): o resultado fica em memória. */
+const cepStatusEl = document.querySelector('#cep-status');
+const cepCache = new Map(); // cep -> { ok, data } | { ok:false, msg }
+let cepSeq = 0;
+function showCepStatus(msg, kind) {
+  cepStatusEl.textContent = msg;
+  cepStatusEl.className = 'cep-status' + (kind ? ' ' + kind : '');
+  cepStatusEl.hidden = !msg;
+}
+function applyCep(r) {
+  const set = (name, v) => { if (v) field(name).value = v; };
+  set('address', r.data.street); set('district', r.data.district); set('city', r.data.city);
+  quote = null; showQuote('', ''); renderPoints(); renderSummary();
+  showCepStatus(r.data.street || r.data.district || r.data.city ? 'Endereço preenchido pelo CEP. Confira e complete o número.' : 'CEP sem rua cadastrada. Preencha o endereço à mão.', r.data.street ? 'ok' : 'warn');
+  if (r.data.street && !field('address_number').value) field('address_number').focus({ preventScroll: true });
+}
+async function lookupCep() {
+  const cep = digitsOf(cepInput.value);
+  if (cep.length !== 8) { cepSeq++; showCepStatus('', ''); return; }
+  const cached = cepCache.get(cep);
+  if (cached) { if (cached.ok) applyCep(cached); else showCepStatus(cached.msg, 'warn'); return; }
+  const mine = ++cepSeq;
+  showCepStatus('Buscando o endereço...', '');
+  try {
+    const r = await fetch('/api/store?a=cep&cep=' + cep, { cache: 'no-store' });
+    let d = {};
+    try { d = await r.json(); } catch { /* corpo não-JSON */ }
+    if (mine !== cepSeq) return; // o CEP mudou no meio do caminho
+    if (r.ok && d && typeof d === 'object') { const res = { ok: true, data: d }; cepCache.set(cep, res); applyCep(res); return; }
+    const msg = r.status === 404 ? 'CEP não encontrado. Confira o número ou preencha o endereço à mão.'
+      : r.status === 429 ? 'Muitas consultas de CEP agora. Preencha o endereço à mão.'
+      : 'Não foi possível buscar o CEP agora. Preencha o endereço à mão.';
+    if (r.status === 404) cepCache.set(cep, { ok: false, msg });
+    showCepStatus(msg, 'warn');
+  } catch {
+    if (mine === cepSeq) showCepStatus('Sem conexão para buscar o CEP. Preencha o endereço à mão.', 'warn');
+  }
+}
 cepInput.addEventListener('input', () => {
   const d = digitsOf(cepInput.value).slice(0, 8);
   cepInput.value = d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d;
+  lookupCep();
 });
 addressFieldEl.addEventListener('input', invalidateQuote);
 // ao terminar de preencher (sai do campo), calcula sozinho se estiver tudo pronto
 addressFieldEl.addEventListener('change', e => {
   if (e.target.name === 'complement') return;
-  if (digitsOf(cepInput.value).length === 8 && field('address').value.trim().length >= 5 && field('address_number').value.trim() && (!quote || quote.key !== quoteKey())) runQuote();
+  if (digitsOf(cepInput.value).length === 8 && field('address').value.trim().length >= 3 && field('address_number').value.trim() && (!quote || quote.key !== quoteKey())) runQuote();
 });
 
 /* Resumo: subtotal, frete, desconto e total. Antes do pedido, frete da cotação; depois, os valores da resposta do servidor. */
@@ -800,7 +990,59 @@ function maxPointBlocks() {
   const maxDiscount = Math.min(cartTotal(), cartTotal() + fee - 100); // não passa do subtotal; sobra pelo menos R$ 1,00
   return Math.max(0, Math.min(Math.floor(bal / pointsRules.blockPoints), Math.floor(maxDiscount / pointsRules.blockValueCents)));
 }
+/* L6: quantos pontos este pedido rende (POST /api/customer?a=points_preview). Só exibição: o servidor decide na hora do pedido. */
+let pointsPreview = { points: 0, enabled: true };
+let previewKey = '', previewSeq = 0, previewTimer = null;
+const ptsText = n => `${n} ${n === 1 ? 'ponto' : 'pontos'}`;
+function loadPointsPreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    if (!cart.length) { pointsPreview = { points: 0, enabled: true }; previewKey = ''; renderPoints(); return; }
+    const items = cart.map(i => ({ product_id: i.productId, qty: i.qty, size_id: i.size ? i.size.id : undefined, extras: i.extras.map(x => ({ id: x.id, qty: x.qty })) }));
+    const body = { items };
+    if (usePoints > 0) body.use_points = usePoints;
+    const key = JSON.stringify(body);
+    if (key === previewKey) return;
+    const mine = ++previewSeq;
+    try {
+      const r = await fetch('/api/customer?a=points_preview', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: key });
+      if (mine !== previewSeq) return;
+      if (!r.ok) { pointsPreview = { points: 0, enabled: true }; previewKey = ''; renderPoints(); return; }
+      const d = await r.json();
+      previewKey = key;
+      pointsPreview = { points: Number.isInteger(d.points) && d.points > 0 ? d.points : 0, enabled: d.enabled !== false };
+    } catch { if (mine !== previewSeq) return; pointsPreview = { points: 0, enabled: true }; previewKey = ''; }
+    renderPoints();
+  }, 150);
+}
+// Visitante: convite para entrar (volta ao checkout, o carrinho fica no aparelho). Logado: aviso de quantos pontos o pedido gera.
 function renderPoints() {
+  const earn = pointsRules.enabled && pointsPreview.enabled ? pointsPreview.points : 0;
+  if (!account && pointsRules.enabled) {
+    usePoints = 0;
+    pointsBoxEl.replaceChildren();
+    pointsBoxEl.hidden = !(earn > 0);
+    if (earn > 0) {
+      const note = document.createElement('p');
+      note.className = 'points-note points-earn';
+      note.textContent = `Entre na sua conta e ganhe ${ptsText(earn)} com este pedido.`;
+      const a = document.createElement('a');
+      a.className = 'button secondary points-login';
+      a.href = '/conta/?voltar=checkout#entrar';
+      a.textContent = 'Entrar na minha conta';
+      pointsBoxEl.append(note, a);
+    }
+    return;
+  }
+  renderPointsInner();
+  if (account && earn > 0 && !pointsBoxEl.hidden) {
+    const e = document.createElement('p');
+    e.className = 'points-note points-earn';
+    e.textContent = `Este pedido vai gerar ${ptsText(earn)}.`;
+    pointsBoxEl.append(e);
+  }
+}
+function renderPointsInner() {
   pointsBoxEl.replaceChildren();
   const p = (text, cls) => { const e = document.createElement('p'); e.className = 'points-note' + (cls ? ' ' + cls : ''); e.textContent = text; return e; };
   const BP = pointsRules.blockPoints, BV = brl(pointsRules.blockValueCents);
@@ -852,7 +1094,7 @@ function renderPoints() {
     sel.append(o);
   }
   sel.value = String(usePoints);
-  sel.addEventListener('change', () => { usePoints = Number(sel.value) || 0; renderSummary(); });
+  sel.addEventListener('change', () => { usePoints = Number(sel.value) || 0; renderSummary(); loadPointsPreview(); });
   label.append(sel);
   pointsBoxEl.append(label);
 }
@@ -892,7 +1134,40 @@ function stopPayWatch() {
   clearInterval(watch.tick);
   watch.poll = watch.tick = watch.pollNow = null;
 }
-modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); }, close: stopPayWatch };
+/* L4: cliente logado abre o checkout já com nome, telefone e endereço (GET /api/customer?a=prefill).
+   Só preenche campo que a pessoa ainda não mexeu e que está vazio; tudo continua editável. */
+const PREFILL_FIELDS = ['name', 'phone', 'cep', 'address', 'address_number', 'complement', 'district', 'city'];
+checkoutFormEl.addEventListener('input', e => { if (e.target && e.target.name) e.target.dataset.touched = '1'; });
+const maskPhoneBR = v => {
+  let d = digitsOf(v);
+  if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+  d = d.slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+};
+async function loadPrefill() {
+  try {
+    const r = await fetch('/api/customer?a=prefill', { credentials: 'same-origin', cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d || !d.logged_in) return;
+    const put = (name, v) => { const el = field(name); if (el && v && !el.dataset.touched && !el.value) el.value = v; };
+    put('name', d.name);
+    put('phone', maskPhoneBR(d.phone_national || d.phone));
+    const ad = d.address;
+    if (ad && typeof ad === 'object') {
+      const cep = digitsOf(ad.cep);
+      if (cep.length === 8 && !field('cep').dataset.touched && !field('cep').value) {
+        field('cep').value = cep.slice(0, 5) + '-' + cep.slice(5);
+        cepCache.set(cep, { ok: true, data: { street: ad.street, district: ad.district, city: ad.city } }); // não gasta consulta de CEP
+      }
+      put('address', ad.street); put('address_number', ad.number); put('complement', ad.complement); put('district', ad.district); put('city', ad.city);
+    }
+  } catch { /* sem pré-preenchimento: segue à mão */ }
+}
+modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); }, close: stopPayWatch };
 
 function normalizePayment(p) {
   if (!p || typeof p !== 'object') return null;
@@ -1242,3 +1517,16 @@ renderCartFab();
 renderAccount();
 loadAccount();
 handlePaymentReturn();
+
+/* L6: voltar da página de entrar/criar conta (/?checkout=1) reabre o checkout com o carrinho que ficou no aparelho. */
+(function reopenCheckout() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('checkout') !== '1') return;
+  params.delete('checkout');
+  const qs = params.toString();
+  history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+  if (!cart.length || modalStack.length) return;
+  resetCheckoutView();
+  syncDelivery();
+  openModal('#checkout-modal', { replace: true, opener: cartFab });
+})();

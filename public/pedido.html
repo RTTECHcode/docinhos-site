@@ -24,6 +24,7 @@
 <main class="about order-track" id="track">
   <section class="about-section" aria-labelledby="pedido-titulo" aria-live="polite">
     <h2 id="pedido-titulo">Pedido <span id="t-code">...</span></h2>
+    <p id="t-pay-banner" class="track-msg pay-banner" role="status" aria-live="polite" hidden></p>
     <p id="t-msg" class="track-msg">Carregando o seu pedido...</p>
     <ol id="t-timeline" class="timeline" hidden></ol>
     <dl id="t-info" class="track-info" hidden>
@@ -31,7 +32,7 @@
       <div><dt>Total</dt><dd id="t-total"></dd></div>
       <div><dt>Recebido em</dt><dd id="t-created"></dd></div>
     </dl>
-    <p class="track-note" id="t-note" hidden>Esta página atualiza sozinha a cada 20 segundos.</p>
+    <p class="track-note" id="t-note" hidden>Esta página atualiza sozinha.</p>
   </section>
   <section class="about-section" id="t-recent-box" hidden>
     <h2>Seus pedidos recentes</h2>

@@ -213,9 +213,19 @@
       DG.api('audit').then(r => {
         const box = $('#audit-box');
         if (!box) return;
-        box.replaceChildren(...(r.rows.length ? r.rows.map(a => el('div', { class: 'audit' + (AUDIT_WARN.has(a.action) ? ' warn' : ''), role: AUDIT_WARN.has(a.action) ? 'note' : null },
+        // P2: começa recolhida, mostrando só os 5 primeiros; "Ver mais" expande o resto.
+        let open = false;
+        const LIMIT = 5;
+        const paintAudit = () => {
+          const rows = open ? r.rows : r.rows.slice(0, LIMIT);
+          const items = rows.length ? rows.map(a => el('div', { class: 'audit' + (AUDIT_WARN.has(a.action) ? ' warn' : ''), role: AUDIT_WARN.has(a.action) ? 'note' : null },
           el('strong', { text: AUDIT_LABELS[a.action] || a.action.replace(/_/g, ' ') }),
-          el('span', { class: 'muted wrap', text: DG.fmtDate(a.at) + ' - ' + (a.username || 'sistema') + (a.detail ? ' - ' + a.detail : '') }))) : [DG.empty('Nada registrado ainda.')]));
+          el('span', { class: 'muted wrap', text: DG.fmtDate(a.at) + ' - ' + (a.username || 'sistema') + (a.detail ? ' - ' + a.detail : '') }))) : [DG.empty('Nada registrado ainda.')];
+          const more = r.rows.length > LIMIT ? el('button', { class: 'btn block', type: 'button', 'aria-expanded': String(open),
+            text: open ? 'Recolher' : 'Ver mais (' + (r.rows.length - LIMIT) + ')', on: { click: () => { open = !open; paintAudit(); } } }) : null;
+          box.replaceChildren(...items, ...(more ? [more] : []));
+        };
+        paintAudit();
       }).catch(() => {});
       if (u.role === 'admin') loadUsers();
     }

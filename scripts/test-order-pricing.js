@@ -145,7 +145,7 @@ test('pix: corpo do pagamento direto (valor do servidor, 30 min, e-mail sintéti
   assert.equal(body.transaction_amount, 45.99);
   assert.equal(body.external_reference, 'DG0123456789');
   assert.equal(body.description, 'Pedido DG0123456789 - Docinhos da Gigi');
-  assert.equal(body.notification_url, 'https://docinhos-site.vercel.app/api/mp-webhook');
+  assert.equal(body.notification_url, 'https://docinhos-site.vercel.app/api/mp-webhook?source_news=webhooks');
   assert.equal(body.date_of_expiration, '2026-01-01T10:30:00.000+00:00');
   assert.equal(body.payer.email, 'pedido-dg0123456789@docinhos-site.vercel.app');
   assert.equal(body.payer.first_name, 'Maria');
@@ -174,15 +174,16 @@ test('retirada não exige CEP e devolve o número informado na entrega', () => {
   assert.equal(validateCustomer({ ...base, delivery_method: 'delivery', cep: '06000001', address: 'Rua das Flores', address_number: '45' }).number, '45');
 });
 
-test('produto pausado é recusado com o rótulo do produto, o padrão da loja ou "volto logo <3"', () => {
+test('produto pausado é recusado (D6: sem etiqueta própria nem padrão; a mensagem só diz que está pausado)', () => {
   const mk = product => ({ ...catalog, products: new Map([[2, { id: 2, name: 'Geladinho', price_cents: 600, ...product }]]), complements: new Map() });
   const err = c => { try { priceItems([{ product_id: 2, qty: 1 }], c); } catch (e) { return e; } return null; };
-  let e = err(mk({ paused: true, pause_label: 'volta amanhã' }));
-  assert.ok(e instanceof ValidationError); assert.match(e.message, /Geladinho/); assert.match(e.message, /volta amanhã/);
+  let e = err(mk({ paused: true, pause_label: 'volta amanhã' })); // pause_label legado no banco é ignorado
+  assert.ok(e instanceof ValidationError); assert.match(e.message, /Geladinho/); assert.match(e.message, /pausado/);
+  assert.doesNotMatch(e.message, /volta amanhã/);
   e = err({ ...mk({ paused: true }), defaultPauseLabel: 'já já' });
-  assert.match(e.message, /já já/);
+  assert.doesNotMatch(e.message, /já já/);
   e = err(mk({ paused: true }));
-  assert.match(e.message, /volto logo <3/);
+  assert.match(e.message, /pausado no momento/); assert.doesNotMatch(e.message, /volto logo/);
   assert.equal(err(mk({ paused: false })), null);
 });
 
@@ -229,6 +230,17 @@ test('preference (cartão): sem Pix, boleto, atm e pré-pago; 3x; expira em 2h',
   assert.equal(body.expiration_date_from, '2026-01-01T10:00:00.000+00:00');
   assert.equal(body.expiration_date_to, '2026-01-01T12:00:00.000+00:00');
   assert.equal(body.external_reference, 'DGX');
+  // Sem token de rastreio: volta para a loja (formato antigo).
+  assert.deepEqual(body.back_urls, { success: 'https://docinhos-site.vercel.app/?pagamento=ok', failure: 'https://docinhos-site.vercel.app/?pagamento=erro', pending: 'https://docinhos-site.vercel.app/?pagamento=pendente' });
+  assert.equal(body.notification_url, 'https://docinhos-site.vercel.app/api/mp-webhook?source_news=webhooks');
+});
+
+test('preference (cartão): com token, aprovado e pendente voltam para a página do pedido; falha volta para a loja', () => {
+  const body = buildPreferenceBody({ code: 'DGX', tracking_token: 'abc_DEF-123' }, [], new Date('2026-01-01T10:00:00.000Z'));
+  assert.equal(body.back_urls.success, 'https://docinhos-site.vercel.app/pedido.html?t=abc_DEF-123&pagamento=ok');
+  assert.equal(body.back_urls.pending, 'https://docinhos-site.vercel.app/pedido.html?t=abc_DEF-123&pagamento=pendente');
+  assert.equal(body.back_urls.failure, 'https://docinhos-site.vercel.app/?pagamento=erro');
+  assert.equal(body.auto_return, 'approved');
 });
 
 // ---------- Regra de pontos editável (api/_lib/loyalty.js, funções puras) ----------

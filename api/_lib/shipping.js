@@ -9,6 +9,7 @@
  */
 const { norm } = require('./text');
 const { hasControlChars } = require('./validate');
+const { hitExceeded } = require('./rate-limit');
 
 const VIACEP_URL = 'https://viacep.com.br/ws/';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
@@ -198,6 +199,53 @@ async function routeKm(sql, origin, dest) {
   }
 }
 
+// ---------- CEP -> endereço (v3 D3) ----------
+// Devolve rua, bairro, cidade e UF de um CEP. Usa a tabela cep_cache (scripts/migrate-2026-11-10-v3-schema.js) para não repetir
+// chamadas ao ViaCEP: CEP encontrado vale CEP_CACHE_DAYS dias; CEP inexistente (404 do ViaCEP) vale CEP_NOT_FOUND_DAYS dia.
+// CEP inexistente é guardado SEM coluna nova: linha com localidade e uf vazias (CEP real sempre traz cidade e UF).
+// Teto global de chamadas ao ViaCEP (escopo cep_lookup_global, soma todos os IPs): checado só ANTES da chamada externa,
+// então resposta vinda do cache não conta. Estourou = 503 cep_unavailable, igual a ViaCEP fora do ar.
+// Erros: 400 invalid_cep; 404 cep_not_found; 503 cep_unavailable (ViaCEP fora do ar ou teto global; o front deixa preencher à mão).
+const CEP_CACHE_DAYS = 90;
+const CEP_NOT_FOUND_DAYS = 1;
+const CEP_GLOBAL_MAX_PER_MINUTE = 60;
+const cepGlobalExceeded = sql => hitExceeded(sql, 'cep_lookup_global', 'global', { windowMinutes: 1, max: CEP_GLOBAL_MAX_PER_MINUTE });
+
+/**
+ * ViaCEP com cache em banco. Retorna { logradouro, bairro, localidade, uf } ou null (CEP inexistente). Lança se a rede falhar
+ * ou, com enforceCap, se o teto global estourou (err.code = 'cep_cap'). Sem enforceCap a chamada externa conta no teto, mas
+ * não é barrada (usado pela cotação de frete, que já tem limites próprios e não pode falhar por causa de quem consulta CEP).
+ */
+async function cachedViaCep(sql, cep, { enforceCap = false } = {}) {
+  // Falha do cache (leitura ou escrita) nunca derruba a consulta: cai para o ViaCEP direto.
+  const [hit] = await sql.query(
+    `select logradouro, bairro, localidade, uf from cep_cache
+      where cep = $1 and created_at > now() - case when localidade = '' and uf = '' then make_interval(days => $3::int) else make_interval(days => $2::int) end`,
+    [cep, CEP_CACHE_DAYS, CEP_NOT_FOUND_DAYS]).catch(e => { console.error('cep: leitura do cache falhou:', e.message); return []; });
+  if (hit) return hit.localidade === '' && hit.uf === '' ? null : hit;
+  const exceeded = await cepGlobalExceeded(sql);
+  if (exceeded && enforceCap) { const e = new Error('teto global de consultas ao ViaCEP'); e.code = 'cep_cap'; throw e; }
+  const via = await fetchViaCep(cep);
+  const v = via || { logradouro: '', bairro: '', localidade: '', uf: '' };
+  await sql.query(
+    `insert into cep_cache (cep, logradouro, bairro, localidade, uf) values ($1, $2, $3, $4, $5)
+     on conflict (cep) do update set logradouro = excluded.logradouro, bairro = excluded.bairro, localidade = excluded.localidade, uf = excluded.uf, created_at = now()`,
+    [cep, v.logradouro.slice(0, 200), v.bairro.slice(0, 120), v.localidade.slice(0, 120), v.uf.slice(0, 2)]).catch(e => console.error('cep: gravação do cache falhou:', e.message));
+  return via;
+}
+
+async function lookupCep(sql, input) {
+  const cep = normalizeCep(input);
+  if (!cep) throw new ShippingError(400, 'Informe o CEP com 8 números.', 'invalid_cep');
+  let via;
+  try { via = await cachedViaCep(sql, cep, { enforceCap: true }); } catch (e) {
+    console.error('cep: ViaCEP indisponível:', e.message);
+    throw new ShippingError(503, 'Não foi possível consultar o CEP agora. Preencha o endereço à mão.', 'cep_unavailable');
+  }
+  if (!via) throw new ShippingError(404, 'CEP não encontrado. Confira o número ou preencha o endereço à mão.', 'cep_not_found');
+  return { cep, street: via.logradouro || '', district: via.bairro || '', city: via.localidade || '', uf: via.uf || '' };
+}
+
 // Teto global de consultas externas novas (cada endereço novo vira uma linha em geocode_cache).
 async function tooManyNewLookups(sql) {
   const [{ n }] = await sql.query(`select count(*)::int n from geocode_cache where created_at > now() - interval '1 minute'`);
@@ -221,7 +269,7 @@ async function quoteDelivery(sql, input) {
 
   let via = null;
   try {
-    via = await fetchViaCep(cep);
+    via = await cachedViaCep(sql, cep); // mesmo cache do lookupCep; o resultado do cálculo não muda
     if (!via) throw new ShippingError(422, 'CEP não encontrado. Confira o CEP.', 'cep_not_found');
   } catch (e) {
     if (e instanceof ShippingError) throw e;
@@ -252,5 +300,5 @@ async function quoteDelivery(sql, input) {
 module.exports = {
   USER_AGENT, DEFAULT_BANDS, DEFAULT_ORIGIN_ADDRESS, STRAIGHT_LINE_FACTOR, ShippingError, setFetch,
   normalizeCep, extractNumber, validateBands, getBands, saveBands, bandForKm, maxKmOf, haversineKm,
-  getOrigin, setOrigin, routeKm, geocode, fetchViaCep, quoteDelivery, MAX_NEW_LOOKUPS_PER_MINUTE, tooManyNewLookups
+  getOrigin, setOrigin, routeKm, geocode, fetchViaCep, lookupCep, CEP_CACHE_DAYS, CEP_NOT_FOUND_DAYS, CEP_GLOBAL_MAX_PER_MINUTE, quoteDelivery, MAX_NEW_LOOKUPS_PER_MINUTE, tooManyNewLookups
 };

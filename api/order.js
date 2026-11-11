@@ -10,13 +10,23 @@ const auth = require('./_lib/auth');
 const SITE_URL = 'https://docinhos-site.vercel.app';
 const MP_PREFERENCES_URL = 'https://api.mercadopago.com/checkout/preferences';
 const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
+// ?source_news=webhooks: o Mercado Pago manda só o formato Webhooks (assinado, com data.id), sem o IPN antigo
+// (?topic=&id=, sem assinatura), que o webhook recusava e o Mercado Pago ficava reenviando.
+const NOTIFICATION_URL = `${SITE_URL}/api/mp-webhook?source_news=webhooks`;
+// Volta do Checkout Pro: com o token de rastreio, aprovado e pendente vão para a página do pedido (que mostra o
+// pagamento mudar sozinho); a falha volta para a loja, onde há o botão de tentar pagar de novo.
+function backUrls(trackingToken) {
+  const track = st => `${SITE_URL}/pedido.html?t=${encodeURIComponent(trackingToken)}&pagamento=${st}`;
+  return trackingToken
+    ? { success: track('ok'), failure: `${SITE_URL}/?pagamento=erro`, pending: track('pendente') }
+    : { success: `${SITE_URL}/?pagamento=ok`, failure: `${SITE_URL}/?pagamento=erro`, pending: `${SITE_URL}/?pagamento=pendente` };
+}
 
 // Endereço da loja gravado nos pedidos de retirada ("pickup").
 // TODO: no futuro virá do painel admin (configuração da loja), não mais desta constante.
 const STORE_ADDRESS = 'Manoel Hare Peralta, 101';
 
 const DELIVERY_METHODS = ['delivery', 'pickup'];
-const DEFAULT_PAUSE_LABEL = 'volto logo <3';
 const MAX_ITEMS = 30;
 const MAX_ITEM_QTY = 20;
 const MAX_ORDERS_PER_PHONE = 5; // por janela de 10 minutos
@@ -75,10 +85,8 @@ function priceItems(rawItems, catalog) {
 
     const product = catalog.products.get(raw.product_id);
     if (!product) fail(`Item ${n}: produto indisponível.`);
-    if (product.paused) {
-      const label = product.pause_label || catalog.defaultPauseLabel || DEFAULT_PAUSE_LABEL;
-      fail(`Item ${n}: "${product.name}" está pausado no momento (${label}). Remova o item do carrinho para continuar.`);
-    }
+    // D6 (v3): a etiqueta da pausa é fixa (sem texto próprio por produto); a mensagem não usa mais pause_label.
+    if (product.paused) fail(`Item ${n}: "${product.name}" está pausado no momento. Remova o item do carrinho para continuar.`);
     const links = catalog.complements.get(product.id) || new Map();
     const sizes = [...links.values()].filter(c => c.kind === 'size');
 
@@ -179,7 +187,7 @@ function validateCustomer(b, storeAddress = STORE_ADDRESS) {
 // Carrega do banco só produtos ativos (de categorias ativas) e seus complementos ativos.
 async function loadCatalog(sql, productIds) {
   const products = await sql.query(
-    `select p.id, p.name, p.price_cents, p.paused, p.pause_label
+    `select p.id, p.name, p.price_cents, p.paused
        from products p join categories c on c.id = p.category_id
       where p.active and c.active and p.id = any($1::int[])`,
     [productIds]
@@ -237,13 +245,9 @@ function buildPreferenceBody(order, prefItems, now = new Date()) {
   return {
     items: prefItems,
     external_reference: order.code,
-    back_urls: {
-      success: `${SITE_URL}/?pagamento=ok`,
-      failure: `${SITE_URL}/?pagamento=erro`,
-      pending: `${SITE_URL}/?pagamento=pendente`
-    },
+    back_urls: backUrls(order.tracking_token),
     auto_return: 'approved',
-    notification_url: `${SITE_URL}/api/mp-webhook`,
+    notification_url: NOTIFICATION_URL,
     statement_descriptor: 'DOCINHOS GIGI',
     // Só cartão de crédito e débito: o Pix é gerado dentro do site, então "bank_transfer" (Pix) é excluído.
     // "account_money" (saldo Mercado Pago) NÃO pode ser excluído: a API responde 400
@@ -290,7 +294,7 @@ function buildPixBody(order, customerName, now = new Date()) {
     payment_method_id: 'pix',
     description: `Pedido ${order.public_code || order.code} - Docinhos da Gigi`,
     external_reference: order.code,
-    notification_url: `${SITE_URL}/api/mp-webhook`,
+    notification_url: NOTIFICATION_URL,
     date_of_expiration: mpDate(new Date(now.getTime() + PIX_TTL_MS)),
     payer: { email: pixPayerEmail(order.code), first_name: firstName }
   };
@@ -379,7 +383,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    const settingRows = await sql.query(`select key, value from settings where key in ('store_address', 'default_pause_label')`);
+    const settingRows = await sql.query(`select key, value from settings where key in ('store_address')`);
     const st = {};
     for (const r of settingRows) st[r.key] = r.value;
 
@@ -394,7 +398,6 @@ module.exports = async (req, res) => {
     const ids = [...new Set(b.items.map(i => (i && isId(i.product_id) ? i.product_id : null)).filter(Boolean))];
 
     const catalog = await loadCatalog(sql, ids);
-    catalog.defaultPauseLabel = st.default_pause_label || DEFAULT_PAUSE_LABEL;
     const priced = priceItems(b.items, catalog);
 
     // Frete: retirada R$ 0; entrega por faixa de km, recalculado aqui (o cliente nunca informa valor).
@@ -474,7 +477,7 @@ module.exports = async (req, res) => {
       }
     } else if (mpToken) {
       try {
-        const pref = await createPreference(mpToken, order, buildPreferenceItems(priced.items, deliveryFee, discount, order.public_code));
+        const pref = await createPreference(mpToken, { ...order, tracking_token: tracking.token }, buildPreferenceItems(priced.items, deliveryFee, discount, order.public_code));
         if (pref && pref.init_point && pref.id) {
           payment = { type: 'card', url: pref.init_point, id: String(pref.id) };
           await sql`update orders set payment_method = 'mercadopago_card', payment_id = ${String(pref.id)} where id = ${order.id}`;
@@ -504,9 +507,13 @@ module.exports = async (req, res) => {
     if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
     if (error instanceof shipping.ShippingError) return res.status(error.status).json({ error: error.message, code: error.code, ...(error.max_km ? { max_km: error.max_km } : {}) });
     if (error instanceof loyalty.LoyaltyError) return res.status(error.status).json({ error: error.message, code: error.code });
-    console.error('Erro ao criar pedido:', error.message);
+    // QA v3 B1: a mensagem de erro inesperado pode trazer valores (telefone, e-mail). Loga o código e a mensagem
+    // com e-mails e sequências de 4+ dígitos mascarados, o suficiente para diagnosticar sem dados pessoais.
+    const code = error && typeof error.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(error.code) ? error.code : 'sem_codigo';
+    const safeMsg = String((error && error.message) || '').replace(/\S+@\S+/g, '<email>').replace(/\d{4,}/g, '<n>').slice(0, 200);
+    console.error('Erro ao criar pedido:', code, safeMsg);
     return res.status(500).json({ error: 'Não foi possível criar o pedido' });
   }
 };
 
-module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };
+module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, backUrls, NOTIFICATION_URL, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError, loadCatalog, isId, MAX_ITEMS };

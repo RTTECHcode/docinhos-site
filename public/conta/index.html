@@ -46,7 +46,8 @@
       <p class="form-error" role="alert" hidden></p>
       <button class="button full" type="submit">Entrar</button>
     </form>
-    <p class="links"><a href="#recuperar">Esqueci minha senha</a> <span aria-hidden="true">·</span> <a href="#cadastro">Criar conta</a></p>
+    <p class="links"><a href="#recuperar">Esqueci minha senha</a></p>
+    <a class="button secondary full" href="#cadastro">Criar conta</a>
     <p class="links"><a href="/">Voltar ao cardápio</a></p>
   </section>
 
@@ -91,6 +92,34 @@
           </label>
           <label class="field">Mês
             <select name="birth_month"><option value="">--</option></select>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset class="group address-box" data-address>
+        <legend>Endereço de entrega <span class="opt">(opcional)</span></legend>
+        <p class="hint">Se preencher, o seu pedido já vem com o endereço pronto. Você pode mudar depois em Meus dados.</p>
+        <label class="field">CEP
+          <input name="cep" inputmode="numeric" maxlength="9" autocomplete="postal-code" placeholder="00000-000" data-cep>
+        </label>
+        <p class="hint cep-status" role="status" aria-live="polite" data-cep-status hidden></p>
+        <label class="field">Rua
+          <input name="street" maxlength="120" autocomplete="address-line1" placeholder="Ex.: Rua das Flores">
+        </label>
+        <div class="row2">
+          <label class="field">Número
+            <input name="number" maxlength="10" inputmode="numeric" autocomplete="off" placeholder="100">
+          </label>
+          <label class="field">Complemento
+            <input name="complement" maxlength="60" autocomplete="address-line2" placeholder="Apto, bloco">
+          </label>
+        </div>
+        <div class="row2">
+          <label class="field">Bairro
+            <input name="district" maxlength="80" autocomplete="off" placeholder="Ex.: Centro">
+          </label>
+          <label class="field">Cidade
+            <input name="city" maxlength="80" autocomplete="address-level2" placeholder="Ex.: Osasco">
           </label>
         </div>
       </fieldset>
@@ -195,6 +224,40 @@
         <div><dt>E-mail</dt><dd id="d-email"></dd></div>
         <div><dt>Aniversário</dt><dd id="d-aniversario"></dd></div>
       </dl>
+
+      <div class="subpanel">
+        <h2>Endereço de entrega</h2>
+        <p class="hint">Usamos este endereço para já preencher o seu pedido. Você pode mudar no pedido quando quiser.</p>
+        <form method="post" id="form-endereco" novalidate autocomplete="on" data-address>
+        <label class="field">CEP
+          <input name="cep" inputmode="numeric" maxlength="9" autocomplete="postal-code" placeholder="00000-000" data-cep>
+        </label>
+        <p class="hint cep-status" role="status" aria-live="polite" data-cep-status hidden></p>
+        <label class="field">Rua
+          <input name="street" maxlength="120" autocomplete="address-line1" placeholder="Ex.: Rua das Flores">
+        </label>
+        <div class="row2">
+          <label class="field">Número
+            <input name="number" maxlength="10" inputmode="numeric" autocomplete="off" placeholder="100">
+          </label>
+          <label class="field">Complemento
+            <input name="complement" maxlength="60" autocomplete="address-line2" placeholder="Apto, bloco">
+          </label>
+        </div>
+        <div class="row2">
+          <label class="field">Bairro
+            <input name="district" maxlength="80" autocomplete="off" placeholder="Ex.: Centro">
+          </label>
+          <label class="field">Cidade
+            <input name="city" maxlength="80" autocomplete="address-level2" placeholder="Ex.: Osasco">
+          </label>
+        </div>
+          <p class="form-error" role="alert" hidden></p>
+          <p class="notice ok" role="status" hidden></p>
+          <button class="button full" type="submit">Salvar endereço</button>
+          <button class="button secondary full" type="button" id="btn-endereco-apagar">Apagar endereço</button>
+        </form>
+      </div>
 
       <div class="subpanel">
         <h2>WhatsApp</h2>

@@ -23,3 +23,24 @@ Status: pendente | andamento | feito | bloqueado
 | Re-auditoria | feito | a2-fix-f5 | sem Crítico/Alto; achados corrigidos; ZAP pendente sem Docker/Java |
 | Preview | feito | painel-v2 | publicado com F5; usa banco dev |
 | Relatório | feito | painel-v2 | docs/planos/relatorio-final.md; aguarda aprovação do Renan |
+
+## v3 — rodada de ajustes
+
+Base: ajustes-v3 criada da painel-v3 (v2.1), que vai para a main.
+
+| ID | Status | Branch | Nota |
+|---|---|---|---|
+| F0 | feito | ajustes-v3 | docs lidos; branch e seção criadas |
+| F1 W1 | feito | v3-a1-webhook | 401 em todo webhook: segredo da Vercel difere do MP |
+| F1 W2-W4, W6 | feito | v3-a1-webhook | fbaa7c9; conferência de reserva, back_urls, testes novos |
+| F1 W5 | feito | — | Renan rodou conferir-pagamento.js; DG-7747 e DG-5401 aprovados |
+| F2 D1-D8 | feito | v3-a2-backend | e429856; 2 migrações rodadas só na dev |
+| F3 P1-P6 | feito | v3-a3-admin | ed7dd10; navegador ok; test-admin rerodar com banco parado |
+| F3 L1-L8 | feito | v3-a4-loja | 609a508; 90 checagens no navegador ok |
+| F4 V1-V7 | feito | v3-a5-design | c1ab0a8; V6 aprovada e aplicada; causa V4: popstate atrasado |
+| F5 ressalvas A2 | feito | v3-a2-fix | 1cdb19b; testes ok no dev novo |
+| F5 QA W/D/P/L | feito | v3-a6-qa | de5a64a; 14/14 scripts, 28 IDs ok, 1 Baixo corrigido |
+| F5 QA V | feito | v3-a6-qa | 1035de3; V1-V7 ok; 20 adições ok em 4 tamanhos |
+| F6 Relatório | feito | ajustes-v3 | docs/planos/relatorio-v3.md; aguarda Renan publicar e rodar W5 |
+
+Banco dev trocado em 11/11 (antigo expirou): cópia da produção; migrações v3 rodadas; horários 00:00-23:59 só no dev.

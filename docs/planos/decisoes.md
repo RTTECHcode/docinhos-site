@@ -32,3 +32,8 @@ Futuro: e-mail ou WhatsApp substituem ou complementam a pergunta.
 - Caixa separada, opcional, nunca pré-marcada, com link da política de privacidade e opção de sair ("SAIR" ou pela conta).
 - Gravar versão do texto, data, IP e origem; histórico de aceite/saída/retorno em customer_consent_events.
 - Campo para dupla confirmação futura; telefone em E.164; dia e mês de nascimento opcionais.
+
+## 2026-11-10 — Rodada v3
+- Base da ajustes-v3: painel-v3 (v2.1: limites no banco, pontos editáveis), para evitar conflito com a main antiga.
+- F1 W1 (diagnóstico, só leitura) e F2 rodam em paralelo; W3 só começa depois do D-lib do A2 para não colidir em api/_lib.
+- Banco de produção: só SELECT para diagnóstico. Migrações só no dev; produção vai para a lista do relatório.

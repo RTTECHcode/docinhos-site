@@ -1,5 +1,5 @@
 'use strict';
-/* Aba Ajustes (A5): horários, frete, pontos, etiqueta padrão da pausa, sinônimos, loja e segurança do admin.
+/* Aba Ajustes (A5): horários e fechamento da loja, frete, pontos, sinônimos, loja e segurança do admin.
    Também: tela obrigatória de pergunta de segurança e "Esqueci a senha" (usadas por admin.js). */
 (function () {
   const DG = window.DG;
@@ -137,10 +137,18 @@
           o.addEventListener('input', () => { rg.opens = o.value; });
           c.addEventListener('input', () => { rg.closes = c.value; });
           return el('div', { class: 'row' }, el('label', { class: 'field grow' }, el('span', { text: 'Abre' }), o), el('label', { class: 'field grow' }, el('span', { text: 'Fecha' }), c),
-            el('button', { class: 'btn small danger', type: 'button', 'aria-label': 'Remover faixa', text: '×', on: { click: () => { model[d].splice(i, 1); paint(); } } }));
+            el('button', { class: 'btn small danger', type: 'button', 'aria-label': 'Remover faixa', text: '×', on: { click: async () => {
+              // P5: apagar a última faixa de um dia (ou de todos) deixa a loja fechada; pede confirmação.
+              if (model[d].length === 1) {
+                const total = DAYS.reduce((n, [k]) => n + model[k].length, 0);
+                const aviso = total === 1 ? 'Sem nenhum horário, a loja fica fechada o tempo todo. Apagar mesmo assim?' : 'Sem horário, a loja fica fechada nesse dia. Apagar mesmo assim?';
+                if (!(await DG.confirm(aviso, 'Apagar horário', true))) return;
+              }
+              model[d].splice(i, 1); paint();
+            } } }));
         });
         return el('div', { class: 'card stack' }, el('strong', { text: name }),
-          rows.length ? rows : el('p', { class: 'muted small', text: 'Sem horário (fechado nesse dia, se houver horários em outros dias).' }),
+          rows.length ? rows : el('p', { class: 'muted small', text: 'Sem horário: a loja fica fechada nesse dia.' }),
           el('div', { class: 'row wrap-row' },
             el('button', { class: 'btn small', type: 'button', text: '+ Faixa', disabled: model[d].length >= MAX_RANGES, on: { click: () => { model[d].push({ opens: '09:00', closes: '18:00' }); paint(); } } }),
             model[d].length ? el('button', { class: 'btn small', type: 'button', text: 'Copiar para...', on: { click: () => copyTo(d, name) } }) : null));
@@ -181,14 +189,15 @@
         const hours = [];
         for (const [d] of DAYS) for (const x of model[d]) hours.push({ weekday: d, opens: x.opens, closes: x.closes });
         const res = await DG.run(() => DG.api('store_hours_save', { body: { hours } }), 'Horários salvos.');
+        if (res && res.hours_warning === 'no_hours') DG.toast('Sem nenhum horário, a loja fica fechada o tempo todo.', true);
         if (res) { close(); onSaved(); } else save.disabled = false;
       });
-      body.replaceChildren(el('p', { class: 'muted small', text: 'Horário de São Paulo. Se não houver nenhum horário, a loja fica aberta (só o botão Fechar loja fecha).' }), daysBox, msg, save);
+      body.replaceChildren(el('p', { class: 'muted small', text: 'Horário de São Paulo. Dia sem horário fica fechado. Sem nenhum horário, a loja fica sempre fechada.' }), daysBox, msg, save);
       paint();
     });
   }
 
-  function hoursCard() {
+  function hoursCard(onChange) {
     const box = el('div', { class: 'card stack' }, DG.loading());
     const load = async () => {
       const r = await DG.api('store_hours').catch(() => null);
@@ -197,11 +206,19 @@
         const rg = r.hours.filter(h => h.weekday === d).map(h => h.opens + ' às ' + h.closes);
         return el('div', { class: 'row between' }, el('span', { text: name }), el('span', { class: 'muted small', text: rg.length ? rg.join(' e ') : '-' }));
       });
-      box.replaceChildren(...(r.hours.length ? lines : [DG.empty('Nenhum horário cadastrado: a loja fica aberta o tempo todo.')]),
-        el('button', { class: 'btn block', type: 'button', text: 'Editar horários', on: { click: () => hoursSheet(load) } }));
+      const noHours = r.hours_warning === 'no_hours' || !r.hours.length;
+      box.replaceChildren(...(noHours ? [el('p', { class: 'a5-warn wrap', role: 'note', text: 'Nenhum horário cadastrado: a loja fica fechada o tempo todo. Cadastre os horários para ela abrir.' })] : lines),
+        el('button', { class: 'btn block', type: 'button', text: 'Editar horários', on: { click: () => hoursSheet(() => { load(); if (onChange) onChange(); }) } }));
     };
+    box.reload = load;
     load();
     return box;
+  }
+
+  // P1: fechar a loja (com prazo) e a programação de horários ficam juntos, na mesma seção.
+  function hoursSection(catalog) {
+    const state = DG.storeBox(catalog);
+    return el('div', { class: 'stack' }, state, hoursCard(() => state.reload()));
   }
 
   // ---------- Frete (M5) ----------
@@ -352,18 +369,6 @@
     });
   }
 
-  // ---------- Etiqueta padrão da pausa ----------
-  function labelCard(catalog) {
-    const input = el('input', { type: 'text', maxlength: 60, value: catalog.settings.defaultPauseLabel || '' });
-    return el('form', { class: 'card stack', novalidate: true, on: { submit: async e => {
-      e.preventDefault();
-      const r = await DG.run(() => DG.api('pause_default_label', { body: { label: input.value.trim() } }), 'Etiqueta salva.');
-      if (r) { input.value = r.defaultPauseLabel; catalog.settings.defaultPauseLabel = r.defaultPauseLabel; }
-    } } },
-    el('label', { class: 'field' }, el('span', { text: 'Texto mostrado em produto pausado' }), input),
-    el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar etiqueta' }));
-  }
-
   // ---------- Sinônimos ----------
   function synonymsCard() {
     const box = el('div', { class: 'stack' });
@@ -442,10 +447,9 @@
       const catalog = await DG.loadCatalog();
       DG.setStoreBadge(!(catalog.storeState ? catalog.storeState.open : !catalog.settings.storePaused));
       view.replaceChildren(
-        el('h2', { class: 'section-title', text: 'Horários' }), hoursCard(),
+        el('h2', { class: 'section-title', text: 'Horários e fechamento da loja' }), hoursSection(catalog),
         el('h2', { class: 'section-title', text: 'Frete' }), shippingCard(),
         el('h2', { class: 'section-title', text: 'Pontos' }), pointsCard(),
-        el('h2', { class: 'section-title', text: 'Etiqueta padrão da pausa' }), labelCard(catalog),
         el('h2', { class: 'section-title', text: 'Sinônimos de ingredientes' }), synonymsCard(),
         el('h2', { class: 'section-title', text: 'Loja' }), DG.storeCard(catalog),
         el('h2', { class: 'section-title', text: 'Segurança' }), securityCard());
