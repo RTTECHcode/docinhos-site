@@ -15,6 +15,7 @@ const ordersLib = require('./_lib/orders');
 const storeHours = require('./_lib/store-hours');
 const shipping = require('./_lib/shipping');
 const loyalty = require('./_lib/loyalty');
+const payments = require('./_lib/payments');
 
 const SESSION_COOKIE = '__Host-dg_admin';
 const SESSION_TTL_MS = 12 * 3600 * 1000;
@@ -825,6 +826,44 @@ A.order_status = { m: 'POST', fn: async ({ body, user }) => {
   if (status === 'cancelled' && row.changed) await loyalty.releaseReserve(getSql(), id, 'pedido cancelado'); // devolve os pontos reservados (se não foi pago)
   if (row.changed) await audit(user.username, 'pedido_status', `${row.public_code || row.code} -> ${status}`);
   return { ok: true, order: { id: row.id, code: row.code, public_code: row.public_code, fulfillment_status: row.fulfillment_status, fulfillment_label: ordersLib.statusLabel(row.fulfillment_status, row.delivery_method) } };
+} };
+
+// "Conferir pagamento" (P6): consulta o Mercado Pago e aplica o resultado com as mesmas regras do webhook
+// (_lib/payments.js). Qualquer usuário logado do painel. Até 6 conferências por pedido por minuto (escopo
+// 'payment_check', chave "admin-order:<id>") para não martelar a API do Mercado Pago.
+const PAYMENT_CHECK_MSG = {
+  updated: 'Pagamento atualizado pelo Mercado Pago.',
+  unchanged: 'Nada mudou: o pedido já estava igual ao Mercado Pago.',
+  not_found: 'O Mercado Pago ainda não tem pagamento para este pedido.',
+  amount_mismatch: 'O valor pago no Mercado Pago é diferente do total do pedido. Confira no Mercado Pago antes de aceitar.',
+  currency_mismatch: 'O pagamento no Mercado Pago não está em reais. Confira no Mercado Pago.',
+  no_order: 'O pagamento encontrado não corresponde a este pedido.',
+  invalid: 'O Mercado Pago devolveu um pagamento incompleto. Tente de novo em instantes.'
+};
+A.payment_check = { m: 'POST', fn: async ({ body, user }) => {
+  const id = vId(body.id, 'Pedido');
+  const [row] = await q('select id, code, public_code, payment_id, payment_method, payment_status from orders where id = $1', [id]);
+  if (!row) throw new HttpError(404, 'Pedido não encontrado.');
+  if (!process.env.MERCADOPAGO_ACCESS_TOKEN) throw new HttpError(503, 'Mercado Pago não configurado neste ambiente.');
+  const { hitExceeded } = require('./_lib/rate-limit');
+  if (await hitExceeded(getSql(), 'payment_check', 'admin-order:' + id, { windowMinutes: 0, max: 6 })) {
+    throw new HttpError(429, 'Muitas conferências seguidas. Aguarde um minuto.');
+  }
+  let r;
+  try {
+    r = await payments.checkOrderPayment(getSql(), row, { source: 'admin' });
+  } catch (error) {
+    console.error('Conferência de pagamento no painel falhou:', error.message);
+    throw new HttpError(502, 'Não foi possível falar com o Mercado Pago agora. Tente de novo em instantes.');
+  }
+  const [now] = await q('select payment_status, payment_method from orders where id = $1', [id]);
+  await audit(user.username, 'pagamento_conferido',
+    `${row.public_code || row.code}: ${row.payment_status} -> ${now.payment_status} (${r.outcome}${r.payment_id ? ', pagamento ' + r.payment_id : ''})`);
+  return {
+    ok: true, outcome: r.outcome, message: PAYMENT_CHECK_MSG[r.outcome] || 'Conferência concluída.',
+    mp_status: r.mp_status || null,
+    order: { id: row.id, public_code: row.public_code, payment_status: now.payment_status, payment_method: now.payment_method }
+  };
 } };
 
 // ---------- Ações: conta e usuários ----------

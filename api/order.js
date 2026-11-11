@@ -10,6 +10,17 @@ const auth = require('./_lib/auth');
 const SITE_URL = 'https://docinhos-site.vercel.app';
 const MP_PREFERENCES_URL = 'https://api.mercadopago.com/checkout/preferences';
 const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
+// ?source_news=webhooks: o Mercado Pago manda só o formato Webhooks (assinado, com data.id), sem o IPN antigo
+// (?topic=&id=, sem assinatura), que o webhook recusava e o Mercado Pago ficava reenviando.
+const NOTIFICATION_URL = `${SITE_URL}/api/mp-webhook?source_news=webhooks`;
+// Volta do Checkout Pro: com o token de rastreio, aprovado e pendente vão para a página do pedido (que mostra o
+// pagamento mudar sozinho); a falha volta para a loja, onde há o botão de tentar pagar de novo.
+function backUrls(trackingToken) {
+  const track = st => `${SITE_URL}/pedido.html?t=${encodeURIComponent(trackingToken)}&pagamento=${st}`;
+  return trackingToken
+    ? { success: track('ok'), failure: `${SITE_URL}/?pagamento=erro`, pending: track('pendente') }
+    : { success: `${SITE_URL}/?pagamento=ok`, failure: `${SITE_URL}/?pagamento=erro`, pending: `${SITE_URL}/?pagamento=pendente` };
+}
 
 // Endereço da loja gravado nos pedidos de retirada ("pickup").
 // TODO: no futuro virá do painel admin (configuração da loja), não mais desta constante.
@@ -237,13 +248,9 @@ function buildPreferenceBody(order, prefItems, now = new Date()) {
   return {
     items: prefItems,
     external_reference: order.code,
-    back_urls: {
-      success: `${SITE_URL}/?pagamento=ok`,
-      failure: `${SITE_URL}/?pagamento=erro`,
-      pending: `${SITE_URL}/?pagamento=pendente`
-    },
+    back_urls: backUrls(order.tracking_token),
     auto_return: 'approved',
-    notification_url: `${SITE_URL}/api/mp-webhook`,
+    notification_url: NOTIFICATION_URL,
     statement_descriptor: 'DOCINHOS GIGI',
     // Só cartão de crédito e débito: o Pix é gerado dentro do site, então "bank_transfer" (Pix) é excluído.
     // "account_money" (saldo Mercado Pago) NÃO pode ser excluído: a API responde 400
@@ -290,7 +297,7 @@ function buildPixBody(order, customerName, now = new Date()) {
     payment_method_id: 'pix',
     description: `Pedido ${order.public_code || order.code} - Docinhos da Gigi`,
     external_reference: order.code,
-    notification_url: `${SITE_URL}/api/mp-webhook`,
+    notification_url: NOTIFICATION_URL,
     date_of_expiration: mpDate(new Date(now.getTime() + PIX_TTL_MS)),
     payer: { email: pixPayerEmail(order.code), first_name: firstName }
   };
@@ -474,7 +481,7 @@ module.exports = async (req, res) => {
       }
     } else if (mpToken) {
       try {
-        const pref = await createPreference(mpToken, order, buildPreferenceItems(priced.items, deliveryFee, discount, order.public_code));
+        const pref = await createPreference(mpToken, { ...order, tracking_token: tracking.token }, buildPreferenceItems(priced.items, deliveryFee, discount, order.public_code));
         if (pref && pref.init_point && pref.id) {
           payment = { type: 'card', url: pref.init_point, id: String(pref.id) };
           await sql`update orders set payment_method = 'mercadopago_card', payment_id = ${String(pref.id)} where id = ${order.id}`;
@@ -509,4 +516,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };
+module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, backUrls, NOTIFICATION_URL, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, DEFAULT_PAUSE_LABEL, ValidationError };

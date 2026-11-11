@@ -1,6 +1,5 @@
 const crypto = require('node:crypto');
-
-const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments/';
+const payments = require('./_lib/payments');
 
 // Extrai ts e v1 do header x-signature ("ts=...,v1=...").
 function parseSignature(header) {
@@ -24,19 +23,30 @@ function tsToSeconds(ts) {
   return n >= 1e11 ? n / 1000 : n;
 }
 
-// Valida x-signature: HMAC-SHA256 de "id:{data.id};request-id:{x-request-id};ts:{ts};".
-// nowMs injetável para teste.
-function verifySignature({ secret, signatureHeader, requestId, dataId, nowMs = Date.now() }) {
+// Motivo da recusa da assinatura, ou null se ela for válida. Nunca inclui o segredo nem o v1.
+// Manifest assinado: "id:{data.id};request-id:{x-request-id};ts:{ts};". nowMs injetável para teste.
+function signatureProblem({ secret, signatureHeader, requestId, dataId, nowMs = Date.now() }) {
+  if (!signatureHeader) return 'sem x-signature';
   const { ts, v1 } = parseSignature(signatureHeader);
-  if (!ts || !v1 || !requestId || !dataId) return false;
+  if (!ts || !v1) return 'x-signature sem ts ou v1';
+  if (!requestId) return 'sem x-request-id';
+  if (!dataId) return 'sem data.id';
   const tsSec = tsToSeconds(ts);
-  if (tsSec === null || Math.abs(nowMs / 1000 - tsSec) > MAX_SIGNATURE_AGE_S) return false;
-  const expected = crypto.createHmac('sha256', secret)
+  if (tsSec === null) return 'ts inválido';
+  const age = Math.round(nowMs / 1000 - tsSec);
+  if (Math.abs(age) > MAX_SIGNATURE_AGE_S) return `ts fora da janela (${age} s)`;
+  // trim: espaço ou quebra de linha colados junto com o segredo na Vercel invalidavam toda assinatura.
+  const expected = crypto.createHmac('sha256', String(secret).trim())
     .update(`id:${dataId};request-id:${requestId};ts:${ts};`)
     .digest('hex');
   const a = Buffer.from(expected);
   const b = Buffer.from(v1);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!(a.length === b.length && crypto.timingSafeEqual(a, b))) return 'HMAC diferente (segredo da Vercel não confere com a assinatura secreta do app no Mercado Pago?)';
+  return null;
+}
+
+function verifySignature(args) {
+  return signatureProblem(args) === null;
 }
 
 // Normaliza a notificação: { type, dataId } (data.id vem na query e/ou no corpo).
@@ -50,31 +60,41 @@ function parseNotification(query, body) {
   return { type, dataId };
 }
 
-// Pix (payment_method_id 'pix') vira 'pix'; qualquer outro pagamento vem do Checkout Pro com cartão.
-function paymentMethodOf(pay) {
-  return pay && pay.payment_method_id === 'pix' ? 'pix' : 'mercadopago_card';
+// Formato antigo (IPN, user agent "MercadoPago Feed v2.0"): ?topic=payment&id=123 ou corpo { resource, topic },
+// sem data.id e sem assinatura. Não é processado (o mesmo pagamento chega também no formato Webhooks, assinado);
+// responde 200 para o Mercado Pago não reenviar. A notification_url já vai com ?source_news=webhooks para evitá-lo.
+function isLegacyIpn(query, body) {
+  const q = query || {};
+  const bd = body && typeof body === 'object' ? body : {};
+  if (q['data.id'] !== undefined || (bd.data && bd.data.id !== undefined)) return false;
+  return Boolean(q.topic || q.id || bd.topic || bd.resource);
 }
+
+const paymentMethodOf = payments.paymentMethodOf;
 
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
 
+  if (isLegacyIpn(req.query, req.body)) return res.status(200).json({ ok: true, ignored: 'ipn' });
+
   const { type, dataId } = parseNotification(req.query, req.body);
 
-  const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+  const secret = (process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim();
   if (!secret && process.env.VERCEL_ENV === 'production') {
     // Fail-closed: em produção, sem segredo não há como validar a origem da notificação.
     console.error('MERCADOPAGO_WEBHOOK_SECRET não definido em produção: notificação recusada.');
     return res.status(500).json({ error: 'Configuração ausente' });
   }
   if (secret) {
-    const ok = verifySignature({
-      secret,
-      signatureHeader: req.headers['x-signature'],
-      requestId: req.headers['x-request-id'],
-      dataId
-    });
-    if (!ok) return res.status(401).json({ error: 'Assinatura inválida' });
+    const requestId = req.headers['x-request-id'];
+    const problem = signatureProblem({ secret, signatureHeader: req.headers['x-signature'], requestId, dataId });
+    if (problem) {
+      // Log sem segredo e sem v1: só o motivo e o que identifica o aviso no painel do Mercado Pago.
+      console.warn('Webhook do Mercado Pago recusado (401):', problem,
+        JSON.stringify({ type, data_id: dataId, request_id: requestId || null, user_agent: req.headers['user-agent'] || null }));
+      return res.status(401).json({ error: 'Assinatura inválida' });
+    }
   } else {
     console.warn('MERCADOPAGO_WEBHOOK_SECRET não definido: assinatura não validada (o pagamento é sempre confirmado via API do Mercado Pago).');
   }
@@ -88,68 +108,23 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Configuração ausente' });
   }
 
-  // Em serverless o processamento precisa terminar antes da resposta; são só 1 GET + 1 UPDATE.
+  // Em serverless o processamento precisa terminar antes da resposta. Regras de moeda, valor, idempotência e pontos
+  // ficam em _lib/payments.js (as mesmas da conferência no acompanhamento e do botão do painel).
   try {
-    const mpRes = await fetch(MP_PAYMENTS_URL + dataId, {
-      headers: { 'Authorization': `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000)
-    });
-    if (mpRes.status === 404) return res.status(200).json({ ok: true });
-    if (!mpRes.ok) {
-      console.error('Mercado Pago respondeu', mpRes.status, 'ao buscar pagamento', dataId);
-      return res.status(500).json({ error: 'Falha ao consultar pagamento' }); // MP tenta de novo
-    }
-    const pay = await mpRes.json();
-    const code = pay.external_reference;
-    if (!code || !pay.status) return res.status(200).json({ ok: true });
-
+    const pay = await payments.fetchPayment(token, dataId);
+    if (!pay) return res.status(200).json({ ok: true }); // 404 no Mercado Pago
     const sql = require('./_lib/db'); // carregado aqui para o parser poder ser testado sem DATABASE_URL
-    const [order] = await sql.query('select id, total_cents from orders where code = $1', [String(code)]);
-    if (!order) return res.status(200).json({ ok: true });
-
-    // Só confirma se moeda e valor pago batem com o total gravado no servidor.
-    if (pay.currency_id && pay.currency_id !== 'BRL') {
-      console.error('Moeda do pagamento diferente de BRL', code, dataId);
-      return res.status(200).json({ ok: true });
-    }
-    if (Math.round(Number(pay.transaction_amount) * 100) !== order.total_cents) {
-      console.error('Valor do pagamento diferente do pedido', code, dataId);
-      return res.status(200).json({ ok: true });
-    }
-
-    // Idempotente: só grava se algo mudou; um pagamento recusado não sobrescreve um já aprovado.
-    await sql.query(
-      `update orders set payment_status = $2, payment_id = $3, payment_method = $4
-       where code = $1
-         and (payment_status is distinct from $2 or payment_id is distinct from $3)
-         and not (payment_status = 'approved' and payment_id is distinct from $3 and $2 <> 'approved')`,
-      [String(code), String(pay.status), String(pay.id), paymentMethodOf(pay)]
-    );
-    // Pontos (O11): só chega aqui com moeda e valor conferidos. Idempotente: aprovado credita e confirma o resgate;
-    // rejeitado/cancelado devolve a reserva; estornado reverte. Roda a cada notificação para consertar execução interrompida.
-    // Pedido já cancelado e pagamento aprovado depois: os pontos não são creditados (loyalty.onPaymentStatus) e o admin
-    // recebe um aviso na auditoria (Atividade) para estornar à mão. Nada é estornado automaticamente no Mercado Pago.
-    await noteCancelledPaid(sql, order.id, String(pay.id));
-    await require('./_lib/loyalty').onPaymentStatus(sql, order.id);
+    await payments.syncPayment(sql, pay, { source: 'webhook' });
     return res.status(200).json({ ok: true });
   } catch (error) {
+    if (error instanceof payments.PaymentLookupError) {
+      console.error('Mercado Pago respondeu', error.status, 'ao buscar pagamento', dataId);
+      return res.status(500).json({ error: 'Falha ao consultar pagamento' }); // MP tenta de novo
+    }
     console.error('Erro no webhook do Mercado Pago:', error.message);
     return res.status(500).json({ error: 'Erro ao processar notificação' });
   }
 };
 
-// Grava no máximo um aviso por pedido + pagamento (o Mercado Pago reenvia a mesma notificação várias vezes).
-const CANCELLED_PAID_ACTION = 'pagamento_apos_cancelamento';
-async function noteCancelledPaid(sql, orderId, paymentId) {
-  await sql.query(
-    `insert into admin_audit (username, action, detail)
-     select 'mercadopago', $2::text,
-            'Pedido ' || public_code || ' estava cancelado e recebeu pagamento aprovado (pagamento ' || $3::text || '). '
-            || 'Pontos não creditados. Estorne o valor manualmente no Mercado Pago.'
-       from orders
-      where id = $1 and fulfillment_status = 'cancelled' and payment_status = 'approved'
-        and not exists (select 1 from admin_audit where action = $2::text and detail like 'Pedido ' || orders.public_code || ' %(pagamento ' || $3::text || ')%')`,
-    [orderId, CANCELLED_PAID_ACTION, paymentId]);
-}
-
-module.exports._internal = { CANCELLED_PAID_ACTION, noteCancelledPaid, parseSignature, verifySignature, tsToSeconds, parseNotification, paymentMethodOf };
+const { CANCELLED_PAID_ACTION, noteCancelledPaid } = payments;
+module.exports._internal = { CANCELLED_PAID_ACTION, noteCancelledPaid, parseSignature, verifySignature, signatureProblem, tsToSeconds, parseNotification, isLegacyIpn, paymentMethodOf };
