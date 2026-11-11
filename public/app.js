@@ -601,7 +601,13 @@ function addRecent(order) {
   refreshTrack();
 }
 const recentBtn = document.querySelector('#recent-btn');
-function renderRecentBtn() { recentBtn.hidden = loadRecent().length === 0; }
+const recentCountEl = document.querySelector('#recent-count');
+function renderRecentBtn() {
+  const n = loadRecent().length;
+  recentBtn.hidden = n === 0;
+  recentCountEl.textContent = String(n);
+  recentBtn.setAttribute('aria-label', n > 1 ? `Pedidos recentes (${n})` : 'Pedidos recentes');
+}
 const dateTimeFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 recentBtn.addEventListener('click', () => {
   const list = document.querySelector('#recent-list');
@@ -652,7 +658,11 @@ function setStoreState(st) {
   storeBadgeEl.hidden = !store;
   if (store) {
     storeBadgeEl.className = 'store-badge ' + (store.open ? 'open' : 'closed');
-    storeBadgeEl.textContent = store.open ? 'Loja aberta' : 'Loja fechada';
+    // V6: texto curto abaixo de 380 px (CSS escolhe qual aparece); o curto fica fora da leitura de tela para não repetir
+    const longT = document.createElement('span'), shortT = document.createElement('span');
+    longT.className = 'sb-long'; longT.textContent = store.open ? 'Loja aberta' : 'Loja fechada';
+    shortT.className = 'sb-short'; shortT.textContent = store.open ? 'Aberta' : 'Fechada'; shortT.setAttribute('aria-hidden', 'true');
+    storeBadgeEl.replaceChildren(longT, shortT);
     storeBadgeEl.title = store.open ? '' : closedMessage(store);
   }
   const closed = !!store && !store.open;
@@ -681,14 +691,23 @@ function topLink(text, href, cls) {
 function renderAccount() {
   accountAreaEl.replaceChildren();
   if (!account) {
-    accountAreaEl.append(topLink('Entrar', '/conta/'), topLink('Criar conta', '/conta/#cadastro', 'primary'));
+    // V6: visitante só vê "Entrar"; "Criar conta" fica na tela de entrada (/conta/) e no convite de pontos do checkout
+    accountAreaEl.append(topLink('Entrar', '/conta/', 'primary'));
     return;
   }
-  const hi = document.createElement('span');
-  hi.className = 'account-name';
-  hi.textContent = 'Olá, ' + String(account.name || '').split(' ')[0];
-  const pts = topLink(`${Number(account.points && account.points.balance) || 0} pontos`, '/conta/#pontos', 'points');
-  accountAreaEl.append(hi, pts, topLink('Meus pedidos', '/conta/#pedidos'));
+  const bal = Number(account.points && account.points.balance) || 0;
+  const first = String(account.name || '').trim().split(/\s+/)[0] || 'Conta';
+  const pts = topLink('', '/conta/#pontos', 'points');
+  const n = document.createElement('span'); n.textContent = String(bal);
+  const word = document.createElement('span'); word.className = 'pts-word'; word.textContent = ' pontos';
+  pts.append(n, word);
+  pts.setAttribute('aria-label', `${bal} pontos`);
+  const acc = topLink('', '/conta/#pedidos', 'account');
+  const av = document.createElement('span'); av.className = 'acc-av'; av.setAttribute('aria-hidden', 'true'); av.textContent = first.charAt(0).toUpperCase();
+  const nm = document.createElement('span'); nm.className = 'acc-name'; nm.textContent = first;
+  acc.append(av, nm);
+  acc.setAttribute('aria-label', `Minha conta: ${first}`);
+  accountAreaEl.append(pts, acc);
 }
 async function loadAccount() {
   try {

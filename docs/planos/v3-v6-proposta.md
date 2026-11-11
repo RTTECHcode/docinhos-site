@@ -1,6 +1,6 @@
 # V6: proposta para reorganizar os botões do topo (visitante e logado)
 
-Status: PROPOSTA. Nada disto foi aplicado no site. Aguarda aprovação do Orquestrador/Renan. Autor: A5 (design). Decisões de layout seguem a skill ui-ux-pro-max (alvo de toque mínimo de 44 px, hierarquia de ações, uma ação principal por tela, nada de linhas que quebram sozinhas). Marca (paleta, fontes, logo) não muda.
+Status: APROVADA pelo Orquestrador e APLICADA (as 3 decisões da seção 6 foram "sim"; o aviso "Adicionado ao carrinho" agora fica sempre no topo da tela). Autor: A5 (design). Decisões de layout seguem a skill ui-ux-pro-max (alvo de toque mínimo de 44 px, hierarquia de ações, uma ação principal por tela, nada de linhas que quebram sozinhas). Marca (paleta, fontes, logo) não muda.
 
 ## 1. Problema hoje (medido em 360 px, com o site real)
 

@@ -495,10 +495,10 @@ body.modal-open { overflow: hidden; }
 /* ---------- Toast ---------- */
 #toast {
   position: fixed;
-  bottom: calc(86px + env(safe-area-inset-bottom));
+  top: calc(12px + env(safe-area-inset-top));
   left: 50%;
   width: max-content; max-width: calc(100vw - 32px);
-  transform: translateX(-50%) translateY(20px);
+  transform: translateX(-50%) translateY(-20px);
   background: var(--cacau);
   color: #fff; text-align: center;
   border: 2px solid var(--rosa);
@@ -511,9 +511,7 @@ body.modal-open { overflow: hidden; }
   z-index: 60;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-/* Com folha aberta o toast vai para o topo, na faixa livre acima dela (a folha ocupa no máximo 88% da altura) */
-body.modal-open #toast { bottom: auto; top: calc(12px + env(safe-area-inset-top)); transform: translateX(-50%) translateY(-20px); }
-body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
+/* V6: o aviso fica sempre no topo (embaixo cobria o Acompanhe e o carrinho) */
 
 /* ---------- Sheet de categorias ---------- */
 .sheet { z-index: 55; }
@@ -865,3 +863,25 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
 .chip.is-unavailable .chip-name, .chip.is-unavailable .comp-price { opacity: .6; }
 .chip.is-unavailable .unavail-tag { opacity: 1; background: #fff; }
 @media (prefers-reduced-motion: reduce) { .cart-item .ci-qty button { transition: none; } }
+
+/* V6: topo em uma linha só (56 px): selo da loja + até 3 itens de 44 px */
+.topbar { flex-wrap: nowrap; min-height: 56px; gap: 8px; }
+.topbar .store-badge { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.topbar-actions { flex: 0 0 auto; flex-wrap: nowrap; gap: 6px; }
+.account-area { flex-wrap: nowrap; gap: 6px; }
+.topbar-btn { white-space: nowrap; }
+.topbar-btn.icon { position: relative; justify-content: center; width: 44px; padding: 0; }
+.topbar-count { position: absolute; top: 1px; right: 1px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--rosa); color: var(--cacau); font-size: .7rem; font-weight: 800; line-height: 18px; text-align: center; box-shadow: 0 0 0 2px var(--cacau); }
+.topbar-btn.points { gap: 6px; padding: 0 12px 0 8px; }
+.topbar-btn.points::before { content: ""; flex: none; width: 22px; height: 22px; background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; }
+.topbar-btn.points .pts-word { display: none; }
+.topbar-btn.account { gap: 7px; padding: 0 12px 0 6px; }
+.topbar-btn.account .acc-av { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--rosa); color: var(--cacau); font-family: var(--display); font-weight: 400; font-size: 1rem; line-height: 1; }
+.topbar-btn.account .acc-name { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
+.store-badge .sb-short { display: none; }
+@media (max-width: 379px) {
+  .store-badge .sb-long { display: none; }
+  .store-badge .sb-short { display: inline; }
+  .topbar { padding-inline: 8px; gap: 6px; }
+}
+@media (min-width: 420px) { .topbar-btn.points .pts-word { display: inline; } .topbar-btn.account .acc-name { max-width: 14ch; } }
