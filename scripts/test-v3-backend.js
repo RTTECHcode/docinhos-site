@@ -26,6 +26,7 @@ let phoneN = 0;
 const newPhone = () => `1190007${String(Math.floor(Math.random() * 90) + 10)}${String(++phoneN).padStart(2, '0')}`.slice(0, 11);
 const PASS = 'SenhaBoa-123', ANS = 'Dona Maria';
 const POINT_KEYS = ['points_enabled', 'points_per_real', 'points_block_points', 'points_block_value_cents'];
+const SNAP_KEYS = [...POINT_KEYS, 'store_origin_lat', 'store_origin_lon', 'shipping_bands']; // origem/faixas: a cotação de teste mexe nelas
 
 let passed = 0;
 async function t(name, fn) {
@@ -64,22 +65,25 @@ const menuCall = () => runRes(menuHandler, { method: 'GET', headers: {} });
 const ADDR = { cep: '06000-001', street: 'Rua ZZ-v3 das Flores', number: '123', complement: 'apto 4', district: 'Centro', city: 'Osasco' };
 
 // ---------- ViaCEP simulado ----------
-const net = { calls: 0 };
+const net = { calls: 0, urls: [] };
 function fakeFetch(url) {
-  const u = String(url); net.calls++;
+  const u = String(url); net.calls++; net.urls.push(u);
   if (u.startsWith('https://viacep.com.br/ws/')) {
     const cep = u.split('/')[4];
     if (cep === '06999999') return { ok: true, status: 200, json: async () => ({ erro: true }) };
     if (cep === '06999998') return { ok: false, status: 500, json: async () => ({}) };
     return { ok: true, status: 200, json: async () => ({ logradouro: 'Rua ZZ-v3 Teste', bairro: 'Centro', localidade: 'Osasco', uf: 'SP' }) };
   }
+  if (u.startsWith('https://nominatim.openstreetmap.org/')) return { ok: true, status: 200, json: async () => [{ lat: '-23.51', lon: '-46.81', display_name: 'ZZ-v3 destino' }] };
+  if (u.startsWith('https://router.project-osrm.org/')) return { ok: true, status: 200, json: async () => ({ code: 'Ok', routes: [{ distance: 2500 }] }) };
   return { ok: false, status: 500, json: async () => ({}) };
 }
+const viacepCalls = () => net.urls.filter(u => u.startsWith('https://viacep.com.br/')).length;
 
 // ---------- estado a restaurar ----------
 let snap;
 async function snapshot() {
-  const keys = [...POINT_KEYS];
+  const keys = [...SNAP_KEYS];
   return {
     hours: await Q('select weekday, opens, closes from store_hours'),
     state: await Q('select * from store_state where id = 1'),
@@ -91,7 +95,7 @@ async function restore(s) {
   for (const h of s.hours) await Q('insert into store_hours (weekday, opens, closes) values ($1,$2,$3)', [h.weekday, h.opens, h.closes]);
   await Q('delete from store_state where id = 1');
   if (s.state[0]) await Q('insert into store_state (id, closed_until, closed_indefinitely, closed_message, updated_by, updated_at) values (1, $1, $2, $3, $4, coalesce($5, now()))', [s.state[0].closed_until, s.state[0].closed_indefinitely, s.state[0].closed_message, s.state[0].updated_by, s.state[0].updated_at]);
-  await Q('delete from settings where key = any($1::text[])', [POINT_KEYS]);
+  await Q('delete from settings where key = any($1::text[])', [SNAP_KEYS]);
   for (const r of s.settings) await Q('insert into settings (key, value) values ($1, $2)', [r.key, r.value]);
 }
 async function cleanup() {
@@ -107,7 +111,9 @@ async function cleanup() {
   await Q(`delete from login_attempts where username like 'zz-v3-%'`);
   await Q(`delete from admin_audit where username like 'zz-v3-%'`);
   await Q(`delete from admin_users where username like 'zz-v3-%'`);
-  await Q(`delete from rate_hits where ip like '198.18.%' or ip like 'v3teste-%'`);
+  await Q(`delete from rate_hits where ip like '198.18.%' or ip like 'v3teste-%' or (scope = 'cep_lookup_global' and ip = 'global')`);
+  await Q(`delete from geocode_cache where addr_key like '%zz%v3%'`);
+  await Q(`delete from route_cache where origin = '-23.50000,-46.80000'`);
 }
 
 (async () => {
@@ -142,6 +148,22 @@ async function cleanup() {
     assert.equal((await cpost('address', {}, { cookie })).status, 405);
     assert.equal((await cget('address_save', { cookie })).status, 405);
     assert.equal((await cget('address', { cookie })).headers['cache-control'], 'no-store');
+  });
+  await t('cadastro com endereço: cliente e endereço no MESMO insert (nenhum update posterior); endereço inválido não cria conta nem deixa linha', async () => {
+    const log = [];
+    const spy = { query: (text, params) => { log.push(String(text)); return sql.query(text, params); } };
+    const phone = newPhone();
+    const out = await customerLib.createAccount(spy, { name: 'ZZ-v3 Atomico', phone, password: PASS, security_question: 'prof_favorito', security_answer: ANS, address: ADDR }, { ip: nextIp() });
+    assert.ok(out.token);
+    const inserts = log.filter(s => /insert into customers\b/i.test(s));
+    assert.equal(inserts.length, 1); assert.match(inserts[0], /address_cep/);
+    assert.ok(!log.some(s => /update customers set address_/i.test(s)), 'sem segundo comando para o endereço');
+    const row = (await Q('select address_cep, address_street, address_number, address_city from customers where phone = $1', ['+55' + phone]))[0];
+    assert.deepEqual(row, { address_cep: '06000001', address_street: 'Rua ZZ-v3 das Flores', address_number: '123', address_city: 'Osasco' });
+    const phone2 = newPhone();
+    const err = await customerLib.createAccount(spy, { name: 'ZZ-v3 Atomico2', phone: phone2, password: PASS, security_question: 'prof_favorito', security_answer: ANS, address: { ...ADDR, street: 'x' } }, { ip: nextIp() }).catch(e => e);
+    assert.equal(err.status, 400); assert.equal(err.code, 'invalid_address');
+    assert.equal((await Q('select count(*)::int n from customers where phone = $1', ['+55' + phone2]))[0].n, 0);
   });
   await t('address_save: grava (CEP vira 8 dígitos, espaços limpos), lê de volta, troca e limpa; aceita { address: {...} } e campos soltos', async () => {
     const r = await cpost('address_save', { address: { ...ADDR, street: '  Rua ZZ-v3   das Flores ' } }, { cookie });
@@ -237,7 +259,7 @@ async function cleanup() {
     assert.equal(ok.status, 200, JSON.stringify(ok.body)); assert.equal(ok.body.city, 'Osasco'); assert.equal(ok.headers['cache-control'], 'no-store');
     const nf = await storeGet({ a: 'cep', cep: '06999999' });
     assert.equal(nf.status, 404); assert.equal(nf.body.code, 'cep_not_found');
-    assert.equal((await Q(`select count(*)::int n from cep_cache where cep = '06999999'`))[0].n, 0, 'CEP inexistente não vai para o cache');
+    assert.equal((await Q(`select count(*)::int n from cep_cache where cep = '06999999'`))[0].n, 1, 'CEP inexistente fica em cache (marcador, 1 dia)');
     for (const cep of ['123', 'abcdefgh', '', undefined]) { const r = await storeGet({ a: 'cep', cep }); assert.equal(r.status, 400, String(cep)); assert.equal(r.body.code, 'invalid_cep'); }
     const down = await storeGet({ a: 'cep', cep: '06999998' });
     assert.equal(down.status, 503); assert.equal(down.body.code, 'cep_unavailable');
@@ -251,6 +273,77 @@ async function cleanup() {
     assert.equal((await storeGet({ a: 'cep', cep: '06000011' }, 'v3teste-cep-2')).status, 200);
     assert.equal((await Q(`select count(*)::int n from rate_hits where scope = 'shipping_quote' and ip = $1`, [ip]))[0].n, 0);
     assert.ok((await Q(`select count(*)::int n from rate_hits where scope = 'cep_lookup' and ip = $1`, [ip]))[0].n >= 1);
+  });
+
+  await t('CEP inexistente: 1ª consulta vai ao ViaCEP, a 2ª (404) sai do cache sem rede; passou de 1 dia consulta de novo; CEP encontrado não é afetado', async () => {
+    await Q(`delete from cep_cache where cep in ('06999999', '06000012')`);
+    net.urls = [];
+    for (let i = 0; i < 3; i++) { const r = await shipping.lookupCep(sql, '06999999').catch(e => e); assert.equal(r.status, 404); assert.equal(r.code, 'cep_not_found'); }
+    assert.equal(viacepCalls(), 1, 'só a 1ª consulta vai ao ViaCEP');
+    const row = (await Q(`select localidade, uf from cep_cache where cep = '06999999'`))[0];
+    assert.deepEqual([row.localidade, row.uf], ['', '']);
+    await Q(`update cep_cache set created_at = now() - interval '23 hours' where cep = '06999999'`);
+    await shipping.lookupCep(sql, '06999999').catch(() => {}); assert.equal(viacepCalls(), 1, 'com 23 h ainda vale');
+    await Q(`update cep_cache set created_at = now() - interval '25 hours' where cep = '06999999'`);
+    await shipping.lookupCep(sql, '06999999').catch(() => {}); assert.equal(viacepCalls(), 2, 'com 25 h expirou');
+    assert.equal(shipping.CEP_NOT_FOUND_DAYS, 1);
+    // CEP encontrado com 2 dias continua valendo (90 dias)
+    await shipping.lookupCep(sql, '06000012'); await Q(`update cep_cache set created_at = now() - interval '2 days' where cep = '06000012'`);
+    const n = viacepCalls(); await shipping.lookupCep(sql, '06000012'); assert.equal(viacepCalls(), n);
+    // falha do ViaCEP (503) não é guardada
+    await Q(`delete from cep_cache where cep = '06999998'`);
+    await shipping.lookupCep(sql, '06999998').catch(() => {});
+    assert.equal((await Q(`select count(*)::int n from cep_cache where cep = '06999998'`))[0].n, 0);
+  });
+  await t('teto global do ViaCEP (cep_lookup_global, 60/min): só conta chamada externa; cache hit passa; estourou = 503 cep_unavailable; outro IP também barrado', async () => {
+    assert.equal(shipping.CEP_GLOBAL_MAX_PER_MINUTE, 60);
+    await Q(`delete from rate_hits where scope = 'cep_lookup_global' and ip = 'global'`);
+    await shipping.lookupCep(sql, '06000030'); // entra no cache
+    const countHits = async () => Number((await Q(`select coalesce(sum(n), 0)::int n from rate_hits where scope = 'cep_lookup_global' and ip = 'global'`))[0].n);
+    const base = await countHits();
+    assert.equal(base, 1, 'a chamada externa contou 1');
+    for (let i = 0; i < 3; i++) await shipping.lookupCep(sql, '06000030');
+    assert.equal(await countHits(), base, 'cache hit não conta no teto');
+    // leva o teto a 59 e confere: a 60ª passa, a 61ª chamada externa é barrada e NÃO chama o ViaCEP
+    await Q(`insert into rate_hits (scope, ip, minute, n) values ('cep_lookup_global', 'global', date_trunc('minute', now()), 58)
+             on conflict (scope, ip, minute) do update set n = rate_hits.n + 58`);
+    net.urls = [];
+    await shipping.lookupCep(sql, '06000031'); // 60ª: ainda passa
+    assert.equal(viacepCalls(), 1);
+    const r = await storeGet({ a: 'cep', cep: '06000032' }, 'v3teste-cepg-1'); // 61ª: barrada
+    assert.equal(r.status, 503); assert.equal(r.body.code, 'cep_unavailable');
+    assert.equal(viacepCalls(), 1, 'barrada antes do fetch externo');
+    assert.ok(!/limite|teto|global/i.test(r.body.error), 'mensagem genérica');
+    assert.equal((await storeGet({ a: 'cep', cep: '06000032' }, 'v3teste-cepg-2')).status, 503, 'vale para todos os IPs');
+    assert.equal((await storeGet({ a: 'cep', cep: '06000030' }, 'v3teste-cepg-3')).status, 200, 'CEP em cache continua respondendo');
+    assert.equal((await storeGet({ a: 'cep', cep: '06000031' }, 'v3teste-cepg-4')).status, 200);
+    assert.equal((await Q(`select count(*)::int n from cep_cache where cep = '06000032'`))[0].n, 0);
+    await Q(`delete from rate_hits where scope = 'cep_lookup_global' and ip = 'global'`);
+    assert.equal((await storeGet({ a: 'cep', cep: '06000032' }, 'v3teste-cepg-5')).status, 200, 'passada a janela, volta a consultar');
+  });
+  await t('quoteDelivery usa o cep_cache: 2ª cotação do mesmo CEP não chama o ViaCEP e dá o mesmo resultado; CEP inexistente (422) também fica em cache; teto global não barra a cotação', async () => {
+    await shipping.setOrigin(sql, -23.5, -46.8);
+    await Q(`delete from settings where key = 'shipping_bands'`);
+    await Q(`delete from cep_cache where cep in ('06000040', '06999999')`);
+    await Q(`delete from rate_hits where scope = 'cep_lookup_global' and ip = 'global'`);
+    net.urls = [];
+    const q1 = await shipping.quoteDelivery(sql, { cep: '06000-040', address: 'Rua ZZ-v3 Teste, 100' });
+    assert.equal(viacepCalls(), 1);
+    assert.equal((await Q(`select count(*)::int n from cep_cache where cep = '06000040'`))[0].n, 1, 'cotação grava no cep_cache');
+    const q2 = await shipping.quoteDelivery(sql, { cep: '06000040', address: 'Rua ZZ-v3 Teste, 100' });
+    assert.equal(viacepCalls(), 1, 'cache: sem nova chamada ao ViaCEP');
+    assert.deepEqual(q2, q1);
+    assert.equal(q1.km, 2.5); assert.equal(q1.fee_cents, 600); // OSRM simulado: 2,5 km = 1ª faixa padrão
+    // CEP inexistente: 422 cep_not_found na 1ª e na 2ª (esta sem rede)
+    net.urls = [];
+    for (let i = 0; i < 2; i++) { const e = await shipping.quoteDelivery(sql, { cep: '06999999', address: 'Rua ZZ-v3 Teste, 1' }).catch(x => x); assert.equal(e.status, 422); assert.equal(e.code, 'cep_not_found'); }
+    assert.equal(viacepCalls(), 1);
+    // teto global estourado: a cotação (que alimenta o pedido) não é barrada, só a consulta de CEP
+    await Q(`insert into rate_hits (scope, ip, minute, n) values ('cep_lookup_global', 'global', date_trunc('minute', now()), 500)
+             on conflict (scope, ip, minute) do update set n = 500`);
+    const q3 = await shipping.quoteDelivery(sql, { cep: '06000041', address: 'Rua ZZ-v3 Teste, 100' });
+    assert.equal(q3.fee_cents, 600);
+    await Q(`delete from rate_hits where scope = 'cep_lookup_global' and ip = 'global'`);
   });
 
   // ===== D4: prévia de pontos =====
@@ -290,6 +383,27 @@ async function cleanup() {
       const r = await cpost('points_preview', { items }); assert.equal(r.status, 400, JSON.stringify(items)?.slice(0, 60)); assert.equal(r.body.code, 'invalid_items');
     }
     assert.equal((await cget('points_preview')).status, 405);
+  });
+  await t('points_preview: vazio = "O carrinho está vazio."; mais de 30 itens = mensagem própria "itens demais" (não "vazio"); 30 itens passa', async () => {
+    assert.equal(orderApi.MAX_ITEMS, 30);
+    const empty = await cpost('points_preview', { items: [] });
+    assert.equal(empty.status, 400); assert.equal(empty.body.error, 'O carrinho está vazio.'); assert.equal(empty.body.code, 'invalid_items');
+    const many = await cpost('points_preview', { items: new Array(31).fill({ product_id: prod.id, qty: 1 }) });
+    assert.equal(many.status, 400); assert.equal(many.body.code, 'invalid_items');
+    assert.match(many.body.error, /itens demais/); assert.ok(!/vazio/.test(many.body.error)); assert.match(many.body.error, /30/);
+    const max = await cpost('points_preview', { items: new Array(30).fill({ product_id: prod.id, qty: 1 }) });
+    assert.equal(max.status, 200, JSON.stringify(max.body)); assert.equal(max.body.subtotal_cents, 30000);
+  });
+  await t('points_preview: limite por IP (escopo points_preview, 120 em 10 min) = 429 rate_limited; outro IP não é afetado; não usa o escopo da cotação', async () => {
+    assert.equal(customerHandler._internal.PREVIEW_MAX_PER_IP, 120);
+    const ip = 'v3teste-pp-1', body = { items: [{ product_id: prod.id, qty: 1 }] };
+    await Q(`insert into rate_hits (scope, ip, minute, n) values ('points_preview', $1, date_trunc('minute', now()), 118)`, [ip]);
+    assert.equal((await cpost('points_preview', body, { ip })).status, 200); // 119
+    assert.equal((await cpost('points_preview', body, { ip })).status, 200); // 120
+    const r = await cpost('points_preview', body, { ip }); // 121
+    assert.equal(r.status, 429, JSON.stringify(r.body)); assert.equal(r.body.code, 'rate_limited');
+    assert.equal((await cpost('points_preview', body, { ip: 'v3teste-pp-2' })).status, 200);
+    assert.equal((await Q(`select count(*)::int n from rate_hits where scope = 'shipping_quote' and ip = $1`, [ip]))[0].n, 0);
   });
 
   // ===== D5: complementos pausados =====
