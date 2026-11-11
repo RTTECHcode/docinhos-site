@@ -507,7 +507,11 @@ module.exports = async (req, res) => {
     if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
     if (error instanceof shipping.ShippingError) return res.status(error.status).json({ error: error.message, code: error.code, ...(error.max_km ? { max_km: error.max_km } : {}) });
     if (error instanceof loyalty.LoyaltyError) return res.status(error.status).json({ error: error.message, code: error.code });
-    console.error('Erro ao criar pedido:', error.message);
+    // QA v3 B1: a mensagem de erro inesperado pode trazer valores (telefone, e-mail). Loga o código e a mensagem
+    // com e-mails e sequências de 4+ dígitos mascarados, o suficiente para diagnosticar sem dados pessoais.
+    const code = error && typeof error.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(error.code) ? error.code : 'sem_codigo';
+    const safeMsg = String((error && error.message) || '').replace(/\S+@\S+/g, '<email>').replace(/\d{4,}/g, '<n>').slice(0, 200);
+    console.error('Erro ao criar pedido:', code, safeMsg);
     return res.status(500).json({ error: 'Não foi possível criar o pedido' });
   }
 };
