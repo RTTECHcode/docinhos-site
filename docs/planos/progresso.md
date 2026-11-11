@@ -23,3 +23,20 @@ Status: pendente | andamento | feito | bloqueado
 | Re-auditoria | feito | a2-fix-f5 | sem Crítico/Alto; achados corrigidos; ZAP pendente sem Docker/Java |
 | Preview | feito | painel-v2 | publicado com F5; usa banco dev |
 | Relatório | feito | painel-v2 | docs/planos/relatorio-final.md; aguarda aprovação do Renan |
+
+## v3 — rodada de ajustes
+
+Base: ajustes-v3 criada da painel-v3 (v2.1), que vai para a main.
+
+| ID | Status | Branch | Nota |
+|---|---|---|---|
+| F0 | feito | ajustes-v3 | docs lidos; branch e seção criadas |
+| F1 W1 | andamento | v3-a1-webhook | diagnóstico do webhook, só leitura |
+| F1 W2-W4, W6 | pendente | v3-a1-webhook | depois da causa |
+| F1 W5 | pendente | — | corrigir DG-7747 e DG-5401 só com aprovação |
+| F2 D1-D8 | andamento | v3-a2-backend | banco dev |
+| F3 P1-P6 | pendente | v3-a3-admin | após F2 |
+| F3 L1-L8 | pendente | v3-a4-loja | após F2 |
+| F4 V1-V7 | pendente | v3-a5-design | após F3 |
+| F5 QA | pendente | v3-a6-qa | A6 + revisão A1 |
+| F6 Relatório | pendente | ajustes-v3 | passos de produção para aprovação |
