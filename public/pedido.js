@@ -2,6 +2,12 @@
 (function () {
   var RECENT_KEY = 'dg-recent-orders';
   var REFRESH_MS = 20000;
+  var FAST_MS = 5000; // enquanto o pagamento está pendente (L8): confirma sozinho assim que aprovar
+  var params = new URLSearchParams(location.search);
+  var payParam = params.get('pagamento'); // ok | pendente, na volta do cartão (Mercado Pago)
+  if (payParam) { params.delete('pagamento'); history.replaceState(null, '', location.pathname + '?' + params.toString() + location.hash); }
+  var PENDING = { pending: 1, in_process: 1, authorized: 1 };
+  var sawPending = !!payParam, lastLoad = 0, fast = false;
   var TZ = 'America/Sao_Paulo';
   var token = new URLSearchParams(location.search).get('t') || '';
   var $ = function (id) { return document.getElementById(id); };
@@ -77,6 +83,16 @@
     $('t-total').textContent = Number.isInteger(d.total_cents) ? brl(d.total_cents) : '';
     $('t-created').textContent = when(d.created_at);
     $('t-info').hidden = false;
+    // L8: aviso do pagamento. Aprovado depois de pendente (ou na volta do cartão) vira "Pagamento confirmado".
+    var ps = d.payment_status, banner = $('t-pay-banner');
+    fast = !!PENDING[ps] && !cancelled;
+    if (PENDING[ps]) sawPending = true;
+    if (ps === 'approved' && sawPending) { banner.textContent = 'Pagamento confirmado! Já estamos cuidando do seu pedido.'; banner.className = 'track-msg pay-banner ok'; banner.hidden = false; }
+    else if (PENDING[ps] && payParam) { banner.textContent = payParam === 'ok' ? 'Voltamos do pagamento. Estamos confirmando com o Mercado Pago. Esta tela muda sozinha quando for aprovado.' : 'Pagamento pendente. Esta tela muda sozinha quando for aprovado.'; banner.className = 'track-msg pay-banner'; banner.hidden = false; }
+    else if (PENDING[ps]) { banner.textContent = 'Aguardando a confirmação do pagamento. Esta tela muda sozinha quando for aprovado.'; banner.className = 'track-msg pay-banner'; banner.hidden = false; }
+    else if (ps === 'rejected' || ps === 'cancelled') { banner.textContent = 'O pagamento não foi concluído. Se já pagou, fale com a gente pelo WhatsApp informando o código do pedido.'; banner.className = 'track-msg pay-banner warn'; banner.hidden = false; }
+    else banner.hidden = true;
+    $('t-note').textContent = fast ? 'Esta página atualiza sozinha a cada 5 segundos enquanto o pagamento é confirmado.' : NOTE_TEXT;
     $('t-note').hidden = status === 'completed' || cancelled;
     if (status === 'completed' || cancelled) stop();
   }
@@ -104,13 +120,13 @@
   async function load() {
     if (busy) return;
     busy = true;
+    lastLoad = Date.now();
     try {
       var r = await fetch('/api/order-status?t=' + encodeURIComponent(token), { cache: 'no-store' });
       if (r.status === 404) { stop(); $('t-code').textContent = ''; $('t-msg').textContent = 'Não encontramos esse pedido. Confira o link ou veja seus pedidos recentes abaixo.'; return; }
       if (r.status === 429) { rateLimited(r); return; }
       if (!r.ok) { $('t-msg').textContent = 'Não foi possível atualizar agora. Tentamos de novo em instantes.'; return; }
       backoffStep = 0;
-      $('t-note').textContent = NOTE_TEXT;
       render(await r.json());
     } catch (e) {
       $('t-msg').textContent = 'Sem conexão. Tentamos de novo em instantes.';
@@ -124,6 +140,6 @@
     return;
   }
   load();
-  timer = setInterval(function () { if (canLoad()) load(); }, REFRESH_MS);
+  timer = setInterval(function () { if (canLoad() && Date.now() - lastLoad >= (fast ? FAST_MS : REFRESH_MS) - 500) load(); }, FAST_MS);
   document.addEventListener('visibilitychange', function () { if (timer && canLoad()) load(); });
 })();

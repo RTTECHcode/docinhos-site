@@ -96,15 +96,20 @@
       </fieldset>
       <div id="address-field" class="address-field">
         <label>CEP<input name="cep" required inputmode="numeric" maxlength="9" autocomplete="postal-code" placeholder="00000-000"></label>
-        <label>Rua e bairro<input name="address" required autocomplete="address-line1" placeholder="Ex.: Rua das Flores, Centro"></label>
+        <p id="cep-status" class="cep-status" role="status" aria-live="polite" hidden></p>
+        <label>Rua<input name="address" required maxlength="120" autocomplete="address-line1" placeholder="Ex.: Rua das Flores"></label>
         <div class="field-row">
           <label>Número<input name="address_number" required inputmode="numeric" maxlength="10" autocomplete="off" placeholder="100"></label>
           <label>Complemento<input name="complement" maxlength="60" autocomplete="address-line2" placeholder="Apto, bloco, referência"></label>
         </div>
+        <div class="field-row">
+          <label>Bairro<input name="district" maxlength="80" autocomplete="off" placeholder="Ex.: Centro"></label>
+          <label>Cidade<input name="city" maxlength="80" autocomplete="address-level2" placeholder="Ex.: Osasco"></label>
+        </div>
         <button type="button" id="quote-btn" class="button secondary full">Calcular frete</button>
         <p id="quote-box" class="quote-box" role="status" aria-live="polite" hidden></p>
       </div>
-      <div id="pickup-info" class="pickup-info" hidden><strong>Retire em:</strong> <span id="store-address"></span><br>Frete: R$ 0,00. Avisamos por aqui e pelo WhatsApp quando o pedido estiver pronto para retirar.</div>
+      <div id="pickup-info" class="pickup-info" hidden><strong>Retire em:</strong> <span id="store-address"></span><br>Frete: R$ 0,00.<br><strong>Avisamos por aqui e pelo WhatsApp quando o pedido estiver pronto para retirar.</strong></div>
       <label>Observações<textarea name="notes" rows="2" placeholder="Ex.: sem açúcar, entregar às 15h"></textarea></label>
       <fieldset class="pay-choice">
         <legend>Forma de pagamento</legend>

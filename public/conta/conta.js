@@ -98,6 +98,63 @@
   }
   const go = route => { if (location.hash === '#' + route) render(); else location.hash = route; };
 
+  // ---------- Endereço (D1) e busca de CEP (D3) ----------
+  const ADDR_FIELDS = ['cep', 'street', 'number', 'complement', 'district', 'city'];
+  const cepDigits = v => String(v || '').replace(/\D/g, '').slice(0, 8);
+  const maskCep = v => { const d = cepDigits(v); return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d; };
+  const addrInput = (root, name) => $(`[name="${name}"]`, root);
+  function readAddress(root) {
+    const a = {};
+    ADDR_FIELDS.forEach(n => { a[n] = (addrInput(root, n).value || '').trim(); });
+    a.cep = cepDigits(a.cep);
+    return a;
+  }
+  function fillAddress(root, a) {
+    ADDR_FIELDS.forEach(n => { addrInput(root, n).value = a && a[n] ? (n === 'cep' ? maskCep(a[n]) : a[n]) : ''; });
+  }
+  // Devolve null se estiver tudo em branco; senão confere o mínimo (o servidor confere de novo).
+  function addressProblem(a, { required }) {
+    const blank = ADDR_FIELDS.every(n => !a[n]);
+    if (blank) return required ? 'Preencha o endereço ou use "Apagar endereço".' : '';
+    if (a.cep.length !== 8) return 'Informe o CEP com 8 números.';
+    if (a.street.length < 3) return 'Informe a rua.';
+    if (!a.number) return 'Informe o número (ou s/n).';
+    return '';
+  }
+  const cepCache = new Map();
+  function bindCep(root) {
+    const cepEl = addrInput(root, 'cep'), status = $('[data-cep-status]', root);
+    let seq = 0;
+    const say = (msg, warn) => { status.textContent = msg; status.hidden = !msg; status.classList.toggle('warn', !!warn); };
+    cepEl.addEventListener('input', async () => {
+      cepEl.value = maskCep(cepEl.value);
+      const cep = cepDigits(cepEl.value);
+      if (cep.length !== 8) { seq++; say(''); return; }
+      const apply = d => {
+        [['street', d.street], ['district', d.district], ['city', d.city]].forEach(([n, v]) => { if (v) addrInput(root, n).value = v; });
+        say(d.street ? 'Endereço preenchido pelo CEP. Confira e complete o número.' : 'CEP sem rua cadastrada. Preencha o endereço à mão.', !d.street);
+        if (d.street && !addrInput(root, 'number').value) addrInput(root, 'number').focus({ preventScroll: true });
+      };
+      if (cepCache.has(cep)) { const c = cepCache.get(cep); if (c.ok) apply(c.data); else say(c.msg, true); return; }
+      const mine = ++seq;
+      say('Buscando o endereço...');
+      try {
+        const r = await fetch('/api/store?a=cep&cep=' + cep, { cache: 'no-store' });
+        let d = {}; try { d = await r.json(); } catch { /* corpo não-JSON */ }
+        if (mine !== seq) return;
+        if (r.ok && d && typeof d === 'object') { cepCache.set(cep, { ok: true, data: d }); apply(d); return; }
+        const msg = r.status === 404 ? 'CEP não encontrado. Confira o número ou preencha o endereço à mão.' : 'Não foi possível buscar o CEP agora. Preencha o endereço à mão.';
+        if (r.status === 404) cepCache.set(cep, { ok: false, msg });
+        say(msg, true);
+      } catch { if (mine === seq) say('Sem conexão para buscar o CEP. Preencha o endereço à mão.', true); }
+    });
+  }
+  $$('[data-address]').forEach(bindCep);
+
+  // Quem veio do checkout (/conta/?voltar=checkout) volta para lá depois de entrar ou criar a conta; o carrinho fica no aparelho.
+  const wantsCheckout = () => new URLSearchParams(location.search).get('voltar') === 'checkout';
+  function backToCheckout() { if (!wantsCheckout()) return false; location.href = '/?checkout=1'; return true; }
+
   // ---------- Perguntas e texto do consentimento ----------
   function loadQuestions() {
     if (!questionsLoaded) {
@@ -182,6 +239,7 @@
       await api('login', { method: 'POST', body: { phone: phoneDigits(v.phone), password: v.password } });
       f.reset();
       await refreshMe();
+      if (backToCheckout()) return;
       go('pedidos');
     } catch (e) { setError(f, e.message); }
     finally { busy(f, false); }
@@ -204,6 +262,9 @@
     if (!v.security_question) return setError(f, 'Escolha a pergunta de segurança.');
     if (String(v.security_answer || '').trim().length < 3) return setError(f, 'A resposta de segurança precisa ter pelo menos 3 letras.');
     if ((v.birth_day && !v.birth_month) || (!v.birth_day && v.birth_month)) return setError(f, 'Para o aniversário, escolha o dia e o mês (ou deixe os dois em branco).');
+    const addr = readAddress(f);
+    const addrMsg = addressProblem(addr, { required: false });
+    if (addrMsg) return setError(f, addrMsg);
     const body = {
       name: v.name.trim(), phone: phoneDigits(v.phone), password: v.password,
       security_question: v.security_question, security_answer: v.security_answer,
@@ -213,12 +274,14 @@
     };
     if (v.email && v.email.trim()) body.email = v.email.trim();
     if (v.birth_day && v.birth_month) { body.birth_day = Number(v.birth_day); body.birth_month = Number(v.birth_month); }
+    if (ADDR_FIELDS.some(n => addr[n])) body.address = addr;
     setError(f, ''); busy(f, true);
     try {
       await api('register', { method: 'POST', body });
       f.reset();
       await refreshMe();
       flash = 'Conta criada! Bem-vinda(o) à Docinhos da Gigi.';
+      if (backToCheckout()) return;
       go('pedidos');
     } catch (e) {
       if (e.code === 'consent_outdated') { await reloadConsent(); $('#cad-consent').checked = false; }
@@ -343,9 +406,35 @@
       $('#d-aniversario').textContent = c.birth_day && c.birth_month ? `${c.birth_day} de ${MONTHS[c.birth_month - 1]}` : 'não informado';
       $('#dados-consent-text').textContent = consentInfo ? consentInfo.text : 'Receber novidades, promoções e avisos de pedidos pelo WhatsApp.';
       consentBox().checked = !!c.whatsapp_consent;
+      try { const ad = await api('address'); fillAddress($('#form-endereco'), ad.address); } catch (e) { if (e.status !== 401) throw e; }
+      $('.notice.ok', $('#form-endereco')).hidden = true; setError($('#form-endereco'), '');
       status.hidden = true; body.hidden = false;
     } catch (e) { status.textContent = e.message; }
   }
+  $('#form-endereco').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const f = ev.currentTarget, ok = $('.notice.ok', f), addr = readAddress(f);
+    ok.hidden = true;
+    const msg = addressProblem(addr, { required: true });
+    if (msg) return setError(f, msg);
+    setError(f, ''); busy(f, true);
+    try {
+      const d = await api('address_save', { method: 'POST', body: { address: addr } });
+      fillAddress(f, d.address);
+      ok.textContent = 'Endereço salvo. Ele já vem preenchido no seu próximo pedido.'; ok.hidden = false;
+    } catch (e) { setError(f, e.message); }
+    finally { busy(f, false); }
+  });
+  $('#btn-endereco-apagar').addEventListener('click', async () => {
+    const f = $('#form-endereco'), ok = $('.notice.ok', f);
+    ok.hidden = true; setError(f, '');
+    try {
+      await api('address_clear', { method: 'POST' });
+      fillAddress(f, null);
+      $('[data-cep-status]', f).hidden = true;
+      ok.textContent = 'Endereço apagado.'; ok.hidden = false;
+    } catch (e) { setError(f, e.message); }
+  });
   consentBox().addEventListener('change', async ev => {
     const box = ev.currentTarget, want = box.checked;
     const msg = $('#dados-consent-msg'), err = $('#dados-consent-erro');
@@ -389,6 +478,7 @@
   window.addEventListener('hashchange', render);
   (async function init() {
     await refreshMe();
+    if (me && backToCheckout()) return;
     render();
   })();
 })();
