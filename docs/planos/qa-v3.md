@@ -1,7 +1,7 @@
 # QA v3 (A6): W, D, P, L
 
-Base: ajustes-v3 (F1, F2, F3 e correções do A2, commit b73af4d). Banco dev, porta 3360. V1-V7 ficam para a segunda rodada (A5 ainda em andamento).
-Telas: 360x740, 390x844 (toque) e 1366x800. Screenshots em C:\Users\menez\AppData\Local\gigi-tools\ (prefixo `<largura>-v3-a6-*.png`; scripts `v3-a6-*.js`).
+Base rodada 1: ajustes-v3 (b73af4d). Rodada 2: dc46511 (design A5 V1-V7 e correção do B1). Banco dev, porta 3360.
+Telas: 360x740, 390x844 (toque), 844x390 (deitado) e 1366x800. Screenshots em C:\Users\menez\AppData\Local\gigi-tools\ (prefixo `<largura>-v3-a6-*.png`; scripts `v3-a6-*.js`).
 
 ## 1. Testes automáticos (scripts/test-*.js, um por vez)
 
@@ -56,7 +56,13 @@ Total: 14 de 14 scripts passaram, 0 falhas. Confirmado: test-order-handler.js e 
 | L6 | passou | visitante "Entre na sua conta e ganhe 20 pontos..." com botão; volta ao checkout com carrinho e dados; logado "Este pedido vai gerar..." | |
 | L7 | passou | 3 larguras: complementos pausados com selo "Indisponível", input desabilitado, clique forçado não marca | screenshot 360-v3-a6-L7-pausado.png |
 | L8 | passou | mesmos testes do W4 nas 3 larguras | |
-| V1-V7 | não testado | segunda rodada | depende da fase V do A5 |
+| V1 | passou | carrinho vazio com arte do brigadeiro, svg 200 (4 telas); veja V2/V3/V5 | |
+| V2 | passou | faixa "Volto logo" cruza o card, card desabilitado, clique não abre modal (4 telas, moque de /api/menu) | |
+| V3 | passou | "Para família" com brigadeiro no chip, no título e na lista de categorias (4 telas) | |
+| V4 | passou | 20 adições, 3 botões flutuantes nos 4 tamanhos, visitante e logado; ver cenário 3 | |
+| V5 | passou | botão "Acompanhe" (arco "acompanhe", contagem 2), lista com 2 pedidos, 1 pedido abre direto, some quando concluído | |
+| V6 | passou | topo de 56 px em uma linha, sem rolagem lateral, alvos de 44 px; selo "Aberta" abaixo de 380 px; "Criar conta" na aba Entrar; aviso no topo | |
+| V7 | passou | L1, L2, L6, L7 e conta com endereço sem regressão (360, 390, 1366); prints `*-v3-a6-V*.png` | |
 
 ## 3. Cenários do plano
 
@@ -71,7 +77,18 @@ Total: 14 de 14 scripts passaram, 0 falhas. Confirmado: test-order-handler.js e 
 | Fechar loja com prazo e reabrir | passou | P1 pela tela e pela API (30 min, até reabrir, manual vence o horário) |
 | Complemento pausado | passou | L7 |
 | Carrinho com − e remover | passou | L1 |
-| 20 adições com os 3 botões flutuantes | adiado | V4, segunda rodada |
+| 20 adições com os 3 botões flutuantes | passou | 8 combinações (4 telas x visitante e logado): 20 adições seguidas, 3 ciclos de abrir/fechar carrinho, categorias, Acompanhe e produto (botão X, Esc, fundo), rolagem 0 a fim e de volta, giro 390x844 <-> 844x390 e 360x740 <-> 740x360; botões visíveis, clicáveis, dentro da tela e sem sobreposição; contador 20; aviso no topo não cobre os botões; sem erro de JS |
+
+### Rodada 2: reexecução e regressão
+
+| Item | Resultado | Evidência |
+|---|---|---|
+| test-order-pricing | passou | 37 testes |
+| test-order-limits | passou | 11 testes |
+| test-customer-api | passou | 39 testes ok, sem sobras ZZ |
+| test-v3-backend | passou | 25 testes |
+| L1, L2, L6, L7, L3, L4, L8, W4 | passou | 360, 390, 1366; L2 agora é testado pela classe `.pickup-notice` em negrito (o texto saiu do `<strong>`) |
+| Conta com endereço (L3, L5, L6 voltar ao checkout) | passou | 360, 390, 1366 |
 
 ## 4. Ressalvas da revisão A1 (commit 1cdb19b)
 
@@ -88,12 +105,13 @@ Total: 14 de 14 scripts passaram, 0 falhas. Confirmado: test-order-handler.js e 
 
 | # | Severidade | Descrição | Causa provável e passos |
 |---|---|---|---|
-| B1 | Baixo | api/order.js:510 registra `error.message` de erro inesperado; mensagem de banco pode trazer valores (telefone) | Texto de erro do Postgres/Neon em violação de restrição. Sem ocorrência vista. Registrar só o código, como em api/customer.js. Dono: A2 ou A1 |
+| B1 | Baixo | CORRIGIDO na rodada 2: api/order.js:506-517 loga só código e mensagem com e-mail e 4+ dígitos mascarados (confirmado lendo o código) | Resolvido. |
 
-Sem bugs Críticos, Altos ou Médios.
+Sem bugs Críticos, Altos ou Médios na rodada 2. Nenhum bug novo.
 
 ## 6. Limites e pendências
 
+- Giro testado por troca de viewport no Edge, não em aparelho real. Faixa "Volto logo" testada com moque de /api/menu (produto pausado fictício).
 - Pagamento sempre moqueado (Mercado Pago do dev é placeholder). Clique real em "Conferir pagamento" não testado.
 - Atividade recente fica na aba Conta; o plano dizia "em Ajustes". Só uma divergência de texto.
 - D7 e a migração dos horários/categoria ainda precisam rodar em produção (lista do A0).
