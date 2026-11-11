@@ -800,3 +800,36 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
 .cat-chip.has-brig { padding-left: 33px; }
 .cat-chip.has-brig.active::before { background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; border: 0; }
 .cat-item .cat-brig { order: 0; margin-left: -2px; }
+
+/* V5: botão flutuante "Acompanhe" (brigadeiro + texto em arco parcial), no estilo do carrinho */
+.track-fab {
+  position: fixed; z-index: 40; right: 12px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  display: grid; place-items: center;
+  width: 72px; height: 72px; padding: 0;
+  border-radius: 50%;
+  background: var(--brand); color: var(--manteiga);
+  border: 2px solid var(--brand-deep);
+  box-shadow: 0 4px 0 var(--brand-deep), 0 16px 24px -10px rgba(156, 42, 64, .7);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.track-fab[hidden] { display: none; }
+.track-fab:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--brand-deep); }
+.track-fab svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.track-arc-text { font: 800 11.5px/1 var(--font); letter-spacing: .04em; fill: #fff; }
+.track-fab-count {
+  position: absolute; top: -6px; right: -4px;
+  display: grid; place-items: center;
+  min-width: 24px; height: 24px; padding: 0 6px;
+  border-radius: var(--pill);
+  background: var(--manteiga); color: var(--cacau);
+  border: 2px solid var(--brand-deep);
+  font-size: .78rem; font-weight: 800; line-height: 1;
+}
+.track-fab-count[hidden] { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .track-fab { animation: pop .45s cubic-bezier(.3, 1.8, .5, 1); }
+}
+/* com o carrinho visível, o Acompanhe sobe para ficar acima dele (nunca em cima dele) */
+body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px + env(safe-area-inset-bottom)); }

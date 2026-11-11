@@ -4,6 +4,8 @@ const catsEl = document.querySelector('#categorias');
 const cartFab = document.querySelector('#cart-fab');
 const cartFabCount = document.querySelector('#cart-fab-count');
 const catFab = document.querySelector('#cat-fab');
+const trackFab = document.querySelector('#track-fab');
+const trackFabCount = document.querySelector('#track-fab-count');
 const catList = document.querySelector('#cat-list');
 const toastEl = document.createElement('div');
 toastEl.id = 'toast';
@@ -596,6 +598,7 @@ function addRecent(order) {
   list.unshift({ public_code: order.public_code || '', token: order.token, date: new Date().toISOString() });
   writeStore(RECENT_KEY, list.slice(0, RECENT_MAX));
   renderRecentBtn();
+  refreshTrack();
 }
 const recentBtn = document.querySelector('#recent-btn');
 function renderRecentBtn() { recentBtn.hidden = loadRecent().length === 0; }
@@ -696,7 +699,90 @@ async function loadAccount() {
   renderAccount();
   renderPoints();
   renderSummary();
+  refreshTrack();
 }
+
+/* ---------- V5: botão flutuante "Acompanhe" ----------
+   Aparece quando há pedido não concluído: dos recentes no aparelho (dg-recent-orders, status consultado em /api/order-status)
+   ou do cliente logado (/api/customer?a=orders). Um pedido: abre direto o acompanhamento. Mais de um: lista. */
+const TRACK_DONE = new Set(['completed', 'delivered', 'cancelled']);
+const TRACK_PAY_DEAD = new Set(['rejected', 'cancelled', 'refunded', 'charged_back']);
+const TRACK_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const TRACK_CHECKS = 5;      // no máximo 5 consultas de status por rodada (limite do servidor: 300 em 10 min por IP)
+const TRACK_EVERY_MS = 60000;
+let trackItems = [];
+let trackSeq = 0;
+let trackLastAt = 0;
+const trackActive = o => !!o && !TRACK_DONE.has(o.fulfillment_status) && !TRACK_PAY_DEAD.has(o.payment_status);
+const trackFresh = iso => { const t = Date.parse(iso); return !isNaN(t) && Date.now() - t < TRACK_MAX_AGE_MS; };
+async function trackStatusOf(r) {
+  try {
+    const res = await fetch('/api/order-status?t=' + encodeURIComponent(r.token), { cache: 'no-store' });
+    if (res.status === 404) return null;        // pedido não existe mais
+    if (!res.ok) return { unknown: true };      // 429 ou erro: mantém visível, sem status
+    return await res.json();
+  } catch { return { unknown: true }; }
+}
+async function trackMyOrders() {
+  if (!account) return [];
+  try {
+    const res = await fetch('/api/customer?a=orders&limit=10', { credentials: 'same-origin', cache: 'no-store' });
+    if (!res.ok) return [];
+    const d = await res.json();
+    return Array.isArray(d.orders) ? d.orders : [];
+  } catch { return []; }
+}
+async function refreshTrack() {
+  const my = ++trackSeq;
+  trackLastAt = Date.now();
+  const recents = loadRecent().filter(r => trackFresh(r.date)).slice(0, TRACK_CHECKS);
+  const [statuses, mine] = await Promise.all([Promise.all(recents.map(trackStatusOf)), trackMyOrders()]);
+  if (my !== trackSeq) return; // chegou uma rodada mais nova
+  const items = [];
+  const seen = new Set();
+  recents.forEach((r, i) => {
+    const s = statuses[i];
+    if (s === null || (!s.unknown && !trackActive(s))) return;
+    const code = (s && s.public_code) || r.public_code || '';
+    if (code) seen.add(code);
+    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.fulfillment_label || ''), date: r.date });
+  });
+  for (const o of mine) {
+    if (!trackActive(o) || !trackFresh(o.created_at) || (o.public_code && seen.has(o.public_code))) continue;
+    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.fulfillment_label || ''), date: o.created_at });
+  }
+  items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+  trackItems = items;
+  renderTrackFab();
+}
+function renderTrackFab() {
+  const n = trackItems.length;
+  trackFab.hidden = n === 0;
+  trackFabCount.hidden = n < 2;
+  trackFabCount.textContent = n < 2 ? '' : String(n);
+  trackFab.setAttribute('aria-label', n > 1 ? `Acompanhar meus ${n} pedidos` : 'Acompanhar meu pedido');
+}
+trackFab.addEventListener('click', () => {
+  if (trackItems.length === 1) { location.href = trackItems[0].href; return; }
+  const list = document.querySelector('#track-list');
+  list.replaceChildren();
+  for (const it of trackItems) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = it.href;
+    const code = document.createElement('strong');
+    code.textContent = it.code || 'Pedido';
+    const info = document.createElement('span');
+    const d = new Date(it.date);
+    info.textContent = [it.label, isNaN(d) ? '' : dateTimeFmt.format(d).replace(',', ' às')].filter(Boolean).join(' · ');
+    a.append(code, info);
+    li.append(a);
+    list.append(li);
+  }
+  openModal('#track-modal', { opener: trackFab });
+});
+setInterval(() => { if (!document.hidden && (loadRecent().length || account)) refreshTrack(); }, TRACK_EVERY_MS);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - trackLastAt > 20000) refreshTrack(); });
 
 /* ---------- Checkout ---------- */
 const checkoutFormEl = document.querySelector('#checkout-form');

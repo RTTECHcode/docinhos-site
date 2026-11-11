@@ -52,6 +52,15 @@
   <span id="cart-fab-count">0</span>
 </button>
 
+<button id="track-fab" class="track-fab" hidden aria-label="Acompanhar meu pedido">
+  <svg viewBox="0 0 72 72" width="72" height="72" aria-hidden="true" focusable="false">
+    <defs><path id="track-arc" d="M11 41A25 25 0 0 1 61 41"/></defs>
+    <text class="track-arc-text"><textPath href="#track-arc" startOffset="50%" text-anchor="middle">acompanhe</textPath></text>
+    <image href="/images/branding/brigadeiro.svg" x="19" y="31" width="34" height="34"/>
+  </svg>
+  <span id="track-fab-count" class="track-fab-count" hidden></span>
+</button>
+
 <div id="cat-sheet" class="modal sheet" hidden>
   <div class="modal-backdrop" data-sheet-close></div>
   <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="cat-sheet-title">
@@ -150,6 +159,15 @@
       <a id="pay-wa" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Enviar pedido no WhatsApp</a>
       <a id="pay-help" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Falar com a Gigi no WhatsApp</a>
     </div>
+  </div>
+</div>
+
+<div id="track-modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="track-title">
+    <button class="modal-close" data-close aria-label="Fechar">&times;</button>
+    <h2 id="track-title">Acompanhe seus pedidos</h2>
+    <ul id="track-list" class="recent-list track-list"></ul>
   </div>
 </div>
 
