@@ -33,13 +33,14 @@ Base: ajustes-v3 criada da painel-v3 (v2.1), que vai para a main.
 | F0 | feito | ajustes-v3 | docs lidos; branch e seção criadas |
 | F1 W1 | feito | v3-a1-webhook | 401 em todo webhook: segredo da Vercel difere do MP |
 | F1 W2-W4, W6 | feito | v3-a1-webhook | fbaa7c9; conferência de reserva, back_urls, testes novos |
-| F1 W5 | pendente | — | corrigir DG-7747 e DG-5401 só com aprovação |
+| F1 W5 | bloqueado | — | MP aprovado R$12 nos dois; Renan roda scripts/conferir-pagamento.js --aplicar |
 | F2 D1-D8 | feito | v3-a2-backend | e429856; 2 migrações rodadas só na dev |
 | F3 P1-P6 | feito | v3-a3-admin | ed7dd10; navegador ok; test-admin rerodar com banco parado |
 | F3 L1-L8 | feito | v3-a4-loja | 609a508; 90 checagens no navegador ok |
-| F4 V1-V7 | andamento | v3-a5-design | relançado em ab9464b; V6 só após aprovar proposta |
+| F4 V1-V7 | feito | v3-a5-design | c1ab0a8; V6 aprovada e aplicada; causa V4: popstate atrasado |
 | F5 ressalvas A2 | feito | v3-a2-fix | 1cdb19b; testes ok no dev novo |
-| F5 QA | andamento | v3-a6-qa | W/D/P/L agora; V depois do merge do A5 |
-| F6 Relatório | pendente | ajustes-v3 | passos de produção para aprovação |
+| F5 QA W/D/P/L | feito | v3-a6-qa | de5a64a; 14/14 scripts, 28 IDs ok, 1 Baixo corrigido |
+| F5 QA V | andamento | v3-a6-qa | rodada 2 em dc46511 |
+| F6 Relatório | andamento | ajustes-v3 | docs/planos/relatorio-v3.md; migrações prod e horários temporários feitos |
 
 Banco dev trocado em 11/11 (antigo expirou): cópia da produção; migrações v3 rodadas; horários 00:00-23:59 só no dev.
