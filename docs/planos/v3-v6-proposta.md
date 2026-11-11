@@ -25,7 +25,7 @@ Regra geral: a faixa do topo tem UMA linha só (56 px), nos dois casos. Esquerda
 ```
 
 - "Entrar" é o único botão de texto, em rosa (ação principal).
-- "Criar conta" sai do topo: aparece em destaque na tela /conta/ (aba "Entrar" já tem o link) e no convite de pontos do checkout (L6, já existe). Menos uma decisão para o cliente logo na chegada.
+- "Criar conta" sai do topo: fica na tela /conta/ (a aba "Entrar" hoje tem só um link pequeno; na V6 vira botão secundário) e no convite de pontos do checkout (L6, já existe). Menos uma decisão para o cliente logo na chegada.
 - "Pedidos recentes" vira um botão só de ícone (recibo, 44x44, com bolinha de contagem). Só aparece se houver pedido salvo no aparelho. Tem `aria-label="Pedidos recentes"`.
 
 ### 2.2 Logado
