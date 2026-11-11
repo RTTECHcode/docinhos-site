@@ -202,11 +202,14 @@ let activeCat = null;
 let navLockUntil = 0;
 const scrollBehavior = () => (REDUCED.matches ? 'auto' : 'smooth');
 
+// V3: a categoria "Para família" ganha o ícone do brigadeiro (identificada pelo nome, sem acento e em minúsculas)
+const isFamilyCat = c => String(c.name || '').normalize('NFD').replace(/[^a-zA-Z ]/g, '').trim().toLowerCase() === 'para familia';
+const brigIcon = c => isFamilyCat(c) ? '<span class="cat-brig" aria-hidden="true"></span>' : '';
 function renderCats() {
   catsEl.innerHTML = menu.map(c =>
-    `<a class="cat-chip" href="#cat-${c.id}" data-cat="${c.id}">${esc(c.name)}</a>`).join('');
+    `<a class="cat-chip${isFamilyCat(c) ? ' has-brig' : ''}" href="#cat-${c.id}" data-cat="${c.id}">${esc(c.name)}</a>`).join('');
   catList.innerHTML = menu.map(c =>
-    `<li><a class="cat-item" href="#cat-${c.id}" data-cat="${c.id}"><span>${esc(c.name)}</span><span class="cat-count">${c.products.length}</span></a></li>`).join('');
+    `<li><a class="cat-item" href="#cat-${c.id}" data-cat="${c.id}">${brigIcon(c)}<span>${esc(c.name)}</span><span class="cat-count">${c.products.length}</span></a></li>`).join('');
   catFab.hidden = menu.length === 0;
   if (menu.length) setActiveCat(menu[0].id);
 }
@@ -274,7 +277,7 @@ document.addEventListener('click', e => {
 function renderMenu() {
   menuEl.innerHTML = menu.map(c => `
     <section class="category" id="cat-${c.id}">
-      <h2>${esc(c.name)}</h2>
+      <h2>${brigIcon(c)}${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
         <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
           ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}

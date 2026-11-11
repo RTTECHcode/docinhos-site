@@ -531,8 +531,8 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
   box-shadow: var(--shadow-sm);
   transition: transform .12s ease, background .15s ease;
 }
-.cat-item::before { counter-increment: cat; content: counter(cat, decimal-leading-zero); font-family: var(--display); font-weight: 400; font-size: .95rem; color: var(--rosa); min-width: 1.6em; }
-.cat-item span:first-of-type { margin-right: auto; }
+.cat-item::before { order: -1; counter-increment: cat; content: counter(cat, decimal-leading-zero); font-family: var(--display); font-weight: 400; font-size: .95rem; color: var(--rosa); min-width: 1.6em; }
+.cat-item span:not(.cat-brig):not(.cat-count) { margin-right: auto; }
 .cat-item:active { transform: scale(.98); }
 .cat-count { display: grid; place-items: center; min-width: 28px; height: 28px; padding: 0 8px; border-radius: var(--pill); background: var(--brand-soft); font-size: .8rem; font-weight: 800; color: var(--brand-deep); }
 .cat-item.active { color: #fff; background: var(--brand); border-color: var(--brand-deep); }
@@ -793,3 +793,10 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
   background: url("/images/branding/brigadeiro.svg") center / contain no-repeat;
 }
 .card.is-paused .name, .card.is-paused .desc { opacity: .75; }
+/* V3: ícone do brigadeiro na categoria "Para família" (chip, lista do botão Categorias e título) */
+.cat-brig { flex: none; display: inline-block; width: 26px; height: 26px; background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; }
+.category h2 .cat-brig { width: 34px; height: 34px; }
+.cat-chip.has-brig::before { width: 20px; height: 20px; margin-top: -10px; left: 8px; border: 0; border-radius: 0; background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; }
+.cat-chip.has-brig { padding-left: 33px; }
+.cat-chip.has-brig.active::before { background: url("/images/branding/brigadeiro.svg") center / contain no-repeat; border: 0; }
+.cat-item .cat-brig { order: 0; margin-left: -2px; }
