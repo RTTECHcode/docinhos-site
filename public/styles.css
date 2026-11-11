@@ -735,11 +735,11 @@ body.modal-open #toast.show { transform: translateX(-50%) translateY(0); }
 .footer-link + .footer-link { margin-left: 8px; }
 /* fim A6 */
 
-/* A9: ícone de docinho em arquivo (sem emoji) para produto sem foto e carrinho vazio */
-.card .placeholder { background: var(--blush) url("/images/branding/doce.svg") center / 58% no-repeat; }
+/* A9/V1: brigadeiro (branding/brigadeiro.svg) em arquivo (sem emoji) para produto sem foto e carrinho vazio */
+.card .placeholder { background: var(--blush) url("/images/branding/brigadeiro.svg") center / 58% no-repeat; }
 .cart-empty::before {
-  content: ""; display: block; width: 56px; height: 56px; margin: 0 auto 10px;
-  background: url("/images/branding/doce.svg") center / contain no-repeat;
+  content: ""; display: block; width: 72px; height: 72px; margin: 0 auto 10px;
+  background: url("/images/branding/brigadeiro.svg") center / contain no-repeat;
 }
 /* fim A9 */
 
