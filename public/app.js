@@ -4,6 +4,8 @@ const catsEl = document.querySelector('#categorias');
 const cartFab = document.querySelector('#cart-fab');
 const cartFabCount = document.querySelector('#cart-fab-count');
 const catFab = document.querySelector('#cat-fab');
+const trackFab = document.querySelector('#track-fab');
+const trackFabCount = document.querySelector('#track-fab-count');
 const catList = document.querySelector('#cat-list');
 const toastEl = document.createElement('div');
 toastEl.id = 'toast';
@@ -91,6 +93,9 @@ function toast(msg, ms = 1800) {
    X / fundo / Esc chamam history.back() quando o estado atual é do modal, então há um só caminho de fechamento. */
 const modalStack = [];      // ids abertos; o último é o do topo
 const closing = new Set();  // ids com history.back() em andamento (evita voltar duas vezes)
+let modalSeq = 0;           // V4: cada abertura ganha um número crescente, gravado no estado do histórico (dgSeq)
+const abandoned = new Set(); // V4: números cujo history.back() demorou demais e o fechamento foi resolvido pelo temporizador
+const BACK_WAIT_MS = 500;   // espera pelo popstate antes de fechar por conta própria
 const modalHooks = {
   '#cat-sheet': {
     open() {
@@ -112,7 +117,9 @@ function openModal(id, opts = {}) {
   clearTimeout(modal._hideTimer);
   modal._opener = opts.opener || document.activeElement;
   modalStack.push(id);
-  if (opts.replace) history.replaceState({ dgModal: id }, ''); else history.pushState({ dgModal: id }, '');
+  modal._seq = ++modalSeq;
+  const hState = { dgModal: id, dgSeq: modal._seq };
+  if (opts.replace) history.replaceState(hState, ''); else history.pushState(hState, '');
   modal.hidden = false;
   document.body.classList.add('modal-open');
   void modal.offsetWidth; // reflow: a transição parte do estado fechado
@@ -147,21 +154,30 @@ function hideModal(id) {
 function requestClose(id, after) {
   if (!modalStack.includes(id) || closing.has(id)) return;
   if (after) modalEl(id)._after = after;
-  if (history.state && history.state.dgModal === id) {
+  const seq = modalEl(id)._seq;
+  if (history.state && history.state.dgModal === id && history.state.dgSeq === seq) {
     closing.add(id);
     history.back();
-    // rede de segurança: se o popstate não chegar, fecha mesmo assim
-    setTimeout(() => { if (closing.has(id)) hideModal(id); }, 800);
+    // Rede de segurança: se o popstate não chegar, fecha mesmo assim. A volta que chegar depois (aparelho lento,
+    // navegador embutido) é reconhecida como atrasada em 'abandoned' e não derruba o modal que abriu nesse meio tempo (V4).
+    setTimeout(() => { if (closing.has(id)) { abandoned.add(seq); hideModal(id); } }, BACK_WAIT_MS);
   } else {
     hideModal(id);
   }
 }
 
 window.addEventListener('popstate', () => {
-  const want = history.state && history.state.dgModal;
-  while (modalStack.length && modalStack[modalStack.length - 1] !== want) hideModal(modalStack[modalStack.length - 1]);
+  const wantSeq = (history.state && history.state.dgSeq) || 0;
+  if (wantSeq && abandoned.has(wantSeq)) {
+    // Volta atrasada de um fechamento que o temporizador já resolveu. Se há modal aberto depois dela, ele continua valendo:
+    // volta uma entrada para o estado dele, em vez de fechá-lo.
+    abandoned.delete(wantSeq);
+    if (modalStack.length) history.forward(); else history.replaceState(null, '');
+    return;
+  }
+  while (modalStack.length && (modalEl(modalStack[modalStack.length - 1])._seq || 0) > wantSeq) hideModal(modalStack[modalStack.length - 1]);
   // "avançar" para uma entrada de modal que não está aberto: neutraliza a entrada
-  if (want && !modalStack.includes(want)) history.replaceState(null, '');
+  if (wantSeq && !modalStack.some(id => modalEl(id)._seq === wantSeq)) history.replaceState(null, '');
 });
 // recarregar com estado de modal no histórico: esse estado não vale mais
 if (history.state && history.state.dgModal) history.replaceState(null, '');
@@ -202,11 +218,14 @@ let activeCat = null;
 let navLockUntil = 0;
 const scrollBehavior = () => (REDUCED.matches ? 'auto' : 'smooth');
 
+// V3: a categoria "Para família" ganha o ícone do brigadeiro (identificada pelo nome, sem acento e em minúsculas)
+const isFamilyCat = c => String(c.name || '').normalize('NFD').replace(/[^a-zA-Z ]/g, '').trim().toLowerCase() === 'para familia';
+const brigIcon = c => isFamilyCat(c) ? '<span class="cat-brig" aria-hidden="true"></span>' : '';
 function renderCats() {
   catsEl.innerHTML = menu.map(c =>
-    `<a class="cat-chip" href="#cat-${c.id}" data-cat="${c.id}">${esc(c.name)}</a>`).join('');
+    `<a class="cat-chip${isFamilyCat(c) ? ' has-brig' : ''}" href="#cat-${c.id}" data-cat="${c.id}">${esc(c.name)}</a>`).join('');
   catList.innerHTML = menu.map(c =>
-    `<li><a class="cat-item" href="#cat-${c.id}" data-cat="${c.id}"><span>${esc(c.name)}</span><span class="cat-count">${c.products.length}</span></a></li>`).join('');
+    `<li><a class="cat-item" href="#cat-${c.id}" data-cat="${c.id}">${brigIcon(c)}<span>${esc(c.name)}</span><span class="cat-count">${c.products.length}</span></a></li>`).join('');
   catFab.hidden = menu.length === 0;
   if (menu.length) setActiveCat(menu[0].id);
 }
@@ -274,19 +293,20 @@ document.addEventListener('click', e => {
 function renderMenu() {
   menuEl.innerHTML = menu.map(c => `
     <section class="category" id="cat-${c.id}">
-      <h2>${esc(c.name)}</h2>
+      <h2>${brigIcon(c)}${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
-        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
+        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
           ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
           <span class="body">
             <span class="name">${esc(p.name)}</span>
             ${p.description ? `<span class="desc">${esc(p.description)}</span>` : ''}
-            ${p.unavailable ? '<span class="unavail-tag">Indisponível no momento</span>' : ''}
+            ${p.unavailable && !p.paused ? '<span class="unavail-tag">Indisponível no momento</span>' : ''}
             <span class="price-row">
               <span class="price">${p.priceCents != null ? (p.complements?.some(x => x.kind === 'size') ? `<span class="from">a partir de</span> ${brl(p.priceCents)}` : brl(p.priceCents)) : 'Consulte'}</span>
             </span>
           </span>
           ${p.unavailable ? '' : '<span class="add-hint" aria-hidden="true">+</span>'}
+          ${p.paused ? '<span class="pause-clip"><span class="pause-band">Volto logo</span></span>' : ''}
         </button>`).join('')}</div>
     </section>`).join('');
 }
@@ -578,9 +598,16 @@ function addRecent(order) {
   list.unshift({ public_code: order.public_code || '', token: order.token, date: new Date().toISOString() });
   writeStore(RECENT_KEY, list.slice(0, RECENT_MAX));
   renderRecentBtn();
+  refreshTrack();
 }
 const recentBtn = document.querySelector('#recent-btn');
-function renderRecentBtn() { recentBtn.hidden = loadRecent().length === 0; }
+const recentCountEl = document.querySelector('#recent-count');
+function renderRecentBtn() {
+  const n = loadRecent().length;
+  recentBtn.hidden = n === 0;
+  recentCountEl.textContent = String(n);
+  recentBtn.setAttribute('aria-label', n > 1 ? `Pedidos recentes (${n})` : 'Pedidos recentes');
+}
 const dateTimeFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 recentBtn.addEventListener('click', () => {
   const list = document.querySelector('#recent-list');
@@ -631,7 +658,11 @@ function setStoreState(st) {
   storeBadgeEl.hidden = !store;
   if (store) {
     storeBadgeEl.className = 'store-badge ' + (store.open ? 'open' : 'closed');
-    storeBadgeEl.textContent = store.open ? 'Loja aberta' : 'Loja fechada';
+    // V6: texto curto abaixo de 380 px (CSS escolhe qual aparece); o curto fica fora da leitura de tela para não repetir
+    const longT = document.createElement('span'), shortT = document.createElement('span');
+    longT.className = 'sb-long'; longT.textContent = store.open ? 'Loja aberta' : 'Loja fechada';
+    shortT.className = 'sb-short'; shortT.textContent = store.open ? 'Aberta' : 'Fechada'; shortT.setAttribute('aria-hidden', 'true');
+    storeBadgeEl.replaceChildren(longT, shortT);
     storeBadgeEl.title = store.open ? '' : closedMessage(store);
   }
   const closed = !!store && !store.open;
@@ -660,14 +691,23 @@ function topLink(text, href, cls) {
 function renderAccount() {
   accountAreaEl.replaceChildren();
   if (!account) {
-    accountAreaEl.append(topLink('Entrar', '/conta/'), topLink('Criar conta', '/conta/#cadastro', 'primary'));
+    // V6: visitante só vê "Entrar"; "Criar conta" fica na tela de entrada (/conta/) e no convite de pontos do checkout
+    accountAreaEl.append(topLink('Entrar', '/conta/', 'primary'));
     return;
   }
-  const hi = document.createElement('span');
-  hi.className = 'account-name';
-  hi.textContent = 'Olá, ' + String(account.name || '').split(' ')[0];
-  const pts = topLink(`${Number(account.points && account.points.balance) || 0} pontos`, '/conta/#pontos', 'points');
-  accountAreaEl.append(hi, pts, topLink('Meus pedidos', '/conta/#pedidos'));
+  const bal = Number(account.points && account.points.balance) || 0;
+  const first = String(account.name || '').trim().split(/\s+/)[0] || 'Conta';
+  const pts = topLink('', '/conta/#pontos', 'points');
+  const n = document.createElement('span'); n.textContent = String(bal);
+  const word = document.createElement('span'); word.className = 'pts-word'; word.textContent = ' pontos';
+  pts.append(n, word);
+  pts.setAttribute('aria-label', `${bal} pontos`);
+  const acc = topLink('', '/conta/#pedidos', 'account');
+  const av = document.createElement('span'); av.className = 'acc-av'; av.setAttribute('aria-hidden', 'true'); av.textContent = first.charAt(0).toUpperCase();
+  const nm = document.createElement('span'); nm.className = 'acc-name'; nm.textContent = first;
+  acc.append(av, nm);
+  acc.setAttribute('aria-label', `Minha conta: ${first}`);
+  accountAreaEl.append(pts, acc);
 }
 async function loadAccount() {
   try {
@@ -678,7 +718,90 @@ async function loadAccount() {
   renderAccount();
   renderPoints();
   renderSummary();
+  refreshTrack();
 }
+
+/* ---------- V5: botão flutuante "Acompanhe" ----------
+   Aparece quando há pedido não concluído: dos recentes no aparelho (dg-recent-orders, status consultado em /api/order-status)
+   ou do cliente logado (/api/customer?a=orders). Um pedido: abre direto o acompanhamento. Mais de um: lista. */
+const TRACK_DONE = new Set(['completed', 'delivered', 'cancelled']);
+const TRACK_PAY_DEAD = new Set(['rejected', 'cancelled', 'refunded', 'charged_back']);
+const TRACK_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const TRACK_CHECKS = 5;      // no máximo 5 consultas de status por rodada (limite do servidor: 300 em 10 min por IP)
+const TRACK_EVERY_MS = 60000;
+let trackItems = [];
+let trackSeq = 0;
+let trackLastAt = 0;
+const trackActive = o => !!o && !TRACK_DONE.has(o.fulfillment_status) && !TRACK_PAY_DEAD.has(o.payment_status);
+const trackFresh = iso => { const t = Date.parse(iso); return !isNaN(t) && Date.now() - t < TRACK_MAX_AGE_MS; };
+async function trackStatusOf(r) {
+  try {
+    const res = await fetch('/api/order-status?t=' + encodeURIComponent(r.token), { cache: 'no-store' });
+    if (res.status === 404) return null;        // pedido não existe mais
+    if (!res.ok) return { unknown: true };      // 429 ou erro: mantém visível, sem status
+    return await res.json();
+  } catch { return { unknown: true }; }
+}
+async function trackMyOrders() {
+  if (!account) return [];
+  try {
+    const res = await fetch('/api/customer?a=orders&limit=10', { credentials: 'same-origin', cache: 'no-store' });
+    if (!res.ok) return [];
+    const d = await res.json();
+    return Array.isArray(d.orders) ? d.orders : [];
+  } catch { return []; }
+}
+async function refreshTrack() {
+  const my = ++trackSeq;
+  trackLastAt = Date.now();
+  const recents = loadRecent().filter(r => trackFresh(r.date)).slice(0, TRACK_CHECKS);
+  const [statuses, mine] = await Promise.all([Promise.all(recents.map(trackStatusOf)), trackMyOrders()]);
+  if (my !== trackSeq) return; // chegou uma rodada mais nova
+  const items = [];
+  const seen = new Set();
+  recents.forEach((r, i) => {
+    const s = statuses[i];
+    if (s === null || (!s.unknown && !trackActive(s))) return;
+    const code = (s && s.public_code) || r.public_code || '';
+    if (code) seen.add(code);
+    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.fulfillment_label || ''), date: r.date });
+  });
+  for (const o of mine) {
+    if (!trackActive(o) || !trackFresh(o.created_at) || (o.public_code && seen.has(o.public_code))) continue;
+    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.fulfillment_label || ''), date: o.created_at });
+  }
+  items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+  trackItems = items;
+  renderTrackFab();
+}
+function renderTrackFab() {
+  const n = trackItems.length;
+  trackFab.hidden = n === 0;
+  trackFabCount.hidden = n < 2;
+  trackFabCount.textContent = n < 2 ? '' : String(n);
+  trackFab.setAttribute('aria-label', n > 1 ? `Acompanhar meus ${n} pedidos` : 'Acompanhar meu pedido');
+}
+trackFab.addEventListener('click', () => {
+  if (trackItems.length === 1) { location.href = trackItems[0].href; return; }
+  const list = document.querySelector('#track-list');
+  list.replaceChildren();
+  for (const it of trackItems) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = it.href;
+    const code = document.createElement('strong');
+    code.textContent = it.code || 'Pedido';
+    const info = document.createElement('span');
+    const d = new Date(it.date);
+    info.textContent = [it.label, isNaN(d) ? '' : dateTimeFmt.format(d).replace(',', ' às')].filter(Boolean).join(' · ');
+    a.append(code, info);
+    li.append(a);
+    list.append(li);
+  }
+  openModal('#track-modal', { opener: trackFab });
+});
+setInterval(() => { if (!document.hidden && (loadRecent().length || account)) refreshTrack(); }, TRACK_EVERY_MS);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - trackLastAt > 20000) refreshTrack(); });
 
 /* ---------- Checkout ---------- */
 const checkoutFormEl = document.querySelector('#checkout-form');
