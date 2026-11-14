@@ -1001,3 +1001,21 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
 .post-pay .button { max-width: 420px; }
 .post-pay .post-pay-ig { color: var(--brand-deep); background: #fff; border: 2px solid var(--brand); box-shadow: 0 4px 0 var(--brand-deep); }
 @media (hover: hover) { .post-pay .post-pay-ig:hover { background: var(--brand-soft); } }
+
+/* v4 F3: faixa de confiança equilibrada no celular (achado do A5: cartão "Frete" sozinho na grade de 2 colunas) */
+@media (max-width: 559px) {
+  .trust { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trust li.trust-wide { grid-column: 1 / -1; }
+}
+
+/* v4 F3: "Gerar novo pagamento" do mesmo pedido (checkout e rastreio) */
+.pay-again { display: grid; gap: 10px; width: 100%; }
+.pay-again[hidden] { display: none; }
+.pay-again-choice { display: flex; flex-wrap: wrap; gap: 10px; border: 0; margin: 0; padding: 0; min-width: 0; }
+.pay-again-choice legend { font-size: .9rem; font-weight: 800; color: var(--cacau); margin-bottom: 6px; padding: 0; }
+.pay-again-status { min-height: 1.2em; font-size: .9rem; font-weight: 700; color: var(--ink-soft); }
+.pay-again-status:empty { min-height: 0; }
+.pay-again-status.warn { color: var(--brand-deep); }
+.track-items { list-style: none; display: grid; gap: 2px; margin: 0; padding: 0; }
+.track-items .reward-tag { font-size: .78rem; font-weight: 800; color: var(--brand-deep); }
+.login-need { display: grid; gap: 10px; justify-items: center; text-align: center; }

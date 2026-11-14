@@ -1,4 +1,5 @@
-// Acompanhamento do pedido: /pedido.html?t=<tracking_token>. Só mostra dados públicos (sem telefone nem endereço).
+// Acompanhamento do pedido: /pedido.html?t=<tracking_token> ou, na conta, /pedido.html?o=<id> (só com a sessão do dono, v4 F3).
+// Só mostra dados públicos: itens (nome, tamanho, qtd) e bairro/cidade, nunca telefone, rua ou número.
 (function () {
   var RECENT_KEY = 'dg-recent-orders';
   var REFRESH_MS = 20000;
@@ -10,6 +11,9 @@
   var sawPending = !!payParam, lastLoad = 0, fast = false;
   var TZ = 'America/Sao_Paulo';
   var token = new URLSearchParams(location.search).get('t') || '';
+  var orderId = token ? '' : (new URLSearchParams(location.search).get('o') || ''); // v4 F3: link de "Meus pedidos"
+  var byId = /^[0-9]{1,12}$/.test(orderId);
+  var statusUrl = function () { return '/api/order-status?' + (byId ? 'o=' + orderId : 't=' + encodeURIComponent(token)); };
   var $ = function (id) { return document.getElementById(id); };
   var brl = function (c) { return 'R$ ' + (c / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
   var fmt = new Intl.DateTimeFormat('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -91,6 +95,21 @@
     $('t-sched-row').hidden = !sched;
     $('t-sched').textContent = sched;
     $('t-total').textContent = Number.isInteger(d.total_cents) ? brl(d.total_cents) : '';
+    // v4 F3: itens (nome, tamanho, quantidade) e endereço resumido (bairro e cidade; na retirada, o endereço da loja).
+    var items = Array.isArray(d.items) ? d.items.filter(function (i) { return i && typeof i.name === 'string' && Number.isInteger(i.qty); }).slice(0, 30) : [];
+    var ul = $('t-items');
+    ul.replaceChildren();
+    items.forEach(function (i) {
+      var li = document.createElement('li');
+      li.textContent = i.qty + 'x ' + i.name + (typeof i.size === 'string' && i.size ? ' (' + i.size + ')' : '');
+      if (i.reward === true) { var tag = document.createElement('span'); tag.className = 'reward-tag'; tag.textContent = ' · prêmio do Clube'; li.append(tag); }
+      ul.append(li);
+    });
+    $('t-items-row').hidden = !items.length;
+    var addr = typeof d.address_summary === 'string' ? d.address_summary.trim() : '';
+    $('t-addr-label').textContent = pickup ? 'Retirada em' : 'Entrega em';
+    $('t-addr').textContent = addr;
+    $('t-addr-row').hidden = !addr;
     $('t-created').textContent = when(d.created_at);
     $('t-info').hidden = false;
     // L8: aviso do pagamento. Aprovado depois de pendente (ou na volta do cartão) vira "Pagamento confirmado".
@@ -106,6 +125,7 @@
     $('t-note').hidden = status === 'completed' || cancelled;
     if (status === 'completed' || cancelled) stop();
     renderPix(cancelled ? null : d.pix, d.total_cents);
+    renderAgain(d, cancelled);
     renderThanks(d.public_code, d.post_payment);
     // v4 U-08: o WhatsApp da página já leva o código do pedido.
     var num = String(window.WHATSAPP_NUMBER || '').replace(/\D/g, '');
@@ -205,7 +225,8 @@
     busy = true;
     lastLoad = Date.now();
     try {
-      var r = await fetch('/api/order-status?t=' + encodeURIComponent(token), { cache: 'no-store' });
+      var r = await fetch(statusUrl(), { cache: 'no-store', credentials: 'same-origin' });
+      if (r.status === 401) { needLogin(); return; }
       if (r.status === 404) { stop(); $('t-code').textContent = ''; $('t-msg').textContent = 'Não encontramos esse pedido. Confira o link ou veja seus pedidos recentes abaixo.'; return; }
       if (r.status === 429) { rateLimited(r); return; }
       if (!r.ok) { $('t-msg').textContent = 'Não foi possível atualizar agora. Tentamos de novo em instantes.'; return; }
@@ -216,10 +237,90 @@
     } finally { busy = false; }
   }
 
-  showRecent();
-  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) {
+  /* v4 F3: ?o= sem sessão: o servidor responde 401 e a página pede para entrar (volta para cá depois). */
+  function needLogin() {
+    stop();
     $('t-code').textContent = '';
-    $('t-msg').textContent = token ? 'Link de acompanhamento inválido.' : 'Abra o link de acompanhamento que você recebeu, ou escolha um pedido recente abaixo.';
+    $('t-msg').textContent = 'Entre na sua conta para ver este pedido.';
+    $('t-login-link').href = '/conta/?voltar=pedido&o=' + orderId + '#entrar';
+    $('t-login').hidden = false;
+    $('t-again').hidden = true;
+  }
+
+  /* v4 F3: "Gerar novo pagamento" quando o pagamento falhou, venceu ou ficou pendente. O servidor confere tudo
+     (já pago, cancelado, 24 h, cartão em análise, reservas) e pode recusar com 409 ou 429. */
+  var AGAIN_MSGS = {
+    already_paid: 'Este pedido já está pago. Não precisa pagar de novo.',
+    order_cancelled: 'Este pedido foi cancelado. Se quiser, faça um pedido novo no cardápio.',
+    retry_expired: 'Passou o prazo de 24 horas para pagar este pedido. Faça um pedido novo no cardápio.',
+    payment_in_process: 'O pagamento com cartão ainda está em análise. Espere a resposta antes de tentar de novo, para não cobrar duas vezes.',
+    schedule_passed: 'O horário agendado deste pedido já passou. Faça um pedido novo com outro horário.',
+    reservation_released: 'O prêmio do Clube ou o cupom deste pedido já foi liberado. Faça um pedido novo no cardápio.',
+    slot_full: 'O horário agendado lotou enquanto o pagamento estava pendente. Faça um pedido novo com outro horário.',
+    rate_limited: 'Muitas tentativas em pouco tempo. Espere alguns minutos e tente de novo.',
+    login_required: 'Entre na sua conta para pagar este pedido.',
+    order_not_found: 'Não encontramos este pedido.',
+    payment_unavailable: 'O pagamento on-line não respondeu agora. Tente de novo em instantes ou fale com a gente pelo WhatsApp.'
+  };
+  var AGAIN_KEYS = { awaiting_payment: 1, payment_failed: 1 };
+  var IN_ANALYSIS = { in_process: 1, authorized: 1 };
+  var againBlocked = false; // recusa definitiva do servidor (pedido novo necessário): não oferece de novo
+  function renderAgain(d, cancelled) {
+    var ps = d.payment_status;
+    var show = !cancelled && !againBlocked && !!AGAIN_KEYS[String(d.status_key || '')] && ps !== 'approved' && !IN_ANALYSIS[ps];
+    $('t-again').hidden = !show;
+    if (!show) return;
+    $('t-again-text').textContent = d.pix ? 'Prefere pagar com cartão ou precisa de um Pix novo? Gere outro pagamento para este mesmo pedido.'
+      : (ps === 'rejected' || ps === 'cancelled' || d.status_key === 'payment_failed') ? 'O pagamento não foi concluído. Você pode gerar um novo pagamento para este mesmo pedido, sem montar o carrinho de novo.'
+      : 'O pagamento ainda não foi confirmado. Se o Pix venceu ou você não terminou o pagamento com cartão, gere um novo pagamento.';
+  }
+  function againStatus(msg, warn) { var st = $('t-again-status'); st.textContent = msg; st.className = 'pay-again-status' + (warn ? ' warn' : ''); }
+  $('t-again-btn').addEventListener('click', async function () {
+    var btn = $('t-again-btn');
+    if (btn.disabled) return;
+    var pick = document.querySelector('input[name="t_again_choice"]:checked');
+    var choice = pick && pick.value === 'card' ? 'card' : 'pix';
+    var body = byId ? { o: Number(orderId), payment_choice: choice } : { t: token, payment_choice: choice };
+    btn.disabled = true; btn.textContent = 'Gerando...'; againStatus('', false);
+    var r, d = {};
+    try {
+      r = await fetch('/api/order?a=retry_payment', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      try { d = await r.json(); } catch (e) { /* corpo não-JSON */ }
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Gerar novo pagamento';
+      againStatus('Sem conexão com o servidor. Confira a internet e tente de novo.', true);
+      return;
+    }
+    btn.disabled = false; btn.textContent = 'Gerar novo pagamento';
+    var p = r.ok && d && d.payment && typeof d.payment === 'object' ? d.payment : null;
+    if (p && p.type === 'card' && typeof p.url === 'string' && /^https:\/\//i.test(p.url)) {
+      againStatus('Abrindo o pagamento com cartão...', false);
+      location.href = p.url;
+      return;
+    }
+    if (p && p.type === 'pix' && typeof p.qr_code === 'string' && p.qr_code.trim()) {
+      renderPix(p, Number.isInteger(d.total_cents) ? d.total_cents : null);
+      againStatus('Novo Pix gerado. Copie o código acima e pague no app do banco.', false);
+      sawPending = true;
+      $('t-pix').scrollIntoView({ block: 'start', behavior: 'smooth' });
+      $('t-pix-copy').focus({ preventScroll: true });
+      return;
+    }
+    var code = d && d.code;
+    if (r.status === 401 || code === 'login_required') { needLogin(); return; }
+    var msg = (!r.ok && AGAIN_MSGS[code]) || (r.status === 429 ? AGAIN_MSGS.rate_limited : (!r.ok && d && d.error) || 'Não foi possível gerar o pagamento agora. Tente de novo.');
+    againStatus(msg, true);
+    if (code === 'already_paid' || code === 'order_cancelled' || code === 'retry_expired' || code === 'schedule_passed' || code === 'reservation_released' || code === 'slot_full') {
+      if (code !== 'already_paid') againBlocked = true;
+      $('t-msg').textContent = msg;
+      load();
+    }
+  });
+
+  showRecent();
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token) && !byId) {
+    $('t-code').textContent = '';
+    $('t-msg').textContent = token || orderId ? 'Link de acompanhamento inválido.' : 'Abra o link de acompanhamento que você recebeu, ou escolha um pedido recente abaixo.';
     return;
   }
   load();

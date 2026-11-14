@@ -153,7 +153,12 @@
 
   // Quem veio do checkout (/conta/?voltar=checkout) volta para lá depois de entrar ou criar a conta; o carrinho fica no aparelho.
   const wantsCheckout = () => new URLSearchParams(location.search).get('voltar') === 'checkout';
-  function backToCheckout() { if (!wantsCheckout()) return false; location.href = '/?checkout=1'; return true; }
+  function backToCheckout() {
+    const q = new URLSearchParams(location.search);
+    // v4 F3: quem abriu um pedido da conta sem estar logada (/pedido.html?o=) volta para ele depois de entrar.
+    if (q.get('voltar') === 'pedido' && /^[0-9]{1,12}$/.test(q.get('o') || '')) { location.href = '/pedido.html?o=' + q.get('o'); return true; }
+    if (!wantsCheckout()) return false; location.href = '/?checkout=1'; return true;
+  }
 
   // ---------- Perguntas e texto do consentimento ----------
   function loadQuestions() {
@@ -359,7 +364,8 @@
     // Link de acompanhamento: a URL do servidor quando vier; senão o token guardado neste aparelho (dg-recent-orders) pelo código
     // do pedido (v4 U-10). O banco guarda só o hash do token, então pedido feito em outro aparelho fica sem link.
     const recentToken = o.public_code ? recentTokens().get(o.public_code) : null;
-    const trackHref = o.tracking_url && /^\/pedido\.html\?t=[A-Za-z0-9_-]{16,64}$/.test(o.tracking_url) ? o.tracking_url : recentToken ? '/pedido.html?t=' + encodeURIComponent(recentToken) : '';
+    // v4 F3: o servidor manda tracking_url "/pedido.html?o=<id>" (abre só com a sessão do dono).
+    const trackHref = o.tracking_url && /^\/pedido\.html\?o=[0-9]{1,12}$/.test(o.tracking_url) ? o.tracking_url : recentToken ? '/pedido.html?t=' + encodeURIComponent(recentToken) : '';
     if (trackHref) foot.append(el('a', { class: 'order-link', href: trackHref, text: 'Acompanhar pedido', 'aria-label': `Acompanhar o pedido ${o.public_code || ''}`.trim() }));
     return el('li', { class: 'order' }, head, meta, sched, items, ...rows, foot);
   }

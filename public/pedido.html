@@ -62,17 +62,34 @@
     <dl id="t-info" class="track-info" hidden>
       <div><dt>Situação</dt><dd id="t-pay"></dd></div>
       <div id="t-sched-row" hidden><dt>Agendado para</dt><dd id="t-sched"></dd></div>
+      <div id="t-items-row" hidden><dt>Itens</dt><dd><ul id="t-items" class="track-items"></ul></dd></div>
+      <div id="t-addr-row" hidden><dt id="t-addr-label">Entrega em</dt><dd id="t-addr"></dd></div>
       <div><dt>Total</dt><dd id="t-total"></dd></div>
       <div><dt>Recebido em</dt><dd id="t-created"></dd></div>
     </dl>
     <p class="track-note" id="t-note" hidden>Esta página atualiza sozinha.</p>
+    <div class="login-need" id="t-login" hidden><a class="button" id="t-login-link" href="/conta/#entrar">Entrar na minha conta</a></div>
+  </section>
+  <!-- v4 F3: novo pagamento do mesmo pedido (POST /api/order?a=retry_payment com { t } ou { o }). Total e reservas continuam os do pedido. -->
+  <section class="about-section" id="t-again" aria-labelledby="t-again-title" hidden>
+    <h2 id="t-again-title">Gerar novo pagamento</h2>
+    <p id="t-again-text" class="track-msg"></p>
+    <div class="pay-again">
+      <fieldset class="pay-again-choice">
+        <legend>Como você quer pagar?</legend>
+        <label class="radio"><input type="radio" name="t_again_choice" value="pix" checked> Pix</label>
+        <label class="radio"><input type="radio" name="t_again_choice" value="card"> Cartão</label>
+      </fieldset>
+      <button type="button" id="t-again-btn" class="button full">Gerar novo pagamento</button>
+      <p id="t-again-status" class="pay-again-status" role="status" aria-live="polite"></p>
+    </div>
   </section>
   <!-- v4 N8: só com post_payment do servidor (pagamento aprovado), uma vez por pedido -->
   <section class="about-section post-pay" id="t-thanks" aria-labelledby="t-thanks-title" hidden>
     <h2 id="t-thanks-title">Obrigada pela preferência!</h2>
     <p>Sua opinião ajuda muito a Docinhos da Gigi a crescer.</p>
-    <a id="t-review" class="button full" href="#" target="_blank" rel="noopener noreferrer" hidden>Avaliar no Google</a>
-    <a id="t-insta" class="button full post-pay-ig" href="#" target="_blank" rel="noopener noreferrer" hidden>Seguir no Instagram</a>
+    <a id="t-review" class="button full" href="#" target="_blank" rel="noopener noreferrer" hidden>Avaliar no Google<span class="sr-only"> (abre em nova aba)</span></a>
+    <a id="t-insta" class="button full post-pay-ig" href="#" target="_blank" rel="noopener noreferrer" hidden>Seguir no Instagram<span class="sr-only"> (abre em nova aba)</span></a>
     <button type="button" id="t-thanks-close" class="link-btn">Fechar</button>
   </section>
   <section class="about-section" id="t-recent-box" hidden>
@@ -82,7 +99,7 @@
   <section class="about-section about-cta">
     <h2>Dúvidas sobre o pedido?</h2>
     <p>Fale com a gente pelo WhatsApp informando o código do pedido.</p>
-    <a class="button wa" id="t-wa" data-wa data-wa-text="Olá! Tenho uma dúvida sobre o meu pedido." href="https://wa.me/5511987882303?text=Ol%C3%A1!%20Tenho%20uma%20d%C3%BAvida%20sobre%20o%20meu%20pedido." target="_blank" rel="noopener noreferrer">Falar no WhatsApp</a>
+    <a class="button wa" id="t-wa" data-wa data-wa-text="Olá! Tenho uma dúvida sobre o meu pedido." href="https://wa.me/5511987882303?text=Ol%C3%A1!%20Tenho%20uma%20d%C3%BAvida%20sobre%20o%20meu%20pedido." target="_blank" rel="noopener noreferrer">Falar no WhatsApp<span class="sr-only"> (abre em nova aba)</span></a>
   </section>
 </main>
 
