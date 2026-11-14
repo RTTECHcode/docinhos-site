@@ -59,7 +59,7 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F3 A4 | feito | v4-a4 | 9e15662; N1-N3, N6-N8, N10, N11, U-01 a U-05, U-08 a U-10, X-01, P-06, P-12; 39 prints |
 | F3 A2 extra | em andamento | v4-a2 | retry_payment, tracking_url, itens/bairro no rastreio, MIME do dev-server, points_save |
 | F3 A3 | feito | v4-a3 | 5972489; N1, N3-N6, N8, N10, N11, U-06 (som, PWA, push), O-01; 44 prints |
-| F4 A5 revisão | em andamento | v4-a5 | visual e acessibilidade de A3/A4 |
+| F4 A5 revisão | feito | v4-a5 | 6c46ab2; só CSS: toque 44 px, Quando? em 360, pós-pagamento, foco, barra do Clube; prints "depois" interrompidos por falta de memória (A6 cobre na F5) |
 | F5 A6, A1 | aguardando | — | |
 | F6 Netlify | aguardando | — | migração (plano seção 5); deploy só com o Renan |
 | F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
@@ -68,3 +68,5 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 Pendências do A5 para a F3: A4 aplica morango/chocolate no Quem somos, faixa de confiança, P-06, P-12. Fora da faixa de todos (vão para o A4 na F3): vercel.json e raiz de public/ (P-04 cache do menu, P-05 cache de estáticos, P-07 fontes locais + CSP, P-09 robots/sitemap, P-10 404, manifest da loja).
 
 Domínio docinhosdagigioz.com.br registrado em 14/11/2026 (vence 14/11/2027), ainda sem apontar.
+
+Para a F7 (achados do A5 na F4): placeholder da busca do painel cortado em 360 ao lado de "Ativar som" (A3); faixa O-01 alta demais no celular (A3); cartão "Frete" sozinho na faixa de confiança em 2 colunas (A4); links de nova aba sem aviso (A3/A4).
