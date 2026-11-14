@@ -9,10 +9,13 @@
  */
 const { phoneKey, phoneKeySql } = require('./text');
 
-const DEFAULT_REVIEW_URL = 'https://g.page/r/Cd8fNm7f9KsUEAI/review';
-const INSTAGRAM_URL = 'https://www.instagram.com/docinhosdagigioz/';
+// CONFIRMAR (Renan): link padrão = busca da loja no Google Maps (não é o link direto de avaliação).
+// O link certo ("Pedir avaliações" no Perfil da Empresa no Google) entra pelo painel: review_settings_save.
+const DEFAULT_REVIEW_URL = 'https://www.google.com/maps/search/?api=1&query=Docinhos+da+Gigi+Osasco';
 const GIFT_LABEL = '1 brigadeirinho';
 const SETTING_KEY = 'google_review_url';
+// Instagram: chave opcional em settings. Sem chave (ou vazia) = sem botão (nenhum endereço inventado).
+const INSTAGRAM_KEY = 'instagram_url';
 
 class GiftError extends Error { constructor(status, message, code) { super(message); this.status = status; this.code = code || null; } }
 
@@ -24,30 +27,61 @@ async function getReviewUrl(sql) {
   return v === '' ? null : v;
 }
 
-// Valida o texto digitado no painel. '' desliga. Retorna o valor limpo.
-function validateReviewUrl(input) {
-  if (input === undefined || input === null) throw new GiftError(400, 'Informe o link de avaliação (ou deixe vazio para desligar).', 'invalid_review_url');
-  if (typeof input !== 'string') throw new GiftError(400, 'Link de avaliação inválido.', 'invalid_review_url');
+// Valida um link digitado no painel. '' desliga. Retorna o valor limpo. Só https:// com domínio, até 300 caracteres.
+function validateHttpsUrl(input, label = 'Link de avaliação', code = 'invalid_review_url') {
+  if (input === undefined || input === null) throw new GiftError(400, `Informe o ${label.toLowerCase()} (ou deixe vazio para desligar).`, code);
+  if (typeof input !== 'string') throw new GiftError(400, `${label} inválido.`, code);
   const v = input.trim();
   if (v === '') return '';
   let url;
-  try { url = new URL(v); } catch { throw new GiftError(400, 'Link de avaliação inválido. Use um endereço que comece com https://', 'invalid_review_url'); }
-  if (url.protocol !== 'https:' || !url.hostname.includes('.') || v.length > 300 || /[\u0000-\u001f\u007f\s]/.test(v)) {
-    throw new GiftError(400, 'Link de avaliação inválido. Use um endereço que comece com https://', 'invalid_review_url');
+  try { url = new URL(v); } catch { throw new GiftError(400, `${label} inválido. Use um endereço que comece com https://`, code); }
+  if (url.protocol !== 'https:' || !url.hostname.includes('.') || url.username || url.password || v.length > 300 || /[\u0000-\u001f\u007f\s<>"']/.test(v)) {
+    throw new GiftError(400, `${label} inválido. Use um endereço que comece com https://`, code);
   }
   return v;
 }
+const validateReviewUrl = input => validateHttpsUrl(input, 'Link de avaliação', 'invalid_review_url');
+
+const putSetting = (sql, key, v) =>
+  sql.query(`insert into settings (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value`, [key, v]);
 
 async function saveReviewUrl(sql, input) {
   const v = validateReviewUrl(input);
-  await sql.query(`insert into settings (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value`, [SETTING_KEY, v]);
+  await putSetting(sql, SETTING_KEY, v);
   return v === '' ? null : v;
 }
 
+// Ajustes do pós-pagamento (painel): o que está em vigor e se o link de avaliação é o padrão.
+async function reviewSettings(sql) {
+  const rows = await sql.query('select key, value from settings where key in ($1, $2)', [SETTING_KEY, INSTAGRAM_KEY]);
+  const st = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  const custom = Object.prototype.hasOwnProperty.call(st, SETTING_KEY);
+  const review = custom ? (String(st[SETTING_KEY] || '').trim() || null) : DEFAULT_REVIEW_URL;
+  const insta = String(st[INSTAGRAM_KEY] || '').trim() || null;
+  return { google_review_url: review, review_url_is_default: !custom, default_review_url: DEFAULT_REVIEW_URL, instagram_url: insta };
+}
+
+// Salva um ou os dois campos. google_review_url: '' desliga o bloco. reset_review_url: true volta ao link padrão.
+// instagram_url: '' tira o botão.
+async function saveReviewSettings(sql, body) {
+  const b = body || {};
+  if (b.google_review_url === undefined && b.instagram_url === undefined && b.reset_review_url !== true) {
+    throw new GiftError(400, 'Nada para alterar.', 'nothing_to_change');
+  }
+  const review = b.reset_review_url === true || b.google_review_url === undefined ? undefined : validateReviewUrl(b.google_review_url);
+  const insta = b.instagram_url === undefined ? undefined : validateHttpsUrl(b.instagram_url, 'Link do Instagram', 'invalid_instagram_url');
+  if (b.reset_review_url === true) await sql.query('delete from settings where key = $1', [SETTING_KEY]);
+  else if (review !== undefined) await putSetting(sql, SETTING_KEY, review);
+  if (insta !== undefined) await putSetting(sql, INSTAGRAM_KEY, insta);
+  return reviewSettings(sql);
+}
+
 // Bloco pós-pagamento do /api/order-status. row precisa de payment_status e fulfillment_status.
+// null quando o pagamento não foi aprovado ou o pedido foi cancelado (a tela nunca decide sozinha).
 async function postPayment(sql, row) {
   if (!row || row.payment_status !== 'approved' || row.fulfillment_status === 'cancelled') return null;
-  return { review_url: await getReviewUrl(sql), instagram_url: INSTAGRAM_URL };
+  const st = await reviewSettings(sql);
+  return { review_url: st.google_review_url, instagram_url: st.instagram_url };
 }
 
 const ownerOf = (customerId) => customerId || null;
@@ -127,7 +161,20 @@ async function attachGifts(sql, rows) {
   });
 }
 
+// Mimos pendentes (painel, só admin): telefone normalizado, quando e por quem foi concedido.
+async function listPending(sql) {
+  const rows = await sql.query(
+    `select g.id, g.phone_key, g.label, g.granted_by, g.granted_at, g.granted_order_id, o.public_code as granted_order_code
+       from review_gifts g left join orders o on o.id = g.granted_order_id
+      where g.delivered_at is null and g.cancelled_at is null order by g.granted_at desc limit 500`);
+  return rows.map(r => ({
+    id: r.id, phone_key: r.phone_key, label: r.label, granted_by: r.granted_by, granted_at: new Date(r.granted_at).toISOString(),
+    granted_order_id: r.granted_order_id, granted_order_code: r.granted_order_code || null
+  }));
+}
+
 module.exports = {
-  DEFAULT_REVIEW_URL, INSTAGRAM_URL, GIFT_LABEL, SETTING_KEY, GiftError,
-  getReviewUrl, validateReviewUrl, saveReviewUrl, postPayment, grant, cancel, deliverForOrders, attachGifts
+  DEFAULT_REVIEW_URL, GIFT_LABEL, SETTING_KEY, INSTAGRAM_KEY, GiftError,
+  getReviewUrl, validateReviewUrl, validateHttpsUrl, saveReviewUrl, reviewSettings, saveReviewSettings,
+  postPayment, grant, cancel, deliverForOrders, attachGifts, listPending
 };
