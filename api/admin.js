@@ -1465,12 +1465,12 @@ A.push_test = { m: 'POST', fn: async ({ user }) => {
 A.club_rewards = { m: 'GET', fn: async () => ({ rewards: await club.adminList(getSql()), rules: await loyalty.getRules(getSql()) }) };
 A.club_reward_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   const reward = await club.save(getSql(), body);
-  await audit(user.username, 'clube_premio_salvo', `#${reward.id} ${reward.name}${reward.size_name ? ' ' + reward.size_name : ''}: ${reward.points_cost} pts, ${reward.active ? 'ligado' : 'desligado'}`);
+  await audit(user.username, 'clube_premio_salvo', `#${reward.id} ${reward.product_name}${reward.size_name ? ' ' + reward.size_name : ''}: ${reward.points_cost} pts, ${reward.active ? 'ligado' : 'desligado'}`);
   return { ok: true, reward };
 } };
 A.club_reward_toggle = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   const reward = await club.toggle(getSql(), body);
-  await audit(user.username, 'clube_premio_' + (reward.active ? 'ligado' : 'desligado'), `#${reward.id} ${reward.name}`);
+  await audit(user.username, 'clube_premio_' + (reward.active ? 'ligado' : 'desligado'), `#${reward.id} ${reward.product_name}`);
   return { ok: true, reward };
 } };
 
