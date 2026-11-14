@@ -2,6 +2,7 @@ const sql = require('./_lib/db');
 const { getStoreState } = require('./_lib/store-hours');
 const { getBands, maxKmOf } = require('./_lib/shipping');
 const { getRules } = require('./_lib/loyalty');
+const club = require('./_lib/club'); // v4 N3: prêmios do Clube (vitrine)
 // Produto sem preço e sem tamanho disponível: aparece, mas não pode ir para o carrinho (o pedido recusaria no fim).
 const NO_PRICE_LABEL = 'Consulte pelo WhatsApp';
 module.exports = async (req, res) => {
@@ -60,7 +61,10 @@ module.exports = async (req, res) => {
     const shipping = { bands, maxKm: maxKmOf(bands), pickupFeeCents: 0 };
     const storeState = { open: store.open, reason: store.reason, reopens_at: store.reopens_at, next_open_at: store.next_open_at, closes_at: store.closes_at, message: store.message };
     const points = { enabled: rules.enabled, pointsPerReal: rules.points_per_real, blockPoints: rules.block_points, blockValueCents: rules.block_value_cents };
-    res.status(200).json({ categories, settings, store: storeState, shipping, points });
+    // v4 N3: blockPoints/blockValueCents ficam só por compatibilidade (o desconto por pontos acabou). O Clube é por prêmios:
+    // club = { enabled, points_per_real, rewards: [...] } (só prêmios ligados e dentro da janela; o pedido revalida tudo).
+    const clubBlock = await club.publicClub(sql, rules);
+    res.status(200).json({ categories, settings, store: storeState, shipping, points, club: clubBlock });
   } catch (error) { res.status(500).json({ error: 'Não foi possível carregar o cardápio' }); }
 };
 module.exports.NO_PRICE_LABEL = NO_PRICE_LABEL;
