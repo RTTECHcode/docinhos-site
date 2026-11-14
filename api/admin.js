@@ -894,7 +894,8 @@ const PAYMENT_CHECK_MSG = {
   amount_mismatch: 'O valor pago no Mercado Pago é diferente do total do pedido. Confira no Mercado Pago antes de aceitar.',
   currency_mismatch: 'O pagamento no Mercado Pago não está em reais. Confira no Mercado Pago.',
   no_order: 'O pagamento encontrado não corresponde a este pedido.',
-  invalid: 'O Mercado Pago devolveu um pagamento incompleto. Tente de novo em instantes.'
+  invalid: 'O Mercado Pago devolveu um pagamento incompleto. Tente de novo em instantes.',
+  stale: 'O pagamento encontrado é anterior ao último pagamento gerado para o pedido e foi ignorado.'
 };
 A.payment_check = { m: 'POST', fn: async ({ body, user }) => {
   const id = vId(body.id, 'Pedido');

@@ -8,6 +8,8 @@
 //  - orders.pix_qr_code, orders.pix_qr_base64, orders.pix_expires_at: Pix guardado para reabrir o pagamento (U-01);
 //  - webhook_events: avisos do Mercado Pago aceitos e recusados (401), para o /api/health e o painel (O-01).
 //  - admin_push_subscriptions e orders.push_notified_at: Web Push de pedido pago no painel (U-06).
+//  - orders.payment_attempt_at (novo pagamento do mesmo pedido) e orders.address_district / address_city (bairro e cidade
+//    do CEP, para o rastreio resumido), F3.
 // Nota: uma versão anterior (não publicada) deste script criava orders_created_status_idx (created_at, payment_status).
 // Ele pode existir no banco dev; não atrapalha e não é recriado aqui (nada de DROP).
 // Idempotente e só aditiva: nenhuma tabela ou coluna é apagada ou renomeada; nenhuma linha muda.
@@ -123,7 +125,11 @@ const STEPS = [
   ['orders.push_notified_at', `alter table orders add column if not exists push_notified_at timestamptz`],
   // N10: encomenda com data marcada (null = o quanto antes) e índice parcial para contar vagas por janela.
   ['orders.scheduled_for', `alter table orders add column if not exists scheduled_for timestamptz`],
-  ['orders_scheduled_for_idx', `create index if not exists orders_scheduled_for_idx on orders (scheduled_for) where scheduled_for is not null`]
+  ['orders_scheduled_for_idx', `create index if not exists orders_scheduled_for_idx on orders (scheduled_for) where scheduled_for is not null`],
+  // F3 (A2): novo pagamento do mesmo pedido (retry_payment) e bairro/cidade do CEP para o rastreio resumido.
+  ['orders.payment_attempt_at', `alter table orders add column if not exists payment_attempt_at timestamptz`],
+  ['orders.address_district', `alter table orders add column if not exists address_district text`],
+  ['orders.address_city', `alter table orders add column if not exists address_city text`]
 ];
 
 (async () => {

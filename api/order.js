@@ -10,6 +10,8 @@ const club = require('./_lib/club');
 const coupons = require('./_lib/coupons');
 const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data marcada
 const { phoneKey } = require('./_lib/text');
+const { hitExceeded } = require('./_lib/rate-limit');
+const payments = require('./_lib/payments');
 
 // A-05 (v4): endereço do site num ponto só (variável SITE_URL, padrão https://docinhos-site.vercel.app).
 const SITE_URL = require('./_lib/site').siteUrl();
@@ -275,13 +277,13 @@ function buildPreferenceBody(order, prefItems, now = new Date()) {
   };
 }
 
-async function createPreference(token, order, prefItems) {
+async function createPreference(token, order, prefItems, idempotencyKey = `pref-${order.code}`) {
   const mpRes = await fetch(MP_PREFERENCES_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
-      'X-Idempotency-Key': `pref-${order.code}`
+      'X-Idempotency-Key': idempotencyKey
     },
     body: JSON.stringify(buildPreferenceBody(order, prefItems)),
     signal: AbortSignal.timeout(8000)
@@ -307,14 +309,14 @@ function buildPixBody(order, customerName, now = new Date()) {
   };
 }
 
-async function createPixPayment(token, order, customerName) {
+async function createPixPayment(token, order, customerName, idempotencyKey = `pix-${order.code}`) {
   const body = buildPixBody(order, customerName);
   const mpRes = await fetch(MP_PAYMENTS_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
-      'X-Idempotency-Key': `pix-${order.code}`
+      'X-Idempotency-Key': idempotencyKey
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(8000)
@@ -363,6 +365,137 @@ async function recentOrders(sql, phone, ip) {
 }
 const overOrderLimit = r => r.n >= MAX_ORDERS_PER_PHONE || r.by_ip >= MAX_ORDERS_PER_IP;
 
+// ---------- F3: novo pagamento do mesmo pedido (POST /api/order?a=retry_payment) ----------
+// Gera de novo o Pix ou o link do cartão de um pedido já criado, sem refazer o pedido. Valores, itens e reservas (prêmio do
+// Clube, cupom e vaga agendada) continuam os mesmos: nada é recalculado nem reservado de novo. Vale só para pedido com
+// pagamento não aprovado, não cancelado e criado há menos de 24 h. Se a reserva já foi devolvida (pagamento recusado ou
+// vencido), recusa (409 reservation_released): o cliente faz um pedido novo.
+const RETRY_WINDOW_MIN = 10;
+const RETRY_MAX_PER_IP = 10;    // por IP em 10 min
+const RETRY_MAX_PER_ORDER = 3;  // por pedido em 10 min
+const RETRY_CHECK_TIMEOUT_MS = 4000;
+const PAID_STATUSES = ['approved', 'refunded', 'charged_back'];
+const PROCESSING_STATUSES = ['in_process', 'authorized']; // cartão em análise: outro pagamento poderia cobrar duas vezes
+const MSG_RETRY_TOO_MANY = 'Muitas tentativas de pagamento em pouco tempo. Aguarde alguns minutos.';
+const RETRY_COLUMNS = `id, code, public_code, customer_id, customer_name, payment_status, payment_method, payment_id, fulfillment_status,
+  created_at, items, delivery_fee_cents, discount_cents, total_cents, club_points, points_redeemed, coupon_id, scheduled_for,
+  (created_at > now() - interval '24 hours') as fresh`;
+
+// Motivo para não gerar novo pagamento, ou null. o = linha com RETRY_COLUMNS.
+async function retryBlock(sql, o, now = new Date()) {
+  if (PAID_STATUSES.includes(o.payment_status)) return [409, 'Este pedido já está pago.', 'already_paid'];
+  if (o.fulfillment_status === 'cancelled') return [409, 'Este pedido foi cancelado. Faça um novo pedido.', 'order_cancelled'];
+  if (!o.fresh) return [409, 'Passou o prazo de 24 horas para pagar este pedido. Faça um novo pedido.', 'retry_expired'];
+  if (PROCESSING_STATUSES.includes(o.payment_status)) {
+    return [409, 'O Mercado Pago ainda está analisando o pagamento deste pedido. Aguarde alguns minutos.', 'payment_in_process'];
+  }
+  if (o.scheduled_for && new Date(o.scheduled_for).getTime() <= now.getTime()) {
+    return [409, 'O horário marcado para este pedido já passou. Faça um novo pedido.', 'schedule_passed'];
+  }
+  const released = [409, 'O prêmio do Clube ou o cupom deste pedido já foi devolvido. Faça um novo pedido.', 'reservation_released'];
+  if (o.club_points > 0 || o.points_redeemed > 0) {
+    const rows = await sql.query('select kind from loyalty_ledger where order_id = $1', [o.id]);
+    const has = k => rows.some(r => r.kind === k);
+    if ((has('reward_release') && !has('reward_commit')) || (has('redeem_release') && !has('redeem_commit'))) return released;
+  }
+  if (o.coupon_id) {
+    const [r] = await sql.query('select status from coupon_redemptions where order_id = $1', [o.id]);
+    if (!r || r.status === 'released') return released;
+  }
+  // Vaga agendada: pedido pendente só segura a vaga por 60 min (N10). Se já não segura, confere se ainda há vaga.
+  if (o.scheduled_for) {
+    const cfg = await scheduling.getConfig(sql);
+    if (cfg.slot_capacity > 0) {
+      const [{ occ }] = await sql.query(`select (${scheduling.OCCUPIES_SQL}) as occ from orders where id = $1`, [o.id]);
+      if (!occ && (await scheduling.slotTaken(sql, new Date(o.scheduled_for))) >= cfg.slot_capacity) {
+        return [409, 'A janela marcada para este pedido lotou. Faça um novo pedido com outro horário.', 'slot_full'];
+      }
+    }
+  }
+  return null;
+}
+
+// Itens pagos do pedido gravado (prêmio do Clube vale R$ 0 e fica de fora), no formato de buildPreferenceItems.
+function paidItemsOf(o) {
+  const list = Array.isArray(o.items) ? o.items : [];
+  return list.filter(i => i && !i.reward).map(i => ({
+    name: String(i.name || 'Item'), size: i.size || null, extras: Array.isArray(i.extras) ? i.extras.map(String) : [],
+    qty: Number(i.qty) || 0, unit_total_cents: Number(i.unit_total_cents) || 0
+  }));
+}
+
+async function retryPayment(req, res, sql) {
+  const ip = auth.clientIp(req);
+  if (await hitExceeded(sql, 'retry_payment', ip, { windowMinutes: RETRY_WINDOW_MIN, max: RETRY_MAX_PER_IP })) {
+    return send(res, 429, { error: MSG_RETRY_TOO_MANY, code: 'rate_limited' });
+  }
+  let b = req.body;
+  if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) b = {};
+  const notFound = () => send(res, 404, { error: 'Pedido não encontrado.', code: 'order_not_found' });
+  const token = typeof b.t === 'string' ? b.t : '';
+  if (!ordersLib.TRACKING_RE.test(token)) return notFound();
+  const where = 'tracking_token_hash = $1';
+  const params = [ordersLib.hashTrackingToken(token)];
+  let [o] = await sql.query(`select ${RETRY_COLUMNS} from orders where ${where}`, params);
+  if (!o) return notFound();
+  if (await hitExceeded(sql, 'retry_payment_order', 'order:' + o.id, { windowMinutes: RETRY_WINDOW_MIN, max: RETRY_MAX_PER_ORDER })) {
+    return send(res, 429, { error: MSG_RETRY_TOO_MANY, code: 'rate_limited' });
+  }
+  if (b.payment_choice !== undefined && !PAYMENT_CHOICES.includes(b.payment_choice)) fail('Escolha Pix ou cartão.');
+  const choice = b.payment_choice || (o.payment_method === 'pix' ? 'pix' : 'card');
+  const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!mpToken) return send(res, 503, { error: 'O pagamento on-line está indisponível agora. Fale com a loja pelo WhatsApp.', code: 'payment_unavailable' });
+
+  // O cliente pode ter acabado de pagar: confere no Mercado Pago antes (mesmas regras do webhook). Falha só vai para o log.
+  if (o.payment_method && !PAID_STATUSES.includes(o.payment_status) && o.fulfillment_status !== 'cancelled') {
+    try { await payments.checkOrderPayment(sql, o, { source: 'retry_payment', timeoutMs: RETRY_CHECK_TIMEOUT_MS }); } catch (err) {
+      console.error('retry_payment: conferência falhou:', err.message);
+    }
+    [o] = await sql.query(`select ${RETRY_COLUMNS} from orders where id = $1`, [o.id]);
+  }
+  const block = await retryBlock(sql, o);
+  if (block) return send(res, block[0], { error: block[1], code: block[2] });
+
+  // Chave de idempotência nova a cada tentativa (a do pedido devolveria o pagamento antigo). A hora é marcada ANTES de
+  // chamar o Mercado Pago: aviso não aprovado de pagamento criado antes dela é ignorado (payments.syncPayment).
+  const startedAt = new Date();
+  const suffix = crypto.randomBytes(4).toString('hex');
+  const stillOpen = n => `payment_status <> all($${n}::text[]) and fulfillment_status <> 'cancelled'`;
+  let payment;
+  try {
+    if (choice === 'pix') {
+      const pix = await createPixPayment(mpToken, o, o.customer_name, `pix-${o.code}-${suffix}`);
+      const exp = new Date(pix.expires_at);
+      const rows = await sql.query(
+        `update orders set payment_method = 'pix', payment_id = $2, payment_status = $3, pix_qr_code = $4, pix_qr_base64 = $5, pix_expires_at = $6,
+                payment_attempt_at = $7
+          where id = $1 and ${stillOpen(8)} returning id`,
+        [o.id, pix.id, pix.status, String(pix.qr_code).slice(0, 4000), String(pix.qr_code_base64).slice(0, 200000),
+          Number.isNaN(exp.getTime()) ? new Date(Date.now() + PIX_TTL_MS) : exp, startedAt, PAID_STATUSES]);
+      if (!rows.length) return send(res, 409, { error: 'Este pedido já está pago ou foi cancelado.', code: 'already_paid' });
+      payment = { type: 'pix', id: pix.id, qr_code: pix.qr_code, qr_code_base64: pix.qr_code_base64, expires_at: pix.expires_at };
+    } else {
+      const prefItems = buildPreferenceItems(paidItemsOf(o), o.delivery_fee_cents, o.discount_cents, o.public_code);
+      const sum = prefItems.reduce((s, i) => s + Math.round(i.unit_price * 100) * i.quantity, 0);
+      if (sum !== o.total_cents) throw new Error('itens do pedido não somam o total');
+      const pref = await createPreference(mpToken, { ...o, tracking_token: token }, prefItems, `pref-${o.code}-${suffix}`);
+      if (!pref || !pref.init_point || !pref.id) throw new Error('preferência sem link');
+      const rows = await sql.query(
+        `update orders set payment_method = 'mercadopago_card', payment_id = $2, payment_status = 'pending',
+                pix_qr_code = null, pix_qr_base64 = null, pix_expires_at = null, payment_attempt_at = $3
+          where id = $1 and ${stillOpen(4)} returning id`,
+        [o.id, String(pref.id), startedAt, PAID_STATUSES]);
+      if (!rows.length) return send(res, 409, { error: 'Este pedido já está pago ou foi cancelado.', code: 'already_paid' });
+      payment = { type: 'card', url: pref.init_point, id: String(pref.id) };
+    }
+  } catch (err) {
+    console.error('retry_payment: falha ao gerar pagamento:', String(err.message || '').replace(/\S+@\S+/g, '<email>').slice(0, 160));
+    return send(res, 502, { error: 'Não foi possível gerar o pagamento agora. Tente de novo em instantes.', code: 'payment_unavailable' });
+  }
+  return send(res, 200, { public_code: o.public_code, total_cents: o.total_cents, payment_choice: choice, payment });
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
@@ -370,7 +503,11 @@ module.exports = async (req, res) => {
   // (text/plain dispensaria o preflight de CORS e deixaria outro site postar pedidos).
   if (!auth.sameOrigin(req)) return res.status(403).json({ error: 'Origem não permitida.', code: 'forbidden_origin' });
   if (!auth.isJsonType(req)) return res.status(415).json({ error: 'Envie os dados como JSON.', code: 'unsupported_type' });
+  // F3: ?a=retry_payment gera novo pagamento de um pedido existente. Sem ?a: cria pedido (como antes).
+  const action = (req.query && typeof req.query.a === 'string') ? req.query.a : new URL(req.url || '/', 'http://x').searchParams.get('a');
+  if (action && action !== 'retry_payment') return res.status(404).json({ error: 'Ação desconhecida.', code: 'unknown_action' });
   try {
+    if (action === 'retry_payment') return await retryPayment(req, res, require('./_lib/db'));
     const sql = require('./_lib/db'); // carregado aqui para testar a função pura sem DATABASE_URL
     // Limite por IP antes de qualquer trabalho caro (frete, catálogo). Toda tentativa conta, até as recusadas.
     // 403/415 acima não contam: um site de terceiros não consegue gastar a cota do IP de quem o visita.
@@ -587,4 +724,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, backUrls, NOTIFICATION_URL, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError, loadCatalog, isId, MAX_ITEMS };
+module.exports._internal = { RETRY_MAX_PER_IP, RETRY_MAX_PER_ORDER, retryBlock, paidItemsOf, MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, backUrls, NOTIFICATION_URL, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError, loadCatalog, isId, MAX_ITEMS };
