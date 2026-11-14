@@ -54,10 +54,14 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F0 A1 | feito | v4 | 4795c53; 0 Crítico, 2 Altos (S-01, O-01) |
 | F0 A5 | feito | v4 | c481d6f; 0 Crítico, 8 Altos (U-01 a U-06, P-01, P-02) |
 | F1 | feito | v4 | c481d6f; seção 2 do plano com os 10 Altos e 10 Médios/Baixos que entram |
-| F2 A2 | em andamento | v4-a2 | 14/11; WIP da sessão anterior salvo em 9d05b3a e revisado pelo A2 |
+| F2 A2 | em andamento | v4-a2 | 14/11; WIP salvo em 9d05b3a; escopo +U-06 push, A-05, N10 agendamento, N11 selo/prazo |
 | F4 A5 antecipada | feito | v4-a5 | 7a5d893; logo 1,7 MB para 9 KB, OG, CLS 0,47 para 0,00, morango/chocolate, N9, U-11 |
 | F3 A3, A4 | aguardando | — | depois da F2 (contrato seção 10) |
 | F5 A6, A1 | aguardando | — | |
-| F6 | aguardando | — | relatorio-v4.md |
+| F6 Netlify | aguardando | — | migração (plano seção 5); deploy só com o Renan |
+| F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
+| F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
 
 Pendências do A5 para a F3: A4 aplica morango/chocolate no Quem somos, faixa de confiança, P-06, P-12. Fora da faixa de todos (vão para o A4 na F3): vercel.json e raiz de public/ (P-04 cache do menu, P-05 cache de estáticos, P-07 fontes locais + CSP, P-09 robots/sitemap, P-10 404, manifest da loja).
+
+Domínio docinhosdagigioz.com.br registrado em 14/11/2026 (vence 14/11/2027), ainda sem apontar.
