@@ -16,12 +16,22 @@
  *  redeem_commit     0 (marcador): a reserva virou gasto definitivo (pagamento aprovado)
  *  reversal        +/- estorno de pagamento (refunded/charged_back): tira o ganho e devolve o gasto, em uma linha só
  *  adjust          +/- ajuste manual ou correção (ex.: aprovação que chegou depois de a reserva ser liberada)
+ *
+ * v4 (Clube por itens): a troca de pontos por prêmio (club_rewards) usa as linhas reward_reserve (-), reward_release (+) e
+ *  reward_commit (0), com o mesmo ciclo do resgate antigo (a soma de todos os prêmios do pedido é UMA linha). O desconto em
+ *  reais por pontos (redeem_*) não é mais aceito em pedido novo (400 points_discount_ended); o código continua para os pedidos
+ *  antigos em aberto. O estorno (reversal) devolve os pontos do prêmio e tira o ganho.
+ *
+ * Travas de consulta (pg_advisory_xact_lock com DUAS chaves: classe, id):
+ *  classe 1 = pontos do cliente (id = customers.id); classe 2 = cupom (id = coupons.id). Sempre nesta ordem (1 e depois 2).
  */
+const LOCK_POINTS = 1;
+const LOCK_COUPON = 2;
 const BLOCK_POINTS = 100;           // padrão: 100 pontos = R$ 10,00
 const BLOCK_CENTS = 1000;
 const RESERVE_TTL = '24 hours';     // reserva de pagamento não concluído é devolvida depois disso
 const MIN_CHARGE_CENTS = 100;       // o Mercado Pago não processa pedido de valor zero: mínimo R$ 1,00 a pagar
-const KINDS = ['earn', 'redeem_reserve', 'redeem_release', 'redeem_commit', 'reversal', 'adjust'];
+const KINDS = ['earn', 'redeem_reserve', 'redeem_release', 'redeem_commit', 'reversal', 'adjust', 'reward_reserve', 'reward_release', 'reward_commit'];
 
 class LoyaltyError extends Error { constructor(status, message, code) { super(message); this.status = status; this.code = code || null; } }
 
@@ -129,15 +139,22 @@ function validateRedemption({ points, subtotalCents, balance, lockedUntil, now =
 // ---------- Banco ----------
 const ON_CONFLICT = 'on conflict (order_id, kind) where order_id is not null do nothing';
 
-// Devolve reservas de resgate com mais de 24 h cujo pedido não foi pago. Preguiçoso: roda na leitura do saldo.
+// Pares reserva -> (devolução, confirmação): resgate antigo (redeem_*) e prêmio do Clube (reward_*).
+const PAIRS_SQL = `(values ('redeem_reserve', 'redeem_release', 'redeem_commit'), ('reward_reserve', 'reward_release', 'reward_commit')) as m(res, rel, com)`;
+
+// Devolve reservas (resgate antigo e prêmios) com mais de 24 h cujo pedido não foi pago. Preguiçoso: roda na leitura do saldo.
+// Nunca devolve de novo uma reserva já confirmada (pedido aprovado e depois estornado: quem devolve é o "reversal").
+// Também devolve os usos de cupom reservados há mais de 24 h sem pagamento.
 async function releaseStaleReserves(sql, customerId = null) {
   await sql.query(
     `insert into loyalty_ledger (customer_id, order_id, kind, points, note)
-     select r.customer_id, r.order_id, 'redeem_release', -r.points, 'reserva vencida (24 h sem pagamento)'
-       from loyalty_ledger r join orders o on o.id = r.order_id
-      where r.kind = 'redeem_reserve' and r.created_at < now() - interval '${RESERVE_TTL}'
+     select r.customer_id, r.order_id, m.rel, -r.points, 'reserva vencida (24 h sem pagamento)'
+       from loyalty_ledger r join ${PAIRS_SQL} on m.res = r.kind join orders o on o.id = r.order_id
+      where r.created_at < now() - interval '${RESERVE_TTL}'
         and o.payment_status <> 'approved' and ($1::int is null or r.customer_id = $1::int)
+        and not exists (select 1 from loyalty_ledger c where c.order_id = r.order_id and c.kind = m.com)
      ${ON_CONFLICT}`, [customerId]);
+  await require('./coupons').releaseStale(sql);
 }
 
 // Saldo = soma do ledger. Reservas em aberto já estão descontadas (o cliente não pode gastar duas vezes).
@@ -147,8 +164,9 @@ async function getBalance(sql, customerId) {
   const [row] = await sql.query(
     `select coalesce(sum(points), 0)::int as balance,
             coalesce(sum(points) filter (where kind = 'earn'), 0)::int as earned_total,
-            coalesce(-sum(points) filter (where kind = 'redeem_reserve'
-              and not exists (select 1 from loyalty_ledger x where x.order_id = loyalty_ledger.order_id and x.kind in ('redeem_release', 'redeem_commit'))), 0)::int as reserved
+            coalesce(-sum(points) filter (where kind in ('redeem_reserve', 'reward_reserve')
+              and not exists (select 1 from loyalty_ledger x where x.order_id = loyalty_ledger.order_id
+                and x.kind = any(case loyalty_ledger.kind when 'redeem_reserve' then array['redeem_release', 'redeem_commit'] else array['reward_release', 'reward_commit'] end))), 0)::int as reserved
        from loyalty_ledger where customer_id = $1`, [customerId]);
   const [cust] = await sql.query('select points_locked_until from customers where id = $1', [customerId]);
   const lockedUntil = cust && cust.points_locked_until ? new Date(cust.points_locked_until) : null;
@@ -173,7 +191,7 @@ async function listLedger(sql, customerId, limit = 50) {
 async function reserve(sql, { customerId, orderId, points }) {
   if (!points) return true;
   const results = await sql.transaction([
-    sql.query('select pg_advisory_xact_lock($1::bigint)', [customerId]),
+    sql.query('select pg_advisory_xact_lock($1::int, $2::int)', [LOCK_POINTS, customerId]),
     sql.query(
       `insert into loyalty_ledger (customer_id, order_id, kind, points, note)
        select $1::int, $2::int, 'redeem_reserve', -$3::int, 'reserva para o pedido'
@@ -187,14 +205,15 @@ async function orderRows(sql, orderId) {
   return sql.query('select kind, points from loyalty_ledger where order_id = $1', [orderId]);
 }
 
-// Devolve a reserva de um pedido que não vai ser pago (ou cancelado). Idempotente; não mexe em pedido já aprovado.
+// Devolve a reserva (resgate antigo e/ou prêmios) de um pedido que não vai ser pago (ou cancelado).
+// Idempotente; não mexe em pedido já aprovado nem em reserva já confirmada. Retorna true se devolveu pontos.
 async function releaseReserve(sql, orderId, note = 'pagamento não concluído') {
   const rows = await sql.query(
     `insert into loyalty_ledger (customer_id, order_id, kind, points, note)
-     select r.customer_id, r.order_id, 'redeem_release', -r.points, $2
-       from loyalty_ledger r join orders o on o.id = r.order_id
-      where r.order_id = $1 and r.kind = 'redeem_reserve' and o.payment_status <> 'approved'
-        and not exists (select 1 from loyalty_ledger c where c.order_id = r.order_id and c.kind = 'redeem_commit')
+     select r.customer_id, r.order_id, m.rel, -r.points, $2
+       from loyalty_ledger r join ${PAIRS_SQL} on m.res = r.kind join orders o on o.id = r.order_id
+      where r.order_id = $1 and o.payment_status <> 'approved'
+        and not exists (select 1 from loyalty_ledger c where c.order_id = r.order_id and c.kind = m.com)
      ${ON_CONFLICT} returning id`, [orderId, note]);
   return rows.length > 0;
 }
@@ -211,9 +230,13 @@ const insertRow = (sql, { customerId, orderId, kind, points, note }) =>
  *  refunded | charged_back           -> estorno (tira o ganho, devolve o gasto)
  */
 async function onPaymentStatus(sql, orderId) {
-  const [o] = await sql.query('select id, customer_id, subtotal_cents, discount_cents, points_redeemed, payment_status, fulfillment_status from orders where id = $1', [orderId]);
-  if (!o || !o.customer_id) return { applied: [] };
+  const [o] = await sql.query('select id, customer_id, subtotal_cents, discount_cents, points_redeemed, club_points, payment_status, fulfillment_status from orders where id = $1', [orderId]);
+  if (!o) return { applied: [] };
   const applied = [];
+  // Cupom (vale também para visitante): confirma no pagamento aprovado, devolve se falhou ou foi estornado.
+  const couponResult = await require('./coupons').onPaymentStatus(sql, o);
+  if (couponResult) applied.push(couponResult);
+  if (!o.customer_id) return { applied };
   const customerId = o.customer_id;
   const status = o.payment_status;
   // Pedido cancelado que recebe pagamento aprovado depois: NÃO credita pontos nem cobra de novo o resgate devolvido.
@@ -229,21 +252,40 @@ async function onPaymentStatus(sql, orderId) {
       }
       if ((await insertRow(sql, { customerId, orderId, kind: 'redeem_commit', points: 0, note: 'resgate confirmado' })).length) applied.push('redeem_commit');
     }
+    // Prêmios do Clube: mesmo ciclo (confirma; se a reserva já tinha sido devolvida, cobra de novo).
+    if (o.club_points > 0 && has('reward_reserve') && !has('reward_commit')) {
+      if (has('reward_release')) {
+        if ((await insertRow(sql, { customerId, orderId, kind: 'adjust', points: -o.club_points, note: 'pagamento aprovado depois de a reserva do prêmio ser devolvida' })).length) applied.push('adjust');
+      }
+      if ((await insertRow(sql, { customerId, orderId, kind: 'reward_commit', points: 0, note: 'troca por prêmio confirmada' })).length) applied.push('reward_commit');
+    }
     // Ganho pela regra em vigor na aprovação. Programa desligado: não credita (o resgate acima já foi confirmado).
+    // Prêmio vale R$ 0 (não entra no subtotal): não gera ponto.
     const rules = await getRules(sql);
     const pts = rules.enabled ? earnPoints(o.subtotal_cents, o.discount_cents, rules) : 0;
     if (pts > 0 && (await insertRow(sql, { customerId, orderId, kind: 'earn', points: pts, note: 'pontos do pedido pago' })).length) applied.push('earn');
   } else if (status === 'rejected' || status === 'cancelled' || status === 'expired') {
-    if (await releaseReserve(sql, orderId, `pagamento ${status}`)) applied.push('redeem_release');
+    if (await releaseReserve(sql, orderId, `pagamento ${status}`)) applied.push('release');
   } else if (status === 'refunded' || status === 'charged_back') {
-    const rows = await orderRows(sql, orderId);
-    const earn = rows.find(r => r.kind === 'earn'), commit = rows.find(r => r.kind === 'redeem_commit');
-    if (earn || commit) {
-      const points = -(earn ? earn.points : 0) + (commit ? o.points_redeemed : 0);
-      if ((await insertRow(sql, { customerId, orderId, kind: 'reversal', points, note: `estorno (${status})` })).length) applied.push('reversal');
-    }
+    if (await reverseOrder(sql, orderId, `estorno (${status})`)) applied.push('reversal');
   }
   return { applied };
+}
+
+/**
+ * Estorno de pontos de um pedido pago (pagamento estornado OU pedido pago cancelado no painel, A-10):
+ * uma linha `reversal` tira o ganho e devolve o que foi gasto e confirmado (resgate antigo e prêmios). Idempotente
+ * (unique order_id + kind). Retorna true se gravou.
+ */
+async function reverseOrder(sql, orderId, note = 'pedido pago cancelado') {
+  const [o] = await sql.query('select id, customer_id, points_redeemed, club_points from orders where id = $1', [orderId]);
+  if (!o || !o.customer_id) return false;
+  const rows = await orderRows(sql, orderId);
+  const earn = rows.find(r => r.kind === 'earn');
+  const rcommit = rows.some(r => r.kind === 'redeem_commit'), wcommit = rows.some(r => r.kind === 'reward_commit');
+  if (!earn && !rcommit && !wcommit) return false;
+  const points = -(earn ? earn.points : 0) + (rcommit ? o.points_redeemed : 0) + (wcommit ? o.club_points : 0);
+  return (await insertRow(sql, { customerId: o.customer_id, orderId, kind: 'reversal', points, note })).length > 0;
 }
 
 // Ajuste manual (uso futuro do admin). order_id null: a unicidade por pedido não se aplica.
@@ -254,8 +296,8 @@ async function adjust(sql, { customerId, points, note }) {
 }
 
 module.exports = {
-  BLOCK_POINTS, BLOCK_CENTS, MIN_CHARGE_CENTS, KINDS, LoyaltyError,
+  BLOCK_POINTS, BLOCK_CENTS, MIN_CHARGE_CENTS, KINDS, LOCK_POINTS, LOCK_COUPON, LoyaltyError,
   DEFAULT_RULES, RULE_KEYS, RULE_LIMITS, validateRules, getRules, saveRules,
   earnPoints, discountForPoints, maxRedeemablePoints, validateRedemption,
-  releaseStaleReserves, getBalance, listLedger, reserve, releaseReserve, onPaymentStatus, adjust
+  releaseStaleReserves, getBalance, listLedger, reserve, releaseReserve, reverseOrder, onPaymentStatus, adjust
 };

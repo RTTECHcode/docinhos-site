@@ -16,6 +16,15 @@ const storeHours = require('./_lib/store-hours');
 const shipping = require('./_lib/shipping');
 const loyalty = require('./_lib/loyalty');
 const payments = require('./_lib/payments');
+// v4: Clube por itens (N3), cupons (N6), mimo (N8), relatórios (N5) e monitoramento (O-01).
+const club = require('./_lib/club');
+const coupons = require('./_lib/coupons');
+const gifts = require('./_lib/gifts');
+const reports = require('./_lib/reports');
+const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data marcada
+const showcase = require('./_lib/showcase'); // v4 N11: selo "Mais pedido" e prazo de entrega
+const monitor = require('./_lib/monitor');
+const push = require('./_lib/push');
 
 const SESSION_COOKIE = '__Host-dg_admin';
 const SESSION_TTL_MS = 12 * 3600 * 1000;
@@ -51,14 +60,18 @@ const { hashPassword, verifyPassword, dummyHash, sha256 } = auth;
 // (IP sem login certo desse usuário nos últimos 7 dias); IP conhecido segue só com o limite do par.
 // failsMs: instantes (ms) das falhas do par usuário+IP desde o último acerto do par, da mais nova para a mais antiga (até 10).
 // ipFails: falhas do IP (qualquer usuário) em 15 min. userFails: falhas do usuário (qualquer IP) em 1 h. knownIp: boolean.
+// S-01 (v4): teto diário por usuário que vale para QUALQUER IP (inclusive o conhecido): 50 falhas em 24 h travam o login.
+// userDayFails: falhas do usuário (qualquer IP) em 24 h.
 const USER_SPREAD_MAX = 30;
-function evaluateLock({ failsMs, ipFails, userFails = 0, knownIp = false, nowMs }) {
+const USER_DAY_MAX = 50;
+function evaluateLock({ failsMs, ipFails, userFails = 0, userDayFails = 0, knownIp = false, nowMs }) {
   const MIN15 = 15 * 60 * 1000, H24 = 24 * 3600 * 1000;
   const f = failsMs || [];
   if (f.length >= 10 && nowMs - f[9] < H24) return { locked: true, reason: '24h', until: f[9] + H24 };
   if (f.length >= 5 && f[0] - f[4] <= MIN15 && nowMs - f[0] < MIN15) return { locked: true, reason: '15m', until: f[0] + MIN15 };
   if (ipFails >= 20) return { locked: true, reason: 'ip', until: null };
   if (!knownIp && userFails >= USER_SPREAD_MAX) return { locked: true, reason: 'spread', until: null };
+  if (userDayFails >= USER_DAY_MAX) return { locked: true, reason: 'daily', until: null };
   return { locked: false, reason: null, until: null };
 }
 
@@ -383,13 +396,26 @@ async function lockStatus(username, ip) {
         order by at desc limit 10`, [username, ip]),
     q(`select count(*)::int as n from login_attempts where ip = $1 and ok = false and at > now() - interval '15 minutes'`, [ip]),
     q(`select count(*) filter (where ok = false and at > now() - interval '1 hour')::int as fails,
+              count(*) filter (where ok = false and at > now() - interval '24 hours')::int as day_fails,
               bool_or(ok and ip = $2) as known
          from login_attempts where username = $1`, [username, ip]),
     q(`select (extract(epoch from now()) * 1000)::float8 as ms`)
   ]);
   return evaluateLock({ failsMs: fails.map(r => Number(r.ms)), ipFails: ipRows[0].n, userFails: userRows[0].fails,
-    knownIp: !!userRows[0].known, nowMs: Number(nowRows[0].ms) });
+    userDayFails: userRows[0].day_fails, knownIp: !!userRows[0].known, nowMs: Number(nowRows[0].ms) });
 }
+// S-01: o teto diário gera UM aviso na auditoria por usuário a cada 24 h (o painel lê admin_audit).
+async function noteDailyCap(username) {
+  await q(
+    `insert into admin_audit (username, action, detail)
+     select $1::text, 'login_teto_diario', 'Login travado: ${USER_DAY_MAX} senhas erradas em 24 h (de qualquer IP). Troque a senha se não foi você.'
+      where not exists (select 1 from admin_audit where username = $1::text and action = 'login_teto_diario' and at > now() - interval '24 hours')`,
+    [String(username).slice(0, 64)]).catch(error => console.error('Falha ao gravar auditoria:', error.message));
+}
+// S-01: em produção, senha com menos de 8 caracteres não entra (força a troca pela recuperação).
+const MIN_PASSWORD_PROD = 8;
+const weakBlocked = password => process.env.VERCEL_ENV === 'production' && password.length < MIN_PASSWORD_PROD;
+const MSG_WEAK_BLOCKED = 'Sua senha é curta demais para entrar. Use "Esqueci minha senha" para criar uma nova com 8 caracteres ou mais.';
 const recordAttempt = (username, ip, ok) =>
   q('insert into login_attempts (username, ip, ok) values ($1, $2, $3)', [String(username).slice(0, 64), ip, ok]);
 
@@ -423,7 +449,11 @@ async function doLogin(req, res, body) {
   if (!username || !password) return send(res, 400, { error: 'Informe usuário e senha.' });
   const ip = clientIp(req);
   const dummy = await dummyHash();
-  if ((await lockStatus(username, ip)).locked) return send(res, 429, { error: MSG_LOCKED });
+  const before = await lockStatus(username, ip);
+  if (before.locked) {
+    if (before.reason === 'daily') await noteDailyCap(username);
+    return send(res, 429, { error: MSG_LOCKED });
+  }
 
   const user = (await q('select id, username, password_hash, role, weak_password, active, security_answer_hash from admin_users where username = $1', [username]))[0];
   const usable = !!(user && user.active);
@@ -432,8 +462,17 @@ async function doLogin(req, res, body) {
   if (!(matches && usable)) {
     await recordAttempt(username, ip, false);
     await audit(username, 'login_falhou', 'ip ' + ip);
-    if ((await lockStatus(username, ip)).locked) return send(res, 429, { error: MSG_LOCKED });
+    const after = await lockStatus(username, ip);
+    if (after.locked) {
+      if (after.reason === 'daily') await noteDailyCap(username);
+      return send(res, 429, { error: MSG_LOCKED });
+    }
     return send(res, 401, { error: MSG_BAD_LOGIN });
+  }
+  // S-01: senha certa, mas curta demais em produção. Não cria sessão nem conta como falha (quem acertou a senha não é travado).
+  if (weakBlocked(password)) {
+    await audit(username, 'login_senha_curta_bloqueado', 'ip ' + ip);
+    return send(res, 403, { error: MSG_WEAK_BLOCKED, code: 'weak_password_blocked' });
   }
   await recordAttempt(username, ip, true);
   const token = await createSession(user.id, req);
@@ -763,6 +802,8 @@ A.command_apply = { m: 'POST', fn: async ({ body, user }) => {
 const statusGroup = f => (f === 'completed' || f === 'delivered' ? ['completed', 'delivered'] : [f]);
 
 // Lista do painel: só pedidos com menos de 24 h (todos os status). Os mais antigos ficam no histórico (order_history).
+// v4 N10: pedido agendado fica na lista até 24 h depois da data marcada. f=scheduled mostra só os agendados, ordenados
+// pela data marcada (a mais próxima primeiro).
 A.orders = { m: 'GET', fn: async ({ query }) => {
   const f = String(query.get('f') || '');
   const status = FILTER_STATUSES.includes(f) ? statusGroup(f) : null;
@@ -770,12 +811,14 @@ A.orders = { m: 'GET', fn: async ({ query }) => {
   await ordersLib.sweepOrders(getSql()); // pronto há mais de 1 h vira concluído (sem cron)
   const rows = await q(
     `select ${ordersLib.ADMIN_COLUMNS} from orders
-      where created_at > now() - interval '24 hours'
+      where (created_at > now() - interval '24 hours' or scheduled_for > now() - interval '24 hours')
         and ($1::text[] is null or fulfillment_status = any($1::text[]))
         and ($2::boolean = false or payment_status = 'approved')
         and ($3::text = '' or strpos(lower(code), $3) > 0 or strpos(lower(coalesce(public_code, '')), $3) > 0 or strpos(lower(customer_name), $3) > 0)
-      order by created_at desc limit 200`, [status, f === 'paid', search]);
-  return { orders: rows.map(ordersLib.adminView), window_hours: 24 };
+        and ($4::boolean = false or scheduled_for is not null)
+      order by case when $4::boolean then scheduled_for end asc, created_at desc limit 200`, [status, f === 'paid', search, f === 'scheduled']);
+  // N8: gift = { id, label } quando o telefone tem mimo pendente concedido antes deste pedido (senão null).
+  return { orders: (await gifts.attachGifts(getSql(), rows)).map(ordersLib.adminView), window_hours: 24 };
 } };
 
 const vDate = (v, label) => {
@@ -783,7 +826,7 @@ const vDate = (v, label) => {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v + 'T00:00:00Z'))) bad(`${label}: use o formato AAAA-MM-DD.`);
   return v;
 };
-// Histórico: pedidos com mais de 24 h. Filtros: from/to (datas no horário de São Paulo), f (status), s (busca), page, page_size.
+// Histórico: pedidos com mais de 24 h (agendado: 24 h depois da data marcada). Filtros: from/to (datas no horário de São Paulo), f (status), s (busca), page, page_size.
 A.order_history = { m: 'GET', fn: async ({ query }) => {
   const from = vDate(query.get('from'), 'Data inicial'), to = vDate(query.get('to'), 'Data final');
   const f = String(query.get('f') || '');
@@ -794,26 +837,29 @@ A.order_history = { m: 'GET', fn: async ({ query }) => {
   await ordersLib.sweepOrders(getSql());
   const rows = await q(
     `select ${ordersLib.ADMIN_COLUMNS}, count(*) over ()::int as total_rows from orders
-      where created_at <= now() - interval '24 hours'
+      where created_at <= now() - interval '24 hours' and (scheduled_for is null or scheduled_for <= now() - interval '24 hours')
         and ($1::date is null or created_at >= ($1::date)::timestamp at time zone 'America/Sao_Paulo')
         and ($2::date is null or created_at < (($2::date + 1))::timestamp at time zone 'America/Sao_Paulo')
         and ($3::text[] is null or fulfillment_status = any($3::text[]))
         and ($4::boolean = false or payment_status = 'approved')
         and ($5::text = '' or strpos(lower(code), $5) > 0 or strpos(lower(coalesce(public_code, '')), $5) > 0 or strpos(lower(customer_name), $5) > 0)
+        and ($8::boolean = false or scheduled_for is not null)
       order by created_at desc, id desc limit $6 offset $7`,
-    [from, to, status, f === 'paid', search, pageSize, (page - 1) * pageSize]);
+    [from, to, status, f === 'paid', search, pageSize, (page - 1) * pageSize, f === 'scheduled']);
   let total = rows.length ? rows[0].total_rows : 0;
   if (!rows.length && page > 1) { // página além do fim: o total real ainda precisa ser informado
     total = (await q(
-      `select count(*)::int as n from orders where created_at <= now() - interval '24 hours'
+      `select count(*)::int as n from orders where created_at <= now() - interval '24 hours' and (scheduled_for is null or scheduled_for <= now() - interval '24 hours')
         and ($1::date is null or created_at >= ($1::date)::timestamp at time zone 'America/Sao_Paulo')
         and ($2::date is null or created_at < (($2::date + 1))::timestamp at time zone 'America/Sao_Paulo')
         and ($3::text[] is null or fulfillment_status = any($3::text[]))
         and ($4::boolean = false or payment_status = 'approved')
-        and ($5::text = '' or strpos(lower(code), $5) > 0 or strpos(lower(coalesce(public_code, '')), $5) > 0 or strpos(lower(customer_name), $5) > 0)`,
-      [from, to, status, f === 'paid', search]))[0].n;
+        and ($5::text = '' or strpos(lower(code), $5) > 0 or strpos(lower(coalesce(public_code, '')), $5) > 0 or strpos(lower(customer_name), $5) > 0)
+        and ($6::boolean = false or scheduled_for is not null)`,
+      [from, to, status, f === 'paid', search, f === 'scheduled']))[0].n;
   }
-  return { orders: rows.map(({ total_rows, ...r }) => ordersLib.adminView(r)), page, page_size: pageSize, total, total_pages: Math.max(1, Math.ceil(total / pageSize)) };
+  const withGifts = await gifts.attachGifts(getSql(), rows.map(({ total_rows, ...r }) => r));
+  return { orders: withGifts.map(ordersLib.adminView), page, page_size: pageSize, total, total_pages: Math.max(1, Math.ceil(total / pageSize)) };
 } };
 
 // Status: new -> accepted -> preparing -> ready -> awaiting_delivery -> completed (+ cancelled). Só avança; cancelar vale até concluir.
@@ -823,8 +869,18 @@ A.order_status = { m: 'POST', fn: async ({ body, user }) => {
   if (status === 'delivered') status = 'completed';
   const reason = body.reason === undefined || body.reason === null || body.reason === '' ? null : vStr(body.reason, 1, 200, 'Motivo');
   const row = await ordersLib.changeStatus(getSql(), { id, to: status, reason });
-  if (status === 'cancelled' && row.changed) await loyalty.releaseReserve(getSql(), id, 'pedido cancelado'); // devolve os pontos reservados (se não foi pago)
-  if (row.changed) await audit(user.username, 'pedido_status', `${row.public_code || row.code} -> ${status}`);
+  let reversal = false;
+  if (status === 'cancelled' && row.changed) {
+    const sql = getSql();
+    await loyalty.releaseReserve(sql, id, 'pedido cancelado'); // devolve os pontos reservados (se não foi pago)
+    // A-10 (v4): pedido já pago e cancelado no painel: tira os pontos ganhos e devolve os gastos (prêmio/resgate). O dinheiro
+    // continua sendo estornado à mão no Mercado Pago. O uso do cupom volta a ficar livre (pago ou não).
+    const [pay] = await sql.query('select payment_status from orders where id = $1', [id]);
+    if (pay && pay.payment_status === 'approved') reversal = await loyalty.reverseOrder(sql, id, 'pedido pago cancelado no painel');
+    await coupons.releaseForOrder(sql, id);
+    await payments.clearPix(sql, id); // U-01: pedido cancelado não mostra mais o Pix
+  }
+  if (row.changed) await audit(user.username, 'pedido_status', `${row.public_code || row.code} -> ${status}${reversal ? ' (pontos estornados)' : ''}`);
   return { ok: true, order: { id: row.id, code: row.code, public_code: row.public_code, fulfillment_status: row.fulfillment_status, fulfillment_label: ordersLib.statusLabel(row.fulfillment_status, row.delivery_method) } };
 } };
 
@@ -1140,55 +1196,25 @@ A.points_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   return { ok: true, points: await pointsInfo() };
 } };
 
-// ---------- Sinônimos de ingredientes e pausa em lote com prévia (O8) ----------
-const SYN_SPEC = { canonical: v => vStr(v, 2, 60, 'Nome principal'), synonym: v => vStr(v, 2, 60, 'Sinônimo') };
+// ---------- Pausa em lote por ingrediente com prévia (O8) ----------
+// v4 N4: os sinônimos acabaram (ações synonyms, synonym_save e synonym_delete removidas). A tabela ingredient_synonyms
+// continua no banco, sem uso. A busca normaliza (minúsculas, sem acento, singular) e procura o termo DENTRO do texto,
+// a partir do começo de uma palavra: "oreo" acha "Biscoito Oreo", "morangos" acha "Morango", "choco" acha "Chocolate".
+// "ovo" não acha "novo" (o termo precisa começar uma palavra). A prévia continua: nada muda sem confirmação.
+const stemText = text => words(text).map(stem).join(' ');
 
-A.synonyms = { m: 'GET', fn: async () => ({ synonyms: await q('select id, canonical, synonym from ingredient_synonyms order by canonical_norm, synonym_norm') }) };
-
-A.synonym_save = { m: 'POST', fn: async ({ body, user }) => {
-  const { out, missing } = pickFields(body, SYN_SPEC, ['canonical', 'synonym']);
-  if (missing.length) bad('Informe o nome principal e o sinônimo.');
-  const cn = norm(out.canonical), sn = norm(out.synonym);
-  if (cn.length < 2 || sn.length < 2) bad('Use letras ou números no nome e no sinônimo.');
-  if (cn === sn) bad('O sinônimo precisa ser diferente do nome principal.');
-  let row;
-  if (body.id === undefined || body.id === null) {
-    row = (await q(`insert into ingredient_synonyms (canonical, synonym, canonical_norm, synonym_norm) values ($1, $2, $3, $4) returning id, canonical, synonym`, [out.canonical, out.synonym, cn, sn]))[0];
-  } else {
-    row = own(await q(`update ingredient_synonyms set canonical = $2, synonym = $3, canonical_norm = $4, synonym_norm = $5 where id = $1 returning id, canonical, synonym`,
-      [vId(body.id), out.canonical, out.synonym, cn, sn]), 'Sinônimo não encontrado.');
-  }
-  await audit(user.username, 'sinonimo_salvo', `${row.canonical} = ${row.synonym}`);
-  return { ok: true, synonym: row };
-} };
-
-A.synonym_delete = { m: 'POST', fn: async ({ body, user }) => {
-  const row = own(await q('delete from ingredient_synonyms where id = $1 returning id, canonical, synonym', [vId(body.id)]), 'Sinônimo não encontrado.');
-  await audit(user.username, 'sinonimo_excluido', `${row.canonical} = ${row.synonym}`);
-  return { ok: true };
-} };
-
-// Termos de busca = o digitado + os sinônimos (um nível de fechamento: oreo <-> biscoito oreo).
-function expandTerms(term, synRows) {
-  const set = new Set([norm(term)]);
-  for (let changed = true; changed;) {
-    changed = false;
-    for (const r of synRows) {
-      if ((set.has(r.canonical_norm) || set.has(r.synonym_norm)) && !(set.has(r.canonical_norm) && set.has(r.synonym_norm))) {
-        set.add(r.canonical_norm); set.add(r.synonym_norm); changed = true;
-      }
-    }
-  }
-  return [...set].filter(Boolean);
+// Termos de busca: só o digitado, normalizado (mantém o formato de lista usado pela prévia e pelos lotes).
+function expandTerms(term) {
+  const t = norm(term);
+  return t ? [t] : [];
 }
-// Casamento por palavras inteiras (com plural tolerado): o termo precisa aparecer em sequência no texto.
+// O termo (normalizado, singular) aparece no texto a partir do começo de uma palavra.
 function textMatches(text, termList) {
-  const tokens = words(text).map(stem);
-  if (!tokens.length) return null;
+  const hay = ' ' + stemText(text);
+  if (hay.length < 2) return null;
   for (const term of termList) {
-    const t = words(term).map(stem);
-    if (!t.length) continue;
-    for (let i = 0; i + t.length <= tokens.length; i++) if (t.every((w, j) => tokens[i + j] === w)) return term;
+    const t = stemText(term);
+    if (t && hay.includes(' ' + t)) return term;
   }
   return null;
 }
@@ -1215,13 +1241,12 @@ function searchByTerms(termList, { products, complements, links }) {
 A.pause_preview = { m: 'POST', fn: async ({ body }) => {
   const term = vStr(body.term, 2, 60, 'Ingrediente');
   if (norm(term).length < 2) bad('Escreva o nome do ingrediente.');
-  const [syn, products, complements, links] = await Promise.all([
-    q('select canonical_norm, synonym_norm from ingredient_synonyms'),
+  const [products, complements, links] = await Promise.all([
     q('select id, name, description, active, paused, exists (select 1 from product_groups g where g.product_id = products.id) as builder from products order by name'),
     q('select id, name, active from complements order by name'),
     q(`select pc.product_id, pc.complement_id, pc.paused, p.name as product_name, g.label as group_label from product_complements pc join products p on p.id = pc.product_id left join product_groups g on g.id = pc.group_id`)
   ]);
-  const terms = expandTerms(term, syn);
+  const terms = expandTerms(term);
   const found = searchByTerms(terms, { products, complements, links });
   const linkCount = found.complements.reduce((n, c) => n + c.links.length, 0);
   return { ok: true, term, terms, ...found, summary: { products: found.products.length, complements: found.complements.length, links: linkCount } };
@@ -1299,10 +1324,9 @@ A.pause_apply = { m: 'POST', fn: async ({ body, user }) => {
 // ---------- Reativar pausa em lote por ingrediente (e desfazer) ----------
 const stemKey = text => words(text).map(stem).join(' ');
 
-// Lotes abertos do termo (com sinônimos; plural tolerado).
+// Lotes abertos do termo (plural tolerado). v4 N4: sem sinônimos.
 async function openBatchesFor(term) {
-  const syn = await q('select canonical_norm, synonym_norm from ingredient_synonyms');
-  const terms = expandTerms(term, syn);
+  const terms = expandTerms(term);
   const keys = new Set(terms.map(stemKey).filter(Boolean));
   const open = await q('select id, term, term_norm, created_by, created_at from ingredient_pause_batches where released_at is null order by id');
   return { terms, batches: open.filter(b => keys.has(stemKey(b.term_norm))) };
@@ -1417,6 +1441,157 @@ A.pause_batches = { m: 'GET', fn: async ({ query }) => {
   return { batches: rows };
 } };
 
+// ---------- v4 O-01: monitoramento ----------
+// Qualquer usuário logado (o painel mostra aviso quando houver 401 recentes). Nunca devolve valor de variável.
+A.health_detail = { m: 'GET', fn: async () => {
+  const r = await monitor.healthChecks(getSql);
+  return { health: { ok: r.ok, checks: r.checks, ...(r.summary || { last_accepted_at: null, last_unauthorized_at: null, unauthorized_24h: null, accepted_24h: null }) } };
+} };
+
+// ---------- v4 U-06: Web Push de pedido pago (PWA do painel) ----------
+// Qualquer usuário logado pode ativar no próprio aparelho. Sem chaves VAPID no servidor: enabled false, nada quebra.
+A.push_config = { m: 'GET', fn: async ({ user }) => ({
+  push: { enabled: push.enabled(), public_key: push.publicKey(), devices: push.enabled() ? await push.countFor(getSql(), user.username) : 0 }
+}) };
+A.push_subscribe = { m: 'POST', fn: async ({ req, body, user }) => {
+  const r = await push.subscribe(getSql(), user.username, body.subscription, req.headers['user-agent']);
+  await audit(user.username, 'push_ativado', `aparelho #${r.id}`);
+  return { ok: true, device: r, devices: await push.countFor(getSql(), user.username) };
+} };
+A.push_unsubscribe = { m: 'POST', fn: async ({ body, user }) => {
+  const r = await push.unsubscribe(getSql(), user, body.endpoint);
+  if (r.removed) await audit(user.username, 'push_desativado', `${r.removed} aparelho(s)`);
+  return { ok: true, removed: r.removed, devices: await push.countFor(getSql(), user.username) };
+} };
+A.push_test = { m: 'POST', fn: async ({ user }) => {
+  const r = await push.sendTest(getSql(), user.username);
+  return { ok: true, ...r };
+} };
+
+// ---------- v4 N3: Clube de pontos por itens ----------
+A.club_rewards = { m: 'GET', fn: async () => ({ rewards: await club.adminList(getSql()), rules: await loyalty.getRules(getSql()) }) };
+A.club_reward_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const reward = await club.save(getSql(), body);
+  await audit(user.username, 'clube_premio_salvo', `#${reward.id} ${reward.product_name}${reward.size_name ? ' ' + reward.size_name : ''}: ${reward.points_cost} pts, ${reward.active ? 'ligado' : 'desligado'}`);
+  return { ok: true, reward };
+} };
+A.club_reward_toggle = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const reward = await club.toggle(getSql(), body);
+  await audit(user.username, 'clube_premio_' + (reward.active ? 'ligado' : 'desligado'), `#${reward.id} ${reward.product_name}`);
+  return { ok: true, reward };
+} };
+
+// ---------- v4 N6: cupons e disparo por WhatsApp (só admin) ----------
+A.coupons = { m: 'GET', role: 'admin', fn: async () => ({ coupons: await coupons.adminList(getSql()) }) };
+A.coupon_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const coupon = await coupons.save(getSql(), body, user.username);
+  await audit(user.username, 'cupom_salvo', `${coupon.code}: ${coupon.kind === 'percent' ? coupon.value + '%' : coupon.value + ' centavos'}, ${coupon.active ? 'ligado' : 'desligado'}`);
+  return { ok: true, coupon };
+} };
+A.coupon_toggle = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const coupon = await coupons.toggle(getSql(), body);
+  await audit(user.username, 'cupom_' + (coupon.active ? 'ligado' : 'desligado'), coupon.code);
+  return { ok: true, coupon };
+} };
+A.coupon_audience = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const r = await coupons.audiencePreview(getSql(), body);
+  await audit(user.username, 'cupom_publico_consultado', `cupom #${body.coupon_id}: ${JSON.stringify(r.audience)} -> ${r.count} clientes`);
+  return { ok: true, ...r };
+} };
+A.coupon_campaign_create = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const r = await coupons.campaignCreate(getSql(), body, user.username);
+  await audit(user.username, 'cupom_campanha_criada', `campanha #${r.campaign_id} (cupom #${body.coupon_id}): ${JSON.stringify(r.audience)} -> ${r.count} clientes`);
+  return { ok: true, ...r };
+} };
+A.coupon_campaign = { m: 'GET', role: 'admin', fn: async ({ query, user }) => {
+  const id = query.get('id') ? Number.parseInt(query.get('id'), 10) : null;
+  const couponId = query.get('coupon_id') ? Number.parseInt(query.get('coupon_id'), 10) : null;
+  const r = await coupons.campaignGet(getSql(), { id: Number.isNaN(id) ? -1 : id, couponId: Number.isNaN(couponId) ? -1 : couponId });
+  if (r.campaign) await audit(user.username, 'cupom_campanha_aberta', `campanha #${r.campaign.id}: ${r.targets.length} clientes`);
+  return { ok: true, ...r };
+} };
+A.coupon_target_sent = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const r = await coupons.targetSent(getSql(), body, user.username);
+  await audit(user.username, 'cupom_envio_marcado', `campanha #${body.campaign_id}, cliente #${body.customer_id}: ${r.sent_at ? 'enviado' : 'desmarcado'}`);
+  return { ok: true, ...r };
+} };
+
+// ---------- v4 N8: avaliação no Google e mimo ----------
+const maskKey = k => (k ? '*'.repeat(Math.max(0, String(k).length - 4)) + String(k).slice(-4) : '');
+// Por pedido (order_id): qualquer usuário logado. Por telefone (phone, tela de relatório de clientes): só admin.
+A.gift_grant = { m: 'POST', fn: async ({ body, user }) => {
+  const byOrder = body.order_id !== undefined && body.order_id !== null;
+  if (!byOrder && user.role !== 'admin') throw new HttpError(403, 'Sem permissão para esta ação.');
+  const r = await gifts.grant(getSql(), { orderId: byOrder ? body.order_id : null, phone: byOrder ? null : body.phone, by: user.username });
+  await audit(user.username, 'mimo_concedido', `mimo #${r.id} ${byOrder ? 'pelo pedido #' + body.order_id : 'pelo telefone ' + maskKey(r.phone_key)}`);
+  return { ok: true, gift: { id: r.id, label: r.label, granted_at: r.granted_at } };
+} };
+A.gift_cancel = { m: 'POST', fn: async ({ body, user }) => {
+  const r = await gifts.cancel(getSql(), body.id, user.username);
+  await audit(user.username, 'mimo_cancelado', `mimo #${r.id}`);
+  return { ok: true, gift: { id: r.id } };
+} };
+A.review_gifts = { m: 'GET', role: 'admin', fn: async () => ({ gifts: await gifts.listPending(getSql()) }) };
+A.review_settings = { m: 'GET', fn: async () => ({ review: await gifts.reviewSettings(getSql()) }) };
+A.review_settings_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const review = await gifts.saveReviewSettings(getSql(), body);
+  await audit(user.username, 'avaliacao_ajustes_salvos', `avaliação: ${review.google_review_url ? (review.review_url_is_default ? 'padrão' : 'personalizado') : 'desligado'}, instagram: ${review.instagram_url ? 'sim' : 'não'}`);
+  return { ok: true, review };
+} };
+
+// ---------- v4 N10/N11: ajustes de pedido (agendamento, selo "Mais pedido" e prazo de entrega) ----------
+const orderSettingsView = (sc, sh) => ({
+  scheduling_enabled: sc.enabled, scheduling_min_lead_min: sc.min_lead_min, scheduling_max_days: sc.max_days,
+  scheduling_slot_capacity: sc.slot_capacity, best_seller_enabled: sh.best_seller_enabled,
+  delivery_eta_min: sh.delivery_eta_min, delivery_eta_max: sh.delivery_eta_max,
+  limits: { scheduling_min_lead_min: scheduling.LIMITS.min_lead_min, scheduling_max_days: scheduling.LIMITS.max_days,
+    scheduling_slot_capacity: scheduling.LIMITS.slot_capacity, delivery_eta: showcase.ETA_RANGE }
+});
+A.order_settings = { m: 'GET', fn: async () => {
+  const sql = getSql();
+  const [sc, sh] = await Promise.all([scheduling.getConfig(sql), showcase.getConfig(sql)]);
+  return { settings: orderSettingsView(sc, sh) };
+} };
+// Só os campos enviados mudam. Tudo validado antes de gravar (nada é gravado se um campo estiver errado).
+A.order_settings_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const sql = getSql();
+  const sh0 = await showcase.getConfig(sql);
+  const scPart = scheduling.validateConfig(body), shPart = showcase.validateConfig(body, sh0);
+  const statements = [...scheduling.saveStatements(sql, scPart), ...showcase.saveStatements(sql, shPart)];
+  if (!statements.length) bad('Nada para alterar.');
+  await sql.transaction(statements);
+  const [sc, sh] = await Promise.all([scheduling.getConfig(sql), showcase.getConfig(sql)]);
+  const view = orderSettingsView(sc, sh);
+  const changed = [...Object.keys(scPart).map(k => scheduling.KEYS[k]), ...Object.keys(shPart)];
+  await audit(user.username, 'ajustes_pedido_salvos', changed.map(k => `${k}=${view[k]}`).join(', ').slice(0, 300));
+  return { ok: true, settings: view };
+} };
+
+// ---------- v4 N5: relatórios (só admin; S-04: toda consulta e exportação vai para a auditoria, sem o termo buscado) ----------
+const qp = (query, k) => (query.get(k) === null ? undefined : query.get(k));
+A.report_customers = { m: 'GET', role: 'admin', fn: async ({ query, user }) => {
+  const r = await reports.customers(getSql(), { s: qp(query, 's'), sort: qp(query, 'sort'), dir: qp(query, 'dir'), page: qp(query, 'page') });
+  await audit(user.username, 'relatorio_consulta', `clientes: ordem ${r.sort} ${r.dir}, página ${r.page}, busca ${r.search ? 'sim' : 'não'}, ${r.customers.length} linhas`);
+  const { search, ...rest } = r;
+  return { report: { ...rest, search: search || '' } };
+} };
+A.report_sales = { m: 'GET', role: 'admin', fn: async ({ query, user }) => {
+  const r = await reports.sales(getSql(), { from: qp(query, 'from'), to: qp(query, 'to') });
+  await audit(user.username, 'relatorio_consulta', `vendas: ${r.from} a ${r.to}, ${r.by_day.length} dias com venda, ${r.paid_orders} pedidos pagos`);
+  return { report: r };
+} };
+A.report_customers_csv = { m: 'GET', role: 'admin', fn: async ({ query, user }) => {
+  const pii = query.get('pii') === '1';
+  const r = await reports.customersCsv(getSql(), { s: qp(query, 's'), sort: qp(query, 'sort'), dir: qp(query, 'dir') }, { pii });
+  await audit(user.username, 'relatorio_csv', `clientes: ordem ${r.filters.sort} ${r.filters.dir}, busca ${r.filters.search ? 'sim' : 'não'}, telefone ${pii ? 'completo' : 'mascarado'}, ${r.rows} linhas`);
+  return { __csv: { filename: `clientes-${reports.todaySP()}.csv`, body: r.csv } };
+} };
+A.report_sales_csv = { m: 'GET', role: 'admin', fn: async ({ query, user }) => {
+  const r = await reports.salesCsv(getSql(), { from: qp(query, 'from'), to: qp(query, 'to') });
+  await audit(user.username, 'relatorio_csv', `vendas: ${r.from} a ${r.to}, ${r.rows} linhas`);
+  return { __csv: { filename: `vendas-${r.from}-a-${r.to}.csv`, body: r.csv } };
+} };
+
 // ---------- Roteador ----------
 function readBody(req) {
   let b = req.body;
@@ -1464,11 +1639,18 @@ async function handler(req, res) {
     if (action.role && user.role !== action.role) return send(res, 403, { error: 'Sem permissão para esta ação.' });
 
     const result = await action.fn({ req, res, body, query, user });
+    if (result && result.__csv) { // N5: download do CSV (não é JSON)
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${String(result.__csv.filename).replace(/[^A-Za-z0-9._-]/g, '_')}"`);
+      return res.end(result.__csv.body);
+    }
     const stillNeeds = user.needsSecurity && name !== 'security_setup';
     return send(res, 200, { ...result, user: { username: user.username, role: user.role, weakPassword: name === 'password_change' ? false : user.weak, needsSecurity: stillNeeds } });
   } catch (error) {
     if (error instanceof HttpError) return send(res, error.status, { error: error.message });
-    if ([auth.AuthError, ordersLib.OrderError, storeHours.StoreError, shipping.ShippingError, loyalty.LoyaltyError].some(C => error instanceof C)) {
+    if ([auth.AuthError, ordersLib.OrderError, storeHours.StoreError, shipping.ShippingError, loyalty.LoyaltyError,
+      club.ClubError, coupons.CouponError, gifts.GiftError, reports.ReportError, push.PushError, scheduling.ScheduleError, showcase.ShowcaseError].some(C => error instanceof C)) {
       return send(res, error.status, { error: error.message, ...(error.code ? { code: error.code } : {}) });
     }
     if (error && error.code === '23505') return send(res, 400, { error: 'Já existe um item com esse nome ou chave.' });
@@ -1481,5 +1663,6 @@ async function handler(req, res) {
 module.exports = handler;
 module.exports._internal = {
   hashPassword, verifyPassword, evaluateLock, parseCommand, norm, detectImage, decodeImage, sameOrigin, isJsonType,
-  vId, vInt, vStr, vBool, vCents, vEnum, vUsername, vPassword, vKey, HttpError, MSG_ACTIVE_NEEDS_PRICE, FILTER_STATUSES, DEFAULT_SETTINGS, SESSION_COOKIE, expandTerms, textMatches, searchByTerms
+  vId, vInt, vStr, vBool, vCents, vEnum, vUsername, vPassword, vKey, HttpError, MSG_ACTIVE_NEEDS_PRICE, FILTER_STATUSES, DEFAULT_SETTINGS, SESSION_COOKIE, expandTerms, textMatches, searchByTerms,
+  USER_DAY_MAX, USER_SPREAD_MAX, weakBlocked, MIN_PASSWORD_PROD, A
 };

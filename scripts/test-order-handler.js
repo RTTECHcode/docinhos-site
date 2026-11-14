@@ -401,49 +401,25 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
     assert.equal(net.calls.filter(c => /nominatim|router\.project-osrm/.test(c.url)).length, 0, 'segunda consulta deveria vir do cache');
   });
 
-  // ===== O10/O11: pontos =====
-  await test('O11: sem login não resgata pontos (401); inválidos -> 400; saldo insuficiente -> 409', async () => {
-    const anon = await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 100 });
-    assert.equal(anon.status, 401);
-    assert.equal(anon.body.code, 'login_required');
+  // ===== O10/O11: pontos (v4 N3: o desconto em reais por pontos acabou; os prêmios do Clube estão em test-v4-pedido.js) =====
+  await test('v4 N3: use_points em qualquer forma = 400 points_discount_ended, com ou sem login; nada reservado', async () => {
     const c = await mkCustomer('saldo');
-    for (const bad of [-100, 1.5, '100', 150, 50]) {
-      const r = await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: bad }, c.cookie);
-      assert.equal(r.status, 400, `use_points=${JSON.stringify(bad)}: ${JSON.stringify(r.body)}`);
-    }
-    const r = await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 100 }, c.cookie);
-    assert.equal(r.status, 409);
-    assert.equal(r.body.code, 'insufficient_points');
-    assert.equal(await balanceOf(c.id), 0);
-  });
-
-  await test('O11: 100 pontos = R$ 10 em blocos; desconto nunca passa do subtotal; mínimo cobrado R$ 1,00', async () => {
-    const c = await mkCustomer('desconto');
     await loyalty.adjust(sql, { customerId: c.id, points: 1000, note: 'teste' });
-    // subtotal R$ 10: 100 pontos zeraria o total (< R$ 1,00) e 200 pontos passaria do subtotal
-    const tooBig = await call({ ...fresh(), use_points: 200 }, c.cookie);
-    assert.equal(tooBig.status, 400);
-    assert.equal(tooBig.body.code, 'discount_too_big');
-    const zero = await call({ ...fresh(), use_points: 100 }, c.cookie);
-    assert.equal(zero.status, 400);
-    assert.match(zero.body.error, /R\$ 1,00/);
-    // subtotal R$ 30 com 200 pontos: desconto R$ 20, total R$ 10
-    const ok = await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 200 }, c.cookie);
-    assert.equal(ok.status, 201, JSON.stringify(ok.body));
-    assert.equal(ok.body.subtotal_cents, 3000);
-    assert.equal(ok.body.discount_cents, 2000);
-    assert.equal(ok.body.points_redeemed, 200);
-    assert.equal(ok.body.total_cents, 1000);
-    const row = await orderRow(ok.body.id);
-    assert.equal(row.discount_cents, 2000); assert.equal(row.points_redeemed, 200); assert.equal(row.customer_id, c.id);
-    assert.equal(await balanceOf(c.id), 800, 'reserva já saiu do saldo');
-    const [led] = await sql.query(`select kind, points from loyalty_ledger where order_id = $1`, [ok.body.id]);
-    assert.deepEqual({ ...led }, { kind: 'redeem_reserve', points: -200 });
+    for (const [v, cookie] of [[100, null], [100, c.cookie], [200, c.cookie], [-100, c.cookie], [1.5, c.cookie], ['100', c.cookie], [true, c.cookie]]) {
+      const r = await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: v }, cookie);
+      assert.equal(r.status, 400, `use_points=${JSON.stringify(v)}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.code, 'points_discount_ended');
+    }
+    for (const v of [0, false, null]) {
+      const r = await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: v }, c.cookie);
+      assert.equal(r.status, 201, `use_points=${JSON.stringify(v)} é aceito (nada a descontar)`);
+      assert.equal(r.body.discount_cents, 0); assert.equal(r.body.points_redeemed, 0);
+    }
+    assert.equal(await balanceOf(c.id), 1000, 'nada reservado');
   });
 
-  await test('O11: Mercado Pago recebe exatamente o total (desconto + frete) na preference e no Pix', async () => {
+  await test('O11: Mercado Pago recebe exatamente o total (frete incluído) na preference e no Pix', async () => {
     const c = await mkCustomer('mp');
-    await loyalty.adjust(sql, { customerId: c.id, points: 300, note: 'teste' });
     const real = globalThis.fetch; const sent = [];
     process.env.MERCADOPAGO_ACCESS_TOKEN = 'token-falso-de-teste';
     globalThis.fetch = async (url, init) => {
@@ -456,13 +432,13 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
       return real(url, init);
     };
     try {
-      const card = await call({ ...delivery('06000001'), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 100, payment_choice: 'card' }, c.cookie);
+      const card = await call({ ...delivery('06000001'), items: [{ product_id: prodBig.id, qty: 1 }], payment_choice: 'card' }, c.cookie);
       assert.equal(card.status, 201, JSON.stringify(card.body));
-      assert.equal(card.body.total_cents, 3000 - 1000 + 600);
+      assert.equal(card.body.total_cents, 3000 + 600);
       const pref = sent.find(s => s.url.includes('/checkout/preferences')).body;
       const sum = pref.items.reduce((a, i) => a + Math.round(i.unit_price * 100) * i.quantity, 0);
       assert.equal(sum, card.body.total_cents);
-      const pix = await call({ ...delivery('06000001'), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 100, payment_choice: 'pix' }, c.cookie);
+      const pix = await call({ ...delivery('06000001'), items: [{ product_id: prodBig.id, qty: 1 }], payment_choice: 'pix' }, c.cookie);
       assert.equal(pix.status, 201, JSON.stringify(pix.body));
       const pixBody = sent.find(s => s.url.endsWith('/v1/payments')).body;
       assert.equal(Math.round(pixBody.transaction_amount * 100), pix.body.total_cents);
@@ -470,23 +446,20 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
     } finally { globalThis.fetch = real; delete process.env.MERCADOPAGO_ACCESS_TOKEN; }
   });
 
-  await test('O10/O11: após recuperar a conta, pontos ficam travados por 48 h (423) e o pedido sem pontos segue livre', async () => {
+  await test('O10/O11: após recuperar a conta, pontos ficam travados por 48 h e o pedido sem pontos segue livre', async () => {
     const c = await mkCustomer('trava');
     await loyalty.adjust(sql, { customerId: c.id, points: 500, note: 'teste' });
     await customerLib.recover(sql, { phone: c.phone, answer: '  DONA   maría ', new_password: 'outra-senha-9' }, { ip: '198.51.100.7' });
     const [row] = await sql.query('select points_locked_until from customers where id = $1', [c.id]);
     const hours = (new Date(row.points_locked_until) - Date.now()) / 3600e3;
     assert.ok(hours > 47.9 && hours <= 48.01, 'trava de ' + hours + ' h');
+    assert.ok((await loyalty.getBalance(sql, c.id)).locked_until, 'saldo informa a trava (o Clube recusa com 423)');
     const re = await customerLib.login(sql, { phone: c.phone, password: 'outra-senha-9' }, { ip: '198.51.100.7' });
     const cookie = `${customerLib.COOKIE_NAME}=${re.token}`;
-    const locked = await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 100 }, cookie);
-    assert.equal(locked.status, 423);
-    assert.equal(locked.body.code, 'points_locked');
-    assert.equal(await balanceOf(c.id), 500, 'nada foi reservado');
     assert.equal((await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }] }, cookie)).status, 201);
+    assert.equal(await balanceOf(c.id), 500, 'nada foi reservado');
     await sql.query(`update customers set points_locked_until = now() - interval '1 minute' where id = $1`, [c.id]);
-    const free = await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 100 }, cookie);
-    assert.equal(free.status, 201, JSON.stringify(free.body));
+    assert.equal((await loyalty.getBalance(sql, c.id)).locked_until, null);
   });
 
   await test('O11: crédito só com pagamento aprovado e valor conferido; repetir o webhook não credita de novo', async () => {
@@ -514,62 +487,47 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
     assert.equal(await balanceOf(c.id), 0, 'estorno repetido não reverte de novo');
   });
 
-  await test('O11: pontos ganhos usam subtotal depois do desconto, arredondado para baixo', async () => {
+  await test('O11: pontos ganhos usam o subtotal pago, arredondado para baixo', async () => {
     const c = await mkCustomer('arredonda');
-    await loyalty.adjust(sql, { customerId: c.id, points: 100, note: 'teste' });
-    const o = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }, { product_id: prodOk.id, qty: 1 }], use_points: 100 }, c.cookie)).body; // 4000 - 1000
-    assert.equal(o.total_cents, 3000);
+    const o = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }, { product_id: prodOk.id, qty: 1 }] }, c.cookie)).body;
+    assert.equal(o.total_cents, 4000);
     await payWebhook(o, 'approved');
-    // reserva (-100) confirmada + 30 pontos ganhos
-    assert.equal(await balanceOf(c.id), 30);
-    assert.equal((await sql.query(`select kind from loyalty_ledger where order_id = $1 order by id`, [o.id])).map(r => r.kind).join(','), 'redeem_reserve,redeem_commit,earn');
+    assert.equal(await balanceOf(c.id), 40);
+    assert.equal((await sql.query(`select kind from loyalty_ledger where order_id = $1 order by id`, [o.id])).map(r => r.kind).join(','), 'earn');
   });
 
-  await test('O11: pagamento rejeitado/cancelado devolve a reserva (uma vez só); aprovado depois de liberada é ajustado', async () => {
+  // Pedido antigo (antes da v4) com resgate reservado: a reserva é simulada direto no ledger (o pedido novo não resgata mais).
+  const legacyReserve = (orderId, customerId, points) => sql.query(
+    `insert into loyalty_ledger (customer_id, order_id, kind, points, note) values ($1, $2, 'redeem_reserve', $3, 'teste reserva antiga')`, [customerId, orderId, -points]);
+  await test('O11 (pedido antigo): pagamento rejeitado/cancelado devolve a reserva uma vez só', async () => {
     const c = await mkCustomer('rejeitado');
     await loyalty.adjust(sql, { customerId: c.id, points: 200, note: 'teste' });
-    const o = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 200 }, c.cookie)).body;
+    const o = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }] }, c.cookie)).body;
+    await legacyReserve(o.id, c.id, 200);
     assert.equal(await balanceOf(c.id), 0);
     await payWebhook(o, 'rejected');
     assert.equal(await balanceOf(c.id), 200);
     await payWebhook(o, 'rejected');
     await payWebhook(o, 'cancelled');
     assert.equal(await balanceOf(c.id), 200, 'liberar de novo não devolve em dobro');
-    const o2 = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 200 }, c.cookie)).body;
-    await payWebhook(o2, 'cancelled');
-    assert.equal(await balanceOf(c.id), 200);
-    // Pagamento aprovado chega depois de a reserva ter sido liberada: o resgate é confirmado e o saldo ajustado.
-    await payWebhook(o2, 'approved');
-    assert.equal(await balanceOf(c.id), 200 - 200 + 10, 'gastou 200, ganhou 10 (subtotal 3000 - 2000)');
   });
 
-  await test('O11: reserva sem pagamento há mais de 24 h é liberada ao ler o saldo; cancelar libera a reserva', async () => {
+  await test('O11 (pedido antigo): reserva sem pagamento há mais de 24 h é liberada ao ler o saldo; cancelar libera a reserva', async () => {
     const c = await mkCustomer('vencida');
     await loyalty.adjust(sql, { customerId: c.id, points: 200, note: 'teste' });
-    const o = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 200 }, c.cookie)).body;
+    const o = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }] }, c.cookie)).body;
+    await legacyReserve(o.id, c.id, 200);
     assert.equal(await balanceOf(c.id), 0);
     await sql.query(`update loyalty_ledger set created_at = now() - interval '25 hours' where order_id = $1 and kind = 'redeem_reserve'`, [o.id]);
     assert.equal(await balanceOf(c.id), 200);
     assert.equal(await balanceOf(c.id), 200, 'idempotente');
-    const o2 = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 100 }, c.cookie)).body;
+    const o2 = (await call({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }] }, c.cookie)).body;
+    await legacyReserve(o2.id, c.id, 100);
     assert.equal(await balanceOf(c.id), 100);
-    assert.equal(await loyalty.releaseReserve(sql, o2.id, "pedido cancelado"), true);
+    assert.equal(await loyalty.releaseReserve(sql, o2.id, 'pedido cancelado'), true);
     assert.equal(await balanceOf(c.id), 200);
-    assert.equal(await loyalty.releaseReserve(sql, o2.id, "pedido cancelado"), false);
+    assert.equal(await loyalty.releaseReserve(sql, o2.id, 'pedido cancelado'), false);
     assert.equal(await balanceOf(c.id), 200);
-  });
-
-  await test('O11: dois resgates ao mesmo tempo com saldo para um só: só um passa (reserva atômica)', async () => {
-    const c = await mkCustomer('corrida');
-    await loyalty.adjust(sql, { customerId: c.id, points: 100, note: 'teste' });
-    const body = () => ({ ...fresh(), items: [{ product_id: prodBig.id, qty: 1 }], use_points: 100 });
-    const rs = await Promise.all([call(body(), c.cookie), call(body(), c.cookie), call(body(), c.cookie)]);
-    const ok = rs.filter(r => r.status === 201);
-    assert.equal(ok.length, 1, rs.map(r => r.status).join(','));
-    assert.ok(rs.filter(r => r.status !== 201).every(r => r.status === 409 && r.body.code === 'insufficient_points'));
-    assert.equal(await balanceOf(c.id), 0);
-    const left = await sql.query(`select count(*)::int n from orders where customer_id = $1`, [c.id]);
-    assert.equal(left[0].n, 1, 'pedidos sem reserva são apagados');
   });
 
   // ===== Segurança (F5: A1-05 e A1-12) =====

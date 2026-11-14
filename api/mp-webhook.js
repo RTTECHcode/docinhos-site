@@ -1,5 +1,7 @@
 const crypto = require('node:crypto');
 const payments = require('./_lib/payments');
+const { recordWebhookEvent } = require('./_lib/monitor');
+const getSql = () => require('./_lib/db'); // carregado sob demanda: o parser é testado sem DATABASE_URL
 
 // Extrai ts e v1 do header x-signature ("ts=...,v1=...").
 function parseSignature(header) {
@@ -93,11 +95,15 @@ module.exports = async (req, res) => {
       // Log sem segredo e sem v1: só o motivo e o que identifica o aviso no painel do Mercado Pago.
       console.warn('Webhook do Mercado Pago recusado (401):', problem,
         JSON.stringify({ type, data_id: dataId, request_id: requestId || null, user_agent: req.headers['user-agent'] || null }));
+      // O-01 (v4): todo 401 fica registrado (o /api/health fica vermelho por 24 h e o painel mostra a contagem).
+      await recordWebhookEvent(getSql, 'unauthorized', `${type || 'sem tipo'}: ${problem}`);
       return res.status(401).json({ error: 'Assinatura inválida' });
     }
   } else {
     console.warn('MERCADOPAGO_WEBHOOK_SECRET não definido: assinatura não validada (o pagamento é sempre confirmado via API do Mercado Pago).');
   }
+  // O-01 (v4): aviso aceito (assinatura válida, ou ambiente sem segredo fora da produção).
+  await recordWebhookEvent(getSql, 'accepted', (type || 'sem tipo') + (secret ? '' : ' (sem segredo)'));
 
   // Só o tópico "payment" interessa; os demais recebem 200 para não gerar retentativas.
   if (type !== 'payment' || !/^\d+$/.test(dataId)) return res.status(200).json({ ok: true });
@@ -113,8 +119,7 @@ module.exports = async (req, res) => {
   try {
     const pay = await payments.fetchPayment(token, dataId);
     if (!pay) return res.status(200).json({ ok: true }); // 404 no Mercado Pago
-    const sql = require('./_lib/db'); // carregado aqui para o parser poder ser testado sem DATABASE_URL
-    await payments.syncPayment(sql, pay, { source: 'webhook' });
+    await payments.syncPayment(getSql(), pay, { source: 'webhook' });
     return res.status(200).json({ ok: true });
   } catch (error) {
     if (error instanceof payments.PaymentLookupError) {

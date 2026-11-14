@@ -361,7 +361,7 @@ async function cleanup() {
     const priced = orderApi.priceItems(body.items, await orderApi.loadCatalog(sql, [prod.id]));
     assert.equal(v.body.points, loyalty.earnPoints(priced.subtotal_cents, 0, await loyalty.getRules(sql)));
   });
-  await t('points_preview: adicionais entram no subtotal; regra com 2 pontos por real; use_points abate o desconto (bloco de 100 pontos = R$ 10 por padrão)', async () => {
+  await t('points_preview: adicionais entram no subtotal; regra com 2 pontos por real; v4 N3: use_points é ignorado (sem desconto por pontos)', async () => {
     const p = await cpost('points_preview', { items: [{ product_id: prod.id, qty: 1, extras: [{ id: compOk.id, qty: 2 }] }] });
     assert.deepEqual([p.body.subtotal_cents, p.body.points], [1400, 14]);
     await loyalty.saveRules(sql, { ...loyalty.DEFAULT_RULES, points_per_real: 2 });
@@ -370,8 +370,8 @@ async function cleanup() {
     const rules = await loyalty.getRules(sql);
     const big = { items: [{ product_id: prod.id, qty: 20 }], use_points: rules.block_points }; // R$ 200,00
     const withUse = await cpost('points_preview', big), without = await cpost('points_preview', { items: big.items });
-    assert.ok(withUse.body.points < without.body.points, 'resgatar pontos reduz o que se ganha');
-    assert.equal(withUse.body.points, loyalty.earnPoints(20000, loyalty.discountForPoints(rules.block_points, rules), rules));
+    assert.equal(withUse.body.points, without.body.points, 'v4 N3: use_points não muda a prévia');
+    assert.equal(withUse.body.points, loyalty.earnPoints(20000, 0, rules));
     assert.equal((await cpost('points_preview', { items: big.items, use_points: 'x' })).body.points, without.body.points, 'use_points inválido é ignorado');
   });
   await t('points_preview: programa desligado = 0 pontos, enabled:false; carrinho inválido/vazio/pausado = 400 invalid_items', async () => {

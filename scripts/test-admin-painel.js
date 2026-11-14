@@ -411,20 +411,14 @@ async function cleanup() {
   const comp = (await Q(`insert into complements (name, price_cents, kind, active) values ('ZZ-TESTE Biscoito Oreo', 300, 'additional', true) returning id`))[0];
   await Q('insert into product_complements (product_id, complement_id, max_quantity) values ($1, $2, 1)', [prod.id, comp.id]);
   let synId;
-  await t('sinônimos: sementes existem; salvar, editar, duplicado e inválidos; excluir', async () => {
-    const list = (await get(A, 'synonyms')).json.synonyms;
-    assert.ok(list.some(s => /oreo/i.test(s.canonical) || /oreo/i.test(s.synonym)));
-    assert.ok(list.some(s => /morango/i.test(s.canonical + s.synonym)));
-    const r = await post(A, 'synonym_save', { canonical: 'ZZ-TESTE leite ninho', synonym: 'ZZ-TESTE leite em pó' });
-    assert.equal(r.status, 200); synId = r.json.synonym.id;
-    assert.equal((await post(A, 'synonym_save', { id: synId, canonical: 'ZZ-TESTE leite ninho', synonym: 'ZZ-TESTE ninho' })).json.synonym.synonym, 'ZZ-TESTE ninho');
-    assert.equal((await post(A, 'synonym_save', { canonical: 'ZZ-TESTE leite ninho', synonym: 'ZZ-TESTE ninho' })).status >= 400, true, 'par duplicado');
-    for (const bad of [{ canonical: 'a', synonym: 'bb' }, { canonical: 'oreo', synonym: 'OREO' }, { canonical: 'ÓREO', synonym: 'oreo' }, { canonical: 'abc' }, {}, { canonical: 'x'.repeat(61), synonym: 'abc' }])
-      assert.equal((await post(A, 'synonym_save', bad)).status, 400, JSON.stringify(bad));
-    assert.equal((await post(A, 'synonym_delete', { id: synId })).status, 200);
-    assert.equal((await post(A, 'synonym_delete', { id: synId })).status, 404);
+  // v4 N4: sinônimos removidos. As ações não existem mais (404) e a busca procura o termo dentro do texto.
+  await t('v4 N4: synonyms, synonym_save e synonym_delete foram removidos (404)', async () => {
+    assert.equal((await get(A, 'synonyms')).status, 404);
+    assert.equal((await post(A, 'synonym_save', { canonical: 'ZZ-TESTE a', synonym: 'ZZ-TESTE b' })).status, 404);
+    assert.equal((await post(A, 'synonym_delete', { id: 1 })).status, 404);
+    void synId;
   });
-  await t('prévia: acha por sinônimo, sem acento, no nome, descrição e complemento; NÃO altera nada', async () => {
+  await t('prévia: sem acento, plural, começo de palavra, no nome, descrição e complemento; NÃO altera nada', async () => {
     const before = JSON.stringify([await Q('select id, paused from products order by id'), await Q('select product_id, complement_id, paused from product_complements order by 1,2')]);
     for (const term of ['oreo', 'ÓREO', 'biscoito oreo', 'Biscoito Óreo']) {
       const r = await post(A, 'pause_preview', { term });
@@ -432,8 +426,11 @@ async function cleanup() {
       assert.ok(r.json.products.some(p => p.id === prod.id && p.matched_in === 'descrição'), `${term}: produto pela descrição`);
       const c = r.json.complements.find(x => x.id === comp.id);
       assert.ok(c && c.links.some(l => l.product_id === prod.id && l.paused === false), `${term}: complemento e vínculo`);
-      assert.ok(r.json.terms.includes('oreo') && r.json.terms.includes('biscoito oreo'), 'sinônimo expandido');
+      assert.equal(r.json.terms.length, 1, 'v4 N4: só o termo digitado, sem sinônimos');
     }
+    const pre = await post(A, 'pause_preview', { term: 'ore' });
+    assert.ok(pre.json.complements.some(x => x.id === comp.id), 'v4 N4: "ore" acha "Biscoito Oreo" (começo de palavra)');
+    assert.ok(!(await post(A, 'pause_preview', { term: 'iscoito' })).json.complements.some(x => x.id === comp.id), 'v4 N4: meio de palavra não casa');
     const m = await post(A, 'pause_preview', { term: 'morango' });
     assert.ok(m.json.products.some(p => p.id === prod.id), 'plural "morangos" casa com "morango"');
     assert.equal((await post(A, 'pause_preview', { term: 'ninho' })).json.products.some(p => p.id === prod.id), true, 'nome');
@@ -548,12 +545,11 @@ async function cleanup() {
     assert.equal((await post(A, 'resume_apply', { term: 'zzmorango', confirm: true })).status, 404, 'lote já liberado: nada a fazer');
     assert.deepEqual((await get(A, 'pause_batches')).json.batches.map(b => b.id).filter(id => id === bMor || id === bOre), [bOre], 'só o lote aberto aparece');
   });
-  await t('reativar por sinônimo: "zzbiscoitinho" libera o lote do "zzoreo"; a torta volta (D6: sem restauração de etiqueta)', async () => {
-    assert.equal((await post(A, 'synonym_save', { canonical: 'zzoreo', synonym: 'zzbiscoitinho' })).status, 200);
-    const pv = await post(A, 'resume_preview', { term: 'zzbiscoitinho' });
+  await t('reativar com acento e plural: "ZZÓREOS" libera o lote do "zzoreo"; a torta volta (D6: sem restauração de etiqueta)', async () => {
+    const pv = await post(A, 'resume_preview', { term: 'ZZÓREOS' });
     assert.deepEqual(pv.json.batches.map(b => b.id), [bOre]);
     assert.equal(pv.json.summary.keep_paused, 0);
-    const r = await post(A, 'resume_apply', { term: 'zzbiscoitinho', confirm: true });
+    const r = await post(A, 'resume_apply', { term: 'ZZÓREOS', confirm: true });
     assert.equal(r.status, 200, JSON.stringify(r.json));
     assert.deepEqual([r.json.products_resumed, r.json.links_resumed], [1, 1]);
     assert.equal(await isPaused(lot.torta.id), false);
@@ -667,7 +663,7 @@ async function cleanup() {
     const l = await get(A, 'orders', { s: 'zz-teste auto' });
     assert.equal(l.json.orders[0].fulfillment_status, 'completed');
   });
-  await t('cancelar pedido pago com pontos reservados devolve os pontos; pedido já aprovado não devolve', async () => {
+  await t('cancelar pedido com pontos reservados devolve os pontos; v4 A-10: pedido já aprovado grava reversal (tira o ganho, devolve o gasto)', async () => {
     const cust = (await Q(`insert into customers (name, phone, password_hash, security_question, security_answer_hash) values ('ZZ-TESTE cliente pn', $1, 'x', 'prof_favorito', 'x') returning id`, ['+5511' + '9' + rnd().replace(/\D/g, '').padEnd(8, '1').slice(0, 8)]))[0];
     await loyalty.adjust(sql, { customerId: cust.id, points: 300, note: 'teste' });
     const o = await mkOrder('com pontos', { pay: 'pending', customerId: cust.id });
@@ -681,13 +677,17 @@ async function cleanup() {
     await loyalty.reserve(sql, { customerId: cust.id, orderId: o2.id, points: 100 });
     await Q(`update orders set payment_status = 'approved' where id = $1`, [o2.id]);
     await loyalty.onPaymentStatus(sql, o2.id);
+    const earned = (await Q(`select coalesce(sum(points), 0)::int n from loyalty_ledger where order_id = $1 and kind = 'earn'`, [o2.id]))[0].n;
     const bal = (await loyalty.getBalance(sql, cust.id)).balance;
-    await post(A, 'order_status', { id: o2.id, status: 'cancelled' });
-    assert.equal((await loyalty.getBalance(sql, cust.id)).balance, bal, 'pedido pago: cancelar não devolve os pontos já gastos');
+    assert.equal((await post(A, 'order_status', { id: o2.id, status: 'cancelled' })).status, 200);
+    assert.equal((await loyalty.getBalance(sql, cust.id)).balance, bal - earned + 100, 'A-10: pago cancelado tira o ganho e devolve os 100 gastos');
+    assert.equal((await Q(`select count(*)::int n from loyalty_ledger where order_id = $1 and kind = 'reversal'`, [o2.id]))[0].n, 1);
+    assert.equal((await post(A, 'order_status', { id: o2.id, status: 'cancelled' })).status, 200, 'repetir não estorna de novo');
+    assert.equal((await Q(`select count(*)::int n from loyalty_ledger where order_id = $1 and kind = 'reversal'`, [o2.id]))[0].n, 1);
   });
   await t('endpoints novos exigem sessão; GET/POST trocados -> 405; admin-only continua restrito', async () => {
-    for (const a of ['order_history', 'store_hours', 'store_state', 'shipping_get', 'synonyms', 'security_status']) assert.equal((await get(null, a)).status, 401, a);
-    for (const a of ['product_pause', 'pause_default_label', 'store_hours_save', 'store_close', 'store_reopen', 'shipping_save', 'synonym_save', 'synonym_delete', 'pause_preview', 'pause_apply', 'security_setup', 'recovery_codes_new', 'order_status'])
+    for (const a of ['order_history', 'store_hours', 'store_state', 'shipping_get', 'security_status']) assert.equal((await get(null, a)).status, 401, a);
+    for (const a of ['product_pause', 'pause_default_label', 'store_hours_save', 'store_close', 'store_reopen', 'shipping_save', 'pause_preview', 'pause_apply', 'security_setup', 'recovery_codes_new', 'order_status'])
       assert.equal((await post(null, a, {})).status, 401, a);
     assert.equal((await post(A, 'store_hours', {})).status, 405);
     assert.equal((await get(A, 'product_pause')).status, 405);
