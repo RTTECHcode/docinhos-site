@@ -885,3 +885,9 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
   .topbar { padding-inline: 8px; gap: 6px; }
 }
 @media (min-width: 420px) { .topbar-btn.points .pts-word { display: inline; } .topbar-btn.account .acc-name { max-width: 14ch; } }
+
+/* v4 A5 / P-03 (CLS): reserva o espaço antes de o cardápio chegar.
+   A faixa de categorias já nasce com a altura final (8 + 44 do chip + 10 + 1 da borda)
+   e a área do cardápio ocupa ao menos uma tela, para o rodapé não aparecer e depois "pular". */
+.categorias { min-height: 63px; }
+#cardapio { min-height: 100vh; min-height: 100svh; }
