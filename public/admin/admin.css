@@ -423,3 +423,9 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 /* Agendados (N10) */
 .ord-sched-list { display: grid; gap: 10px; }
 @media (min-width: 900px) { .ord-sched-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* Avisos (U-06) e webhook (O-01) */
+.ord-tools { gap: 8px; align-items: center; margin-bottom: 10px; }
+.ord-tools .search { flex: 1; min-width: 0; margin: 0; }
+.snd-btn { flex: none; white-space: nowrap; }
+.snd-btn.snd-off { border-color: var(--brand); color: var(--brand-deep); }
+.wh-warn { margin: 10px auto 0; max-width: min(1100px, calc(100% - 24px)); }

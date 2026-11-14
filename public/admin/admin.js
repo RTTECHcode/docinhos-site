@@ -307,6 +307,7 @@
       view.replaceChildren(
         el('div', { class: 'card' }, el('div', { class: 'row between' }, el('div', {}, el('strong', { text: u.username }), el('p', { class: 'muted small', text: u.role === 'admin' ? 'Administrador' : 'Equipe' })),
           el('button', { class: 'btn', type: 'button', text: 'Sair', on: { click: logout } }))),
+        DG.alerts ? el('h2', { class: 'section-title', text: 'Avisos neste aparelho' }) : null, DG.alerts ? DG.alerts.card() : null,
         el('h2', { class: 'section-title', text: 'Trocar senha' }), passwordForm(),
         u.role === 'admin' ? el('div', { id: 'users-box' }) : null,
         el('h2', { class: 'section-title', text: 'Atividade recente' }), el('div', { id: 'audit-box', class: 'card' }, DG.loading()));

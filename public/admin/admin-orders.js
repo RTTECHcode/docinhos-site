@@ -47,6 +47,8 @@
     if (seq !== st.reqSeq || ver !== st.version) return null;
     const prev = st.seen;
     st.orders = r.orders;
+    // U-06: som, vibração e contagem no título (só com a lista completa, sem busca nem filtro)
+    if (DG.alerts) DG.alerts.observe(r.orders, !!(st.search || st.filter));
     const ids = new Set(r.orders.map(o => o.id));
     const fresh = prev ? new Set(r.orders.filter(o => !prev.has(o.id)).map(o => o.id)) : new Set();
     // lista filtrada (Agendados) é parcial: não vira a referência de "já vistos", senão os outros pareceriam novos depois
@@ -284,7 +286,7 @@
         debounce = setTimeout(async () => { st.search = searchInput.value.trim(); try { await refresh(false); } catch (e) { DG.toast(e.message, true); } }, 350);
       });
       st.box = el('div', {}, DG.loading('Carregando pedidos...'));
-      view.replaceChildren(searchInput, st.box);
+      view.replaceChildren(el('div', { class: 'row ord-tools' }, searchInput, DG.alerts ? DG.alerts.soundButton() : null), st.box);
       await refresh(false);
       const dot = $('#orders-dot'); if (dot) dot.hidden = true;
       st.timer = setInterval(async () => {
