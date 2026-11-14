@@ -7,6 +7,7 @@
 //  - índice parcial orders(created_at) where payment_status = 'approved' para os relatórios (A-09);
 //  - orders.pix_qr_code, orders.pix_qr_base64, orders.pix_expires_at: Pix guardado para reabrir o pagamento (U-01);
 //  - webhook_events: avisos do Mercado Pago aceitos e recusados (401), para o /api/health e o painel (O-01).
+//  - admin_push_subscriptions e orders.push_notified_at: Web Push de pedido pago no painel (U-06).
 // Nota: uma versão anterior (não publicada) deste script criava orders_created_status_idx (created_at, payment_status).
 // Ele pode existir no banco dev; não atrapalha e não é recriado aqui (nada de DROP).
 // Idempotente e só aditiva: nenhuma tabela ou coluna é apagada ou renomeada; nenhuma linha muda.
@@ -105,7 +106,21 @@ const STEPS = [
      outcome text not null check (outcome in ('accepted', 'unauthorized')),
      detail text
    )`],
-  ['webhook_events_idx', `create index if not exists webhook_events_outcome_at_idx on webhook_events (outcome, at desc)`]
+  ['webhook_events_idx', `create index if not exists webhook_events_outcome_at_idx on webhook_events (outcome, at desc)`],
+  ['admin_push_subscriptions', `create table if not exists admin_push_subscriptions (
+     id bigserial primary key,
+     username text not null,
+     endpoint text not null unique,
+     p256dh text not null,
+     auth text not null,
+     user_agent text,
+     created_at timestamptz not null default now(),
+     last_ok_at timestamptz,
+     fail_count integer not null default 0,
+     last_error text
+   )`],
+  ['admin_push_subscriptions_idx', `create index if not exists admin_push_subscriptions_user_idx on admin_push_subscriptions (username)`],
+  ['orders.push_notified_at', `alter table orders add column if not exists push_notified_at timestamptz`]
 ];
 
 (async () => {

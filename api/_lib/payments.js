@@ -117,6 +117,8 @@ async function syncPayment(sql, pay, { source = 'webhook' } = {}) {
   await noteCancelledPaid(sql, order.id, String(pay.id));
   await require('./loyalty').onPaymentStatus(sql, order.id);
   const [now] = await sql.query('select payment_status from orders where id = $1', [order.id]);
+  // U-06 (v4): aviso de pedido pago nos aparelhos do admin (uma vez por pedido, nunca lança, desligado sem VAPID).
+  if (now.payment_status === 'approved') await require('./push').notifyPaid(sql, order.id);
   return { outcome: changed.length ? 'updated' : 'unchanged', order_id: order.id, payment_status: now.payment_status, payment_id: String(pay.id) };
 }
 

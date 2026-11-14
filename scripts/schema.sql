@@ -419,5 +419,21 @@ create table if not exists webhook_events (
      detail text
    );
 create index if not exists webhook_events_outcome_at_idx on webhook_events (outcome, at desc);
+-- Web Push do painel (U-06): aparelhos do admin que recebem o aviso de pedido pago. Sem dado de cliente.
+create table if not exists admin_push_subscriptions (
+     id bigserial primary key,
+     username text not null,
+     endpoint text not null unique,
+     p256dh text not null,
+     auth text not null,
+     user_agent text,
+     created_at timestamptz not null default now(),
+     last_ok_at timestamptz,
+     fail_count integer not null default 0,
+     last_error text
+   );
+create index if not exists admin_push_subscriptions_user_idx on admin_push_subscriptions (username);
+-- Quando o aviso de pedido pago foi enviado (U-06): garante um aviso só por pedido.
+alter table orders add column if not exists push_notified_at timestamptz;
 -- Chaves opcionais em settings: 'google_review_url' (ausente = link padrão, vazia = bloco de avaliação desligado, só https://)
 -- e 'instagram_url' (ausente ou vazia = sem botão do Instagram no pós-pagamento, só https://).

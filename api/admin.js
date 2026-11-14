@@ -22,6 +22,7 @@ const coupons = require('./_lib/coupons');
 const gifts = require('./_lib/gifts');
 const reports = require('./_lib/reports');
 const monitor = require('./_lib/monitor');
+const push = require('./_lib/push');
 
 const SESSION_COOKIE = '__Host-dg_admin';
 const SESSION_TTL_MS = 12 * 3600 * 1000;
@@ -1440,6 +1441,26 @@ A.health_detail = { m: 'GET', fn: async () => {
   return { health: { ok: r.ok, checks: r.checks, ...(r.summary || { last_accepted_at: null, last_unauthorized_at: null, unauthorized_24h: null, accepted_24h: null }) } };
 } };
 
+// ---------- v4 U-06: Web Push de pedido pago (PWA do painel) ----------
+// Qualquer usuário logado pode ativar no próprio aparelho. Sem chaves VAPID no servidor: enabled false, nada quebra.
+A.push_config = { m: 'GET', fn: async ({ user }) => ({
+  push: { enabled: push.enabled(), public_key: push.publicKey(), devices: push.enabled() ? await push.countFor(getSql(), user.username) : 0 }
+}) };
+A.push_subscribe = { m: 'POST', fn: async ({ req, body, user }) => {
+  const r = await push.subscribe(getSql(), user.username, body.subscription, req.headers['user-agent']);
+  await audit(user.username, 'push_ativado', `aparelho #${r.id}`);
+  return { ok: true, device: r, devices: await push.countFor(getSql(), user.username) };
+} };
+A.push_unsubscribe = { m: 'POST', fn: async ({ body, user }) => {
+  const r = await push.unsubscribe(getSql(), user, body.endpoint);
+  if (r.removed) await audit(user.username, 'push_desativado', `${r.removed} aparelho(s)`);
+  return { ok: true, removed: r.removed, devices: await push.countFor(getSql(), user.username) };
+} };
+A.push_test = { m: 'POST', fn: async ({ user }) => {
+  const r = await push.sendTest(getSql(), user.username);
+  return { ok: true, ...r };
+} };
+
 // ---------- v4 N3: Clube de pontos por itens ----------
 A.club_rewards = { m: 'GET', fn: async () => ({ rewards: await club.adminList(getSql()), rules: await loyalty.getRules(getSql()) }) };
 A.club_reward_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
@@ -1594,7 +1615,7 @@ async function handler(req, res) {
   } catch (error) {
     if (error instanceof HttpError) return send(res, error.status, { error: error.message });
     if ([auth.AuthError, ordersLib.OrderError, storeHours.StoreError, shipping.ShippingError, loyalty.LoyaltyError,
-      club.ClubError, coupons.CouponError, gifts.GiftError, reports.ReportError].some(C => error instanceof C)) {
+      club.ClubError, coupons.CouponError, gifts.GiftError, reports.ReportError, push.PushError].some(C => error instanceof C)) {
       return send(res, error.status, { error: error.message, ...(error.code ? { code: error.code } : {}) });
     }
     if (error && error.code === '23505') return send(res, 400, { error: 'Já existe um item com esse nome ou chave.' });
