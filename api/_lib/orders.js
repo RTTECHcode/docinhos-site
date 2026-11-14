@@ -79,12 +79,13 @@ function checkTransition(fromRaw, to) {
 
 // Conclusão automática, calculada na leitura (sem cron): pronto/aguardando entrega há mais de 1 h viram concluído.
 // completed_at fica igual ao instante em que a regra venceu (ready_at + 1 h), não ao da consulta.
+// v4 N10: pedido agendado só conta a partir da data marcada (pronto cedo para as 15:00 não conclui antes das 16:00).
 async function sweepOrders(sql, { id = null } = {}) {
   const done = await sql.query(
     `update orders
-        set fulfillment_status = 'completed', completed_at = coalesce(ready_at, created_at) + interval '${AUTO_COMPLETE_AFTER}'
+        set fulfillment_status = 'completed', completed_at = greatest(coalesce(ready_at, created_at), scheduled_for) + interval '${AUTO_COMPLETE_AFTER}'
       where fulfillment_status in ('ready', 'awaiting_delivery')
-        and coalesce(ready_at, created_at) < now() - interval '${AUTO_COMPLETE_AFTER}'
+        and greatest(coalesce(ready_at, created_at), scheduled_for) < now() - interval '${AUTO_COMPLETE_AFTER}'
         and ($1::int is null or id = $1::int)
       returning id`, [id]);
   // N8: pedido concluído pela regra automática também entrega o mimo pendente do telefone (idempotente).
@@ -112,6 +113,7 @@ async function changeStatus(sql, { id, to, reason }) {
 
 // ---------- Visões ----------
 const iso = v => (v ? new Date(v).toISOString() : null);
+const { scheduledLabel } = require('./scheduling');
 
 // Visão pública (rastreio): nunca telefone nem endereço.
 function trackingView(row) {
@@ -132,16 +134,18 @@ function trackingView(row) {
     ready_at: iso(row.ready_at),
     awaiting_delivery_at: iso(row.awaiting_delivery_at),
     completed_at: iso(row.completed_at),
-    cancelled_at: iso(row.cancelled_at)
+    cancelled_at: iso(row.cancelled_at),
+    scheduled_for: iso(row.scheduled_for), // v4 N10: null = o quanto antes
+    scheduled_label: scheduledLabel(row.scheduled_for)
   };
 }
 const TRACKING_COLUMNS = `public_code, payment_status, fulfillment_status, delivery_method, total_cents, created_at,
-  accepted_at, preparing_at, ready_at, awaiting_delivery_at, completed_at, cancelled_at`;
+  accepted_at, preparing_at, ready_at, awaiting_delivery_at, completed_at, cancelled_at, scheduled_for`;
 
 // Colunas completas para o painel admin (inclui dados pessoais: só atrás de login).
 const ADMIN_COLUMNS = `id, code, public_code, customer_name, customer_phone, delivery_method, address, items, subtotal_cents,
   delivery_fee_cents, discount_cents, points_redeemed, club_points, coupon_code, coupon_discount_cents, total_cents, distance_km, payment_method, payment_status, fulfillment_status,
-  notes, created_at, accepted_at, preparing_at, ready_at, awaiting_delivery_at, completed_at, cancelled_at, cancel_reason, customer_id`;
+  notes, created_at, accepted_at, preparing_at, ready_at, awaiting_delivery_at, completed_at, cancelled_at, cancel_reason, customer_id, scheduled_for`;
 function adminView(row) {
   const shown = displayStatus(row);
   return {
@@ -150,7 +154,9 @@ function adminView(row) {
     status_label: shown.label,
     distance_km: row.distance_km === null || row.distance_km === undefined ? null : Number(row.distance_km),
     fulfillment_status: normalizeStatus(row.fulfillment_status),
-    fulfillment_label: statusLabel(row.fulfillment_status, row.delivery_method)
+    fulfillment_label: statusLabel(row.fulfillment_status, row.delivery_method),
+    scheduled_for: iso(row.scheduled_for), // v4 N10
+    scheduled_label: scheduledLabel(row.scheduled_for)
   };
 }
 

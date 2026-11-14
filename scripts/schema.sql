@@ -435,5 +435,8 @@ create table if not exists admin_push_subscriptions (
 create index if not exists admin_push_subscriptions_user_idx on admin_push_subscriptions (username);
 -- Quando o aviso de pedido pago foi enviado (U-06): garante um aviso só por pedido.
 alter table orders add column if not exists push_notified_at timestamptz;
+-- Encomenda com data marcada (N10): null = o quanto antes. Índice parcial para contar as vagas de cada janela.
+alter table orders add column if not exists scheduled_for timestamptz;
+create index if not exists orders_scheduled_for_idx on orders (scheduled_for) where scheduled_for is not null;
 -- Chaves opcionais em settings: 'google_review_url' (ausente = link padrão, vazia = bloco de avaliação desligado, só https://)
 -- e 'instagram_url' (ausente ou vazia = sem botão do Instagram no pós-pagamento, só https://).

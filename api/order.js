@@ -8,6 +8,7 @@ const customerLib = require('./_lib/customer');
 const auth = require('./_lib/auth');
 const club = require('./_lib/club');
 const coupons = require('./_lib/coupons');
+const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data marcada
 const { phoneKey } = require('./_lib/text');
 
 // A-05 (v4): endereço do site num ponto só (variável SITE_URL, padrão https://docinhos-site.vercel.app).
@@ -380,14 +381,19 @@ module.exports = async (req, res) => {
     if (!b || typeof b !== 'object' || Array.isArray(b)) fail('Dados inválidos.');
 
     // Loja fechada (horário, fechamento manual ou pausa antiga): recusa já, informando quando abre.
+    // v4 N10: com data marcada (scheduled_for) a loja fechada agora não impede; a janela é validada logo abaixo.
+    const wantsSchedule = b.scheduled_for !== undefined && b.scheduled_for !== null && b.scheduled_for !== '';
     const state = await storeHours.getStoreState(sql);
-    if (!state.open) {
+    if (!state.open && !wantsSchedule) {
       return send(res, 503, {
         error: state.message || 'Estamos fechados no momento.',
         code: 'store_closed',
         store: { open: false, reason: state.reason, reopens_at: state.reopens_at, next_open_at: state.next_open_at, message: state.message }
       });
     }
+
+    // v4 N10: janela de 30 min, horário do dia, antecedência, máximo de dias e vaga. null = o quanto antes.
+    const schedule = await scheduling.validateRequested(sql, b.scheduled_for);
 
     const settingRows = await sql.query(`select key, value from settings where key in ('store_address')`);
     const st = {};
@@ -454,8 +460,9 @@ module.exports = async (req, res) => {
     const allItems = [...priced.items, ...rewards.items];
 
     // A-02 + A-07 (v4): pedido e reservas (prêmio do Clube e cupom) numa transação só. O pedido nunca fica gravado sem a reserva.
-    //  1. trava de pontos do cliente (classe 1) e/ou trava do cupom (classe 2), sempre nessa ordem (sem deadlock);
-    //  2. insert do pedido condicionado: limite por telefone e IP, DG-#### livre, saldo >= pontos dos prêmios e cupom com uso livre;
+    //  1. trava de pontos do cliente (classe 1), do cupom (classe 2) e da janela agendada (classe 3, v4 N10), sempre nessa ordem (sem deadlock);
+    //  2. insert do pedido condicionado: limite por telefone e IP, DG-#### livre, saldo >= pontos dos prêmios, cupom com uso livre
+    //     e vaga na janela agendada;
     //  3. reserva dos pontos (reward_reserve) e do cupom, lidas do pedido recém-criado (nada é gravado se o pedido não entrou).
     // Cada instrução da transação enxerga o que foi gravado antes de a trava ser obtida: dois pedidos simultâneos nunca gastam
     // o mesmo ponto nem passam do limite de usos do cupom.
@@ -467,13 +474,14 @@ module.exports = async (req, res) => {
       const queries = [];
       if (clubPoints > 0) queries.push(sql.query('select pg_advisory_xact_lock($1::int, $2::int)', [loyalty.LOCK_POINTS, customerId]));
       if (coupon) queries.push(sql.query('select pg_advisory_xact_lock($1::int, $2::int)', [loyalty.LOCK_COUPON, coupon.id]));
+      if (schedule && schedule.capacity > 0) queries.push(sql.query('select pg_advisory_xact_lock($1::int, $2::int)', [scheduling.LOCK_SLOT, schedule.key]));
       queries.push(sql.query(
         `insert into orders (code, public_code, tracking_token_hash, customer_id, customer_name, customer_phone, delivery_method, address, items,
                              subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, total_cents, distance_km, notes, payment_status, client_ip,
-                             club_points, coupon_id, coupon_code, coupon_discount_cents)
+                             club_points, coupon_id, coupon_code, coupon_discount_cents, scheduled_for)
          select $1::text, $2::text, $3::text, $4::int, $5::text, $6::text, $7::text, $8::text, $9::jsonb,
                 $10::int, $11::int, $12::int, 0, $13::int, $14::numeric, $15::text, 'pending', $17::text,
-                $19::int, $20::int, $21::text, $12::int
+                $19::int, $20::int, $21::text, $12::int, $23::timestamptz
           where (select count(*) from orders
                   where regexp_replace(customer_phone, '\\D', '', 'g') = $6::text
                     and created_at > now() - interval '10 minutes') < $16::int
@@ -481,10 +489,13 @@ module.exports = async (req, res) => {
             and not exists (select 1 from orders where public_code = $2::text and created_at > now() - interval '${ordersLib.PUBLIC_CODE_WINDOW}')
             and ($19::int = 0 or (select coalesce(sum(points), 0) from loyalty_ledger where customer_id = $4::int) >= $19::int)
             and ($20::int is null or ${coupons.eligibleSql('$20', '$22')})
+            and ($23::timestamptz is null or $24::int = 0
+                 or (select count(*) from orders where scheduled_for = $23::timestamptz and ${scheduling.OCCUPIES_SQL}) < $24::int)
          returning id, code, public_code, total_cents`,
         [newCode(), publicCode, tracking.hash, customerId, customer.name, customer.phone, customer.method, customer.address,
           JSON.stringify(allItems), priced.subtotal_cents, deliveryFee, discount, total, distanceKm, customer.notes, MAX_ORDERS_PER_PHONE,
-          ip, MAX_ORDERS_PER_IP, clubPoints, coupon ? coupon.id : null, coupon ? coupon.code : null, pk]
+          ip, MAX_ORDERS_PER_IP, clubPoints, coupon ? coupon.id : null, coupon ? coupon.code : null, pk,
+          schedule ? schedule.iso : null, schedule ? schedule.capacity : 0]
       ));
       if (clubPoints > 0) {
         queries.push(sql.query(
@@ -495,7 +506,7 @@ module.exports = async (req, res) => {
       }
       if (coupon) queries.push(coupons.reserveStatement(sql, { couponId: coupon.id, trackingHash: tracking.hash, phoneKey: pk, discountCents: couponDiscount }));
       const results = await sql.transaction(queries);
-      const rows = results[(clubPoints > 0 ? 1 : 0) + (coupon ? 1 : 0)];
+      const rows = results[(clubPoints > 0 ? 1 : 0) + (coupon ? 1 : 0) + (schedule && schedule.capacity > 0 ? 1 : 0)];
       if (rows.length) { order = rows[0]; break; }
       // Não entrou: descobre o motivo (limite, saldo, cupom) ou foi colisão do DG-#### (sorteia outro).
       if (overOrderLimit(await recentOrders(sql, customer.phone, ip))) return send(res, 429, { error: MSG_TOO_MANY, code: 'rate_limited' });
@@ -503,6 +514,8 @@ module.exports = async (req, res) => {
         const [{ n }] = await sql.query('select coalesce(sum(points), 0)::int n from loyalty_ledger where customer_id = $1', [customerId]);
         if (n < clubPoints) return send(res, 409, { error: 'Saldo de pontos insuficiente. Atualize a página e tente de novo.', code: 'insufficient_points' });
       }
+      // v4 N10: a janela lotou entre a conferência e o insert (outro pedido levou a última vaga).
+      if (schedule && schedule.capacity > 0 && (await scheduling.slotTaken(sql, schedule.start)) >= schedule.capacity) throw scheduling.slotFull();
       // Cupom esgotado ou limite do cliente atingido no meio do caminho: evaluate lança o erro certo (409).
       if (coupon) await coupons.evaluate(sql, { code: coupon.code, paidSubtotalCents: priced.subtotal_cents, phoneKey: pk, hasRewards: clubPoints > 0 });
     }
@@ -555,12 +568,14 @@ module.exports = async (req, res) => {
       delivery_method: customer.method,
       address: customer.address,
       items: allItems,
+      scheduled_for: schedule ? schedule.iso : null, // v4 N10: null = o quanto antes
+      scheduled_label: schedule ? scheduling.scheduledLabel(schedule.start) : null,
       payment
     });
   } catch (error) {
     if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
     if (error instanceof shipping.ShippingError) return res.status(error.status).json({ error: error.message, code: error.code, ...(error.max_km ? { max_km: error.max_km } : {}) });
-    if (error instanceof loyalty.LoyaltyError || error instanceof club.ClubError || error instanceof coupons.CouponError) {
+    if (error instanceof loyalty.LoyaltyError || error instanceof club.ClubError || error instanceof coupons.CouponError || error instanceof scheduling.ScheduleError) {
       return res.status(error.status).json({ error: error.message, code: error.code });
     }
     // QA v3 B1: a mensagem de erro inesperado pode trazer valores (telefone, e-mail). Loga o código e a mensagem

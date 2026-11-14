@@ -120,7 +120,10 @@ const STEPS = [
      last_error text
    )`],
   ['admin_push_subscriptions_idx', `create index if not exists admin_push_subscriptions_user_idx on admin_push_subscriptions (username)`],
-  ['orders.push_notified_at', `alter table orders add column if not exists push_notified_at timestamptz`]
+  ['orders.push_notified_at', `alter table orders add column if not exists push_notified_at timestamptz`],
+  // N10: encomenda com data marcada (null = o quanto antes) e índice parcial para contar vagas por janela.
+  ['orders.scheduled_for', `alter table orders add column if not exists scheduled_for timestamptz`],
+  ['orders_scheduled_for_idx', `create index if not exists orders_scheduled_for_idx on orders (scheduled_for) where scheduled_for is not null`]
 ];
 
 (async () => {

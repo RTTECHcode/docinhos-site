@@ -3,6 +3,8 @@
 //   a=shipping  -> { bands, max_km, pickup_fee_cents }
 //   a=cep       -> endereço do CEP (v3 D3): ?cep=06000000  ->  { cep, street, district, city, uf }; 404 cep_not_found; 429 rate_limited
 //   a=quote     -> cotação de frete: ?cep=06000000&address=Rua X, 100[&number=100]  ->  { km, fee_cents, faixa, max_km }
+//   a=slots     -> v4 N10: janelas de 30 min de um dia: ?date=AAAA-MM-DD&mode=delivery|pickup
+//                  ->  { enabled, date, mode, slot_minutes, min_lead_min, max_days, slots: [{ start, end, label, available, reason }] }
 // Nada aqui altera dados. O pedido (api/order.js) recalcula o frete por conta própria: a cotação é só informativa.
 const { getStoreState } = require('./_lib/store-hours');
 const shipping = require('./_lib/shipping');
@@ -15,6 +17,10 @@ const throttled = (sql, ip) => hitExceeded(sql, 'shipping_quote', ip, { windowMi
 // Consulta de CEP: limite próprio por IP (escopo cep_lookup). O resultado vem do cache em banco (cep_cache) quando possível.
 const CEP_MAX_PER_IP = 30;        // por IP em 10 min
 const cepThrottled = (sql, ip) => hitExceeded(sql, 'cep_lookup', ip, { windowMinutes: QUOTE_WINDOW_MINUTES, max: CEP_MAX_PER_IP });
+// Janelas de agendamento (v4 N10): consulta barata, mas também limitada por IP.
+const SLOTS_MAX_PER_IP = 120;     // por IP em 10 min
+const slotsThrottled = (sql, ip) => hitExceeded(sql, 'schedule_slots', ip, { windowMinutes: QUOTE_WINDOW_MINUTES, max: SLOTS_MAX_PER_IP });
+const scheduling = require('./_lib/scheduling');
 const { clientIp } = require('./_lib/auth'); // x-real-ip (Vercel) primeiro; x-forwarded-for só como reserva
 
 module.exports = async (req, res) => {
@@ -42,12 +48,17 @@ module.exports = async (req, res) => {
       const q = await shipping.quoteDelivery(sql, { cep: query.cep, address: query.address, number: query.number });
       return res.status(200).json({ km: q.km, fee_cents: q.fee_cents, faixa: q.band, max_km: q.max_km });
     }
+    if (action === 'slots') {
+      if (await slotsThrottled(sql, clientIp(req))) return res.status(429).json({ error: 'Muitas consultas de horário. Aguarde alguns minutos.', code: 'rate_limited' });
+      return res.status(200).json(await scheduling.slotsForDate(sql, { date: query.date, mode: query.mode }));
+    }
     return res.status(404).json({ error: 'Ação não encontrada' });
   } catch (error) {
+    if (error instanceof scheduling.ScheduleError) return res.status(error.status).json({ error: error.message, code: error.code });
     if (error instanceof shipping.ShippingError) return res.status(error.status).json({ error: error.message, code: error.code, ...(error.max_km ? { max_km: error.max_km } : {}) });
     console.error('Erro em /api/store:', error.message);
     return res.status(500).json({ error: 'Não foi possível concluir a consulta' });
   }
 };
 
-module.exports._internal = { throttled, QUOTE_MAX_PER_IP, cepThrottled, CEP_MAX_PER_IP };
+module.exports._internal = { throttled, QUOTE_MAX_PER_IP, cepThrottled, CEP_MAX_PER_IP, slotsThrottled, SLOTS_MAX_PER_IP };

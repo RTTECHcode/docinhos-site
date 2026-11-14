@@ -21,6 +21,8 @@ const club = require('./_lib/club');
 const coupons = require('./_lib/coupons');
 const gifts = require('./_lib/gifts');
 const reports = require('./_lib/reports');
+const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data marcada
+const showcase = require('./_lib/showcase'); // v4 N11: selo "Mais pedido" e prazo de entrega
 const monitor = require('./_lib/monitor');
 const push = require('./_lib/push');
 
@@ -800,6 +802,8 @@ A.command_apply = { m: 'POST', fn: async ({ body, user }) => {
 const statusGroup = f => (f === 'completed' || f === 'delivered' ? ['completed', 'delivered'] : [f]);
 
 // Lista do painel: só pedidos com menos de 24 h (todos os status). Os mais antigos ficam no histórico (order_history).
+// v4 N10: pedido agendado fica na lista até 24 h depois da data marcada. f=scheduled mostra só os agendados, ordenados
+// pela data marcada (a mais próxima primeiro).
 A.orders = { m: 'GET', fn: async ({ query }) => {
   const f = String(query.get('f') || '');
   const status = FILTER_STATUSES.includes(f) ? statusGroup(f) : null;
@@ -807,11 +811,12 @@ A.orders = { m: 'GET', fn: async ({ query }) => {
   await ordersLib.sweepOrders(getSql()); // pronto há mais de 1 h vira concluído (sem cron)
   const rows = await q(
     `select ${ordersLib.ADMIN_COLUMNS} from orders
-      where created_at > now() - interval '24 hours'
+      where (created_at > now() - interval '24 hours' or scheduled_for > now() - interval '24 hours')
         and ($1::text[] is null or fulfillment_status = any($1::text[]))
         and ($2::boolean = false or payment_status = 'approved')
         and ($3::text = '' or strpos(lower(code), $3) > 0 or strpos(lower(coalesce(public_code, '')), $3) > 0 or strpos(lower(customer_name), $3) > 0)
-      order by created_at desc limit 200`, [status, f === 'paid', search]);
+        and ($4::boolean = false or scheduled_for is not null)
+      order by case when $4::boolean then scheduled_for end asc, created_at desc limit 200`, [status, f === 'paid', search, f === 'scheduled']);
   // N8: gift = { id, label } quando o telefone tem mimo pendente concedido antes deste pedido (senão null).
   return { orders: (await gifts.attachGifts(getSql(), rows)).map(ordersLib.adminView), window_hours: 24 };
 } };
@@ -821,7 +826,7 @@ const vDate = (v, label) => {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v + 'T00:00:00Z'))) bad(`${label}: use o formato AAAA-MM-DD.`);
   return v;
 };
-// Histórico: pedidos com mais de 24 h. Filtros: from/to (datas no horário de São Paulo), f (status), s (busca), page, page_size.
+// Histórico: pedidos com mais de 24 h (agendado: 24 h depois da data marcada). Filtros: from/to (datas no horário de São Paulo), f (status), s (busca), page, page_size.
 A.order_history = { m: 'GET', fn: async ({ query }) => {
   const from = vDate(query.get('from'), 'Data inicial'), to = vDate(query.get('to'), 'Data final');
   const f = String(query.get('f') || '');
@@ -832,24 +837,26 @@ A.order_history = { m: 'GET', fn: async ({ query }) => {
   await ordersLib.sweepOrders(getSql());
   const rows = await q(
     `select ${ordersLib.ADMIN_COLUMNS}, count(*) over ()::int as total_rows from orders
-      where created_at <= now() - interval '24 hours'
+      where created_at <= now() - interval '24 hours' and (scheduled_for is null or scheduled_for <= now() - interval '24 hours')
         and ($1::date is null or created_at >= ($1::date)::timestamp at time zone 'America/Sao_Paulo')
         and ($2::date is null or created_at < (($2::date + 1))::timestamp at time zone 'America/Sao_Paulo')
         and ($3::text[] is null or fulfillment_status = any($3::text[]))
         and ($4::boolean = false or payment_status = 'approved')
         and ($5::text = '' or strpos(lower(code), $5) > 0 or strpos(lower(coalesce(public_code, '')), $5) > 0 or strpos(lower(customer_name), $5) > 0)
+        and ($8::boolean = false or scheduled_for is not null)
       order by created_at desc, id desc limit $6 offset $7`,
-    [from, to, status, f === 'paid', search, pageSize, (page - 1) * pageSize]);
+    [from, to, status, f === 'paid', search, pageSize, (page - 1) * pageSize, f === 'scheduled']);
   let total = rows.length ? rows[0].total_rows : 0;
   if (!rows.length && page > 1) { // página além do fim: o total real ainda precisa ser informado
     total = (await q(
-      `select count(*)::int as n from orders where created_at <= now() - interval '24 hours'
+      `select count(*)::int as n from orders where created_at <= now() - interval '24 hours' and (scheduled_for is null or scheduled_for <= now() - interval '24 hours')
         and ($1::date is null or created_at >= ($1::date)::timestamp at time zone 'America/Sao_Paulo')
         and ($2::date is null or created_at < (($2::date + 1))::timestamp at time zone 'America/Sao_Paulo')
         and ($3::text[] is null or fulfillment_status = any($3::text[]))
         and ($4::boolean = false or payment_status = 'approved')
-        and ($5::text = '' or strpos(lower(code), $5) > 0 or strpos(lower(coalesce(public_code, '')), $5) > 0 or strpos(lower(customer_name), $5) > 0)`,
-      [from, to, status, f === 'paid', search]))[0].n;
+        and ($5::text = '' or strpos(lower(code), $5) > 0 or strpos(lower(coalesce(public_code, '')), $5) > 0 or strpos(lower(customer_name), $5) > 0)
+        and ($6::boolean = false or scheduled_for is not null)`,
+      [from, to, status, f === 'paid', search, f === 'scheduled']))[0].n;
   }
   const withGifts = await gifts.attachGifts(getSql(), rows.map(({ total_rows, ...r }) => r));
   return { orders: withGifts.map(ordersLib.adminView), page, page_size: pageSize, total, total_pages: Math.max(1, Math.ceil(total / pageSize)) };
@@ -1532,6 +1539,34 @@ A.review_settings_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) 
   return { ok: true, review };
 } };
 
+// ---------- v4 N10/N11: ajustes de pedido (agendamento, selo "Mais pedido" e prazo de entrega) ----------
+const orderSettingsView = (sc, sh) => ({
+  scheduling_enabled: sc.enabled, scheduling_min_lead_min: sc.min_lead_min, scheduling_max_days: sc.max_days,
+  scheduling_slot_capacity: sc.slot_capacity, best_seller_enabled: sh.best_seller_enabled,
+  delivery_eta_min: sh.delivery_eta_min, delivery_eta_max: sh.delivery_eta_max,
+  limits: { scheduling_min_lead_min: scheduling.LIMITS.min_lead_min, scheduling_max_days: scheduling.LIMITS.max_days,
+    scheduling_slot_capacity: scheduling.LIMITS.slot_capacity, delivery_eta: showcase.ETA_RANGE }
+});
+A.order_settings = { m: 'GET', fn: async () => {
+  const sql = getSql();
+  const [sc, sh] = await Promise.all([scheduling.getConfig(sql), showcase.getConfig(sql)]);
+  return { settings: orderSettingsView(sc, sh) };
+} };
+// Só os campos enviados mudam. Tudo validado antes de gravar (nada é gravado se um campo estiver errado).
+A.order_settings_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
+  const sql = getSql();
+  const sh0 = await showcase.getConfig(sql);
+  const scPart = scheduling.validateConfig(body), shPart = showcase.validateConfig(body, sh0);
+  const statements = [...scheduling.saveStatements(sql, scPart), ...showcase.saveStatements(sql, shPart)];
+  if (!statements.length) bad('Nada para alterar.');
+  await sql.transaction(statements);
+  const [sc, sh] = await Promise.all([scheduling.getConfig(sql), showcase.getConfig(sql)]);
+  const view = orderSettingsView(sc, sh);
+  const changed = [...Object.keys(scPart).map(k => scheduling.KEYS[k]), ...Object.keys(shPart)];
+  await audit(user.username, 'ajustes_pedido_salvos', changed.map(k => `${k}=${view[k]}`).join(', ').slice(0, 300));
+  return { ok: true, settings: view };
+} };
+
 // ---------- v4 N5: relatórios (só admin; S-04: toda consulta e exportação vai para a auditoria, sem o termo buscado) ----------
 const qp = (query, k) => (query.get(k) === null ? undefined : query.get(k));
 A.report_customers = { m: 'GET', role: 'admin', fn: async ({ query, user }) => {
@@ -1615,7 +1650,7 @@ async function handler(req, res) {
   } catch (error) {
     if (error instanceof HttpError) return send(res, error.status, { error: error.message });
     if ([auth.AuthError, ordersLib.OrderError, storeHours.StoreError, shipping.ShippingError, loyalty.LoyaltyError,
-      club.ClubError, coupons.CouponError, gifts.GiftError, reports.ReportError, push.PushError].some(C => error instanceof C)) {
+      club.ClubError, coupons.CouponError, gifts.GiftError, reports.ReportError, push.PushError, scheduling.ScheduleError, showcase.ShowcaseError].some(C => error instanceof C)) {
       return send(res, error.status, { error: error.message, ...(error.code ? { code: error.code } : {}) });
     }
     if (error && error.code === '23505') return send(res, 400, { error: 'Já existe um item com esse nome ou chave.' });
