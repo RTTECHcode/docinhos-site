@@ -341,19 +341,24 @@ async function cleanup() {
   });
   await t('points_save: só admin (staff 403, sem sessão 401); válida vale no painel, cardápio e saldo; audita antes -> depois', async () => {
     try {
-      const nova = { enabled: true, points_per_real: 2, block_points: 50, block_value_cents: 500 };
+      // F3: só enabled e points_per_real. block_* (desconto antigo) é ignorado se vier e as chaves antigas não mudam.
+      await Q('delete from settings where key = any($1::text[])', [POINT_KEYS]);
+      const nova = { enabled: true, points_per_real: 2 };
       assert.equal((await post(ST, 'points_save', nova)).status, 403);
       assert.equal((await post(null, 'points_save', nova)).status, 401);
-      const ok = await post(A, 'points_save', nova);
+      const ok = await post(A, 'points_save', { ...nova, block_points: 50, block_value_cents: 500 });
       assert.equal(ok.status, 200, JSON.stringify(ok.json));
-      assert.deepEqual(ok.json.points.rules, nova);
-      assert.deepEqual((await get(A, 'points_get')).json.points.rules, nova);
-      assert.deepEqual((await menuCall()).body.points, { enabled: true, pointsPerReal: 2, blockPoints: 50, blockValueCents: 500 });
+      assert.deepEqual(ok.json.points.rules, { ...DEF, ...nova });
+      assert.deepEqual((await get(A, 'points_get')).json.points.rules, { ...DEF, ...nova });
+      assert.deepEqual((await menuCall()).body.points, { enabled: true, pointsPerReal: 2, blockPoints: 100, blockValueCents: 1000 });
       const keys = Object.fromEntries((await Q('select key, value from settings where key = any($1::text[])', [POINT_KEYS])).map(r => [r.key, r.value]));
-      assert.deepEqual(keys, { points_enabled: '1', points_per_real: '2', points_block_points: '50', points_block_value_cents: '500' });
+      assert.deepEqual(keys, { points_enabled: '1', points_per_real: '2' });
       const au = (await Q(`select action, detail from admin_audit where username = $1 and action = 'pontos_regra_alterada' order by id desc limit 1`, [adm.username]))[0];
       assert.ok(au, 'auditoria gravada');
-      assert.match(au.detail, /-> ligado, 2 pt\/R\$ 1, 50 pts = 500 centavos$/);
+      assert.match(au.detail, /-> ligado, 2 pt\/R\$ 1$/);
+      // 10 pt/R$ 1 (máximo) vale mesmo com o block_* antigo (antes o teto de retorno derrubava a regra para o padrão)
+      assert.equal((await post(A, 'points_save', { enabled: true, points_per_real: 10 })).status, 200);
+      assert.equal((await loyalty.getRules(sql)).points_per_real, 10);
       // desligar
       const off = await post(A, 'points_save', { ...nova, enabled: false });
       assert.equal(off.status, 200);
@@ -361,21 +366,20 @@ async function cleanup() {
       assert.equal((await loyalty.getRules(sql)).enabled, false);
     } finally { await restorePoints(); }
   });
-  await t('points_save: inválidas -> 400 com mensagem e a regra não muda (negativo, zero, fração, texto, acima do limite, retorno > 50%)', async () => {
+  await t('points_save: inválidas -> 400 com mensagem e a regra não muda (negativo, zero, fração, texto, acima do limite)', async () => {
     try {
-      const base = { enabled: true, points_per_real: 1, block_points: 100, block_value_cents: 1000 };
-      assert.equal((await post(A, 'points_save', { ...base, block_points: 200 })).status, 200);
-      const bads = [{}, { ...base, enabled: 'sim' }, { ...base, points_per_real: -1 }, { ...base, points_per_real: 0 }, { ...base, points_per_real: 1.5 },
-        { ...base, points_per_real: 11 }, { ...base, block_points: '100' }, { ...base, block_points: 5 }, { ...base, block_points: 20000 },
-        { ...base, block_value_cents: -500 }, { ...base, block_value_cents: 50 }, { ...base, block_value_cents: 10001 },
-        { ...base, points_per_real: 10, block_points: 100, block_value_cents: 1000 }];
+      await Q('delete from settings where key = any($1::text[])', [POINT_KEYS]);
+      const base = { enabled: true, points_per_real: 3 };
+      assert.equal((await post(A, 'points_save', base)).status, 200);
+      const bads = [{}, { ...base, enabled: 'sim' }, { enabled: true }, { ...base, points_per_real: -1 }, { ...base, points_per_real: 0 },
+        { ...base, points_per_real: 1.5 }, { ...base, points_per_real: 11 }, { ...base, points_per_real: '2' }];
       for (const b of bads) {
         const r = await post(A, 'points_save', b);
         assert.equal(r.status, 400, JSON.stringify(b));
         assert.equal(r.json.code, 'invalid_rules');
         assert.ok(r.json.error && r.json.error.length > 10, 'mensagem em português');
       }
-      assert.deepEqual((await get(A, 'points_get')).json.points.rules, { ...base, block_points: 200 }, 'erro não altera a regra');
+      assert.deepEqual((await get(A, 'points_get')).json.points.rules, { ...DEF, ...base }, 'erro não altera a regra');
       assert.equal((await get(A, 'points_save')).status, 405);
       assert.equal((await post(A, 'points_get', {})).status, 405);
     } finally { await restorePoints(); }
@@ -394,7 +398,7 @@ async function cleanup() {
       await loyalty.onPaymentStatus(sql, o2.id);
       const bal = await loyalty.getBalance(sql, cust.id);
       assert.equal(bal.balance, 30 + 60, 'o1 continua 30; o2 ganha 60 pela regra nova');
-      assert.deepEqual([bal.points_per_real, bal.block_points, bal.block_value_cents, bal.points_enabled], [2, 50, 500, true]);
+      assert.deepEqual([bal.points_per_real, bal.points_enabled], [2, true]);
       assert.equal((await post(A, 'points_save', { enabled: false, points_per_real: 2, block_points: 50, block_value_cents: 500 })).status, 200);
       const o3 = await mk(3000);
       await loyalty.onPaymentStatus(sql, o3.id);
