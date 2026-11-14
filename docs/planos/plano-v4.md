@@ -156,6 +156,22 @@ Os emojis 🍓🍫 do fim saem e viram ilustrações próprias (SVG, com animaç
 ### N9 — Benchmarking, domínio e landing
 A5: `docs/planos/benchmarking-v4.md`, `/experimental.html` (noindex, sem link, arquivos próprios `experimental.css`/`experimental.js`), recomendação de domínio e melhorias de esforço P.
 
+### N10 — Encomenda com data marcada (pedido do Renan, 14/11)
+Banco: `orders.scheduled_for timestamptz null` (null = o quanto antes). Ajustes novos: `scheduling_enabled` (padrão ligado), `scheduling_min_lead_min` (padrão 120), `scheduling_max_days` (padrão 7), `scheduling_slot_capacity` (pedidos por janela de 30 min; 0 = sem limite).
+
+Regras (servidor decide tudo):
+- O pedido pode mandar `scheduled_for`. Aceito só se: agendamento ligado, janela de 30 min alinhada, dentro do horário de funcionamento daquele dia (`store_hours`, fuso de São Paulo), pelo menos `scheduling_min_lead_min` à frente, no máximo `scheduling_max_days` à frente e com vaga na janela (conta pedidos não cancelados e não falhos daquela janela, com trava para dois pedidos simultâneos não estourarem a vaga).
+- Com a loja fechada agora, o cliente pode agendar para quando ela abrir (resolve a opinião do U-03). Pedido "o quanto antes" com a loja fechada continua recusado.
+- Pagamento igual ao de hoje (na hora, Pix ou cartão). Sem mudança em preço, frete, cupom e Clube.
+- `/api/store?a=slots&date=AAAA-MM-DD&mode=delivery|pickup` (ou ação equivalente num arquivo existente): devolve as janelas com `available`. `/api/menu` informa `scheduling: { enabled, min_lead_min, max_days }`.
+- Admin: pedido agendado traz `scheduled_for` e etiqueta "Agendado: sex 21/11, 15:00-15:30"; filtro "Agendados" e ordenação pela data marcada; o sweep automático (24 h sem pagar, conclusão automática) respeita a data marcada.
+- Telas: A4 põe "Quando?" no checkout ("O quanto antes" ou "Agendar": dia e janela); A3 mostra a etiqueta, o filtro e os quatro ajustes em Ajustes.
+
+### N11 — Selo "Mais pedido" e prazo de entrega
+- Selo automático: os 3 produtos com mais unidades vendidas (pedidos `approved`, não cancelados) nos últimos 30 dias, com mínimo de 5 unidades cada. `/api/menu` manda `best_seller: true` no produto. Ajuste `best_seller_enabled` (padrão ligado). Calculado no servidor, sem dado pessoal.
+- Prazo médio de entrega (Renan, 14/11): 30 a 50 minutos. Ajustes `delivery_eta_min` = 30 e `delivery_eta_max` = 50, devolvidos em `/api/menu`; A4 mostra no topo, no carrinho e no checkout (U-05); A3 permite editar.
+- Título da home aprovado (P-13): "Docinhos da Gigi — Doces artesanais em Osasco, peça online". Imagem de compartilhamento aprovada.
+
 ## 4. Divisão de arquivos (evita conflito)
 
 | Agente | Pode alterar |
