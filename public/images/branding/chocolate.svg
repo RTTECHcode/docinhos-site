@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="chocolate-t">
+  <title id="chocolate-t">Chocolate</title>
+  <mask id="mordida"><rect width="64" height="64" fill="#fff"/><circle cx="45" cy="5" r="6" fill="#000"/><circle cx="38" cy="2" r="4.5" fill="#000"/></mask>
+  <g transform="rotate(-18 32 34)">
+    <g mask="url(#mordida)">
+      <rect x="17" y="3" width="30" height="34" rx="3" fill="#4a1f12" stroke="#3b1a12" stroke-width="2.5"/>
+      <g fill="#6a2f1c" stroke="#3b1a12" stroke-width="1.2">
+        <rect x="20.5" y="6.5" width="10.5" height="8" rx="1.5"/><rect x="33" y="6.5" width="10.5" height="8" rx="1.5"/>
+        <rect x="20.5" y="17" width="10.5" height="8" rx="1.5"/><rect x="33" y="17" width="10.5" height="8" rx="1.5"/>
+      </g>
+      <path d="M22 8.5h6M34.5 8.5h6M22 19h6M34.5 19h6" stroke="#8a4628" stroke-width="1.6" stroke-linecap="round"/>
+    </g>
+    <path d="M15.5 29.5 19 27l3.5 2.5L26 27l3.5 2.5L33 27l3.5 2.5L40 27l3.5 2.5L47 27l1.5 2.5V33h-33Z" fill="#ffe29a" stroke="#9c2a40" stroke-width="2" stroke-linejoin="round"/>
+    <rect x="15" y="32" width="34" height="29" rx="3" fill="#c93a51" stroke="#9c2a40" stroke-width="2.5"/>
+    <path d="M15 37h34M15 56h34" stroke="#ff7ab3" stroke-width="2.5"/>
+    <path d="M32 51.5c-5.5-3.5-7.5-6-7.5-8.3a3.6 3.6 0 0 1 7.5-1.2 3.6 3.6 0 0 1 7.5 1.2c0 2.3-2 4.8-7.5 8.3Z" fill="#ffe29a" stroke="#9c2a40" stroke-width="1.8" stroke-linejoin="round"/>
+  </g>
+</svg>
