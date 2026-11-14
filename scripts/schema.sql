@@ -1,4 +1,5 @@
 -- Estado final do banco (aplicar com node scripts/migrate.js). Idempotente e aditivo.
+-- ATENÇÃO: migrate.js separa as instruções por ponto e vírgula. Nunca use esse caractere em comentário ou texto.
 -- Contém o esquema base, o painel /admin (migrate-admin.js) e o Painel v2 (migrate-2026-11-10-painel-v2.js).
 
 create table if not exists categories (
@@ -71,13 +72,6 @@ create table if not exists admin_users (
      created_at timestamptz not null default now(),
      last_login_at timestamptz
    );
--- v3 D1: endereço do cliente (1 por conta). Preenche o checkout. Migração: scripts/migrate-2026-11-10-v3-schema.js
-alter table customers add column if not exists address_cep text;
-alter table customers add column if not exists address_street text;
-alter table customers add column if not exists address_number text;
-alter table customers add column if not exists address_complement text;
-alter table customers add column if not exists address_district text;
-alter table customers add column if not exists address_city text;
 alter table admin_users add column if not exists active boolean not null default true;
 create table if not exists admin_sessions (
      token_hash text primary key,
@@ -163,6 +157,14 @@ create table if not exists customers (
      last_login_at timestamptz
    );
 create unique index if not exists customers_email_uq on customers (lower(email)) where email is not null;
+-- (v4 A-01: estas linhas ficavam antes do CREATE de customers e quebravam o schema em banco vazio)
+-- v3 D1: endereço do cliente (1 por conta). Preenche o checkout. Migração: scripts/migrate-2026-11-10-v3-schema.js
+alter table customers add column if not exists address_cep text;
+alter table customers add column if not exists address_street text;
+alter table customers add column if not exists address_number text;
+alter table customers add column if not exists address_complement text;
+alter table customers add column if not exists address_district text;
+alter table customers add column if not exists address_city text;
 create table if not exists customer_sessions (
      token_hash text primary key,
      customer_id integer not null references customers(id) on delete cascade,
@@ -268,7 +270,7 @@ create table if not exists geocode_cache (
      display text,
      created_at timestamptz not null default now()
    );
--- v3 D3: cache de CEP -> endereço (ViaCEP). Só CEP encontrado; expira em 90 dias (lido em api/_lib/shipping.js lookupCep)
+-- v3 D3: cache de CEP -> endereço (ViaCEP). Só CEP encontrado, expira em 90 dias (lido em api/_lib/shipping.js lookupCep)
 create table if not exists cep_cache (
      cep text primary key,
      logradouro text not null default '',
@@ -324,7 +326,7 @@ insert into settings (key, value) values ('shipping_bands', '[{"max_km":3,"fee_c
 insert into settings (key, value) values ('store_origin_address', 'Rua Manoel Hare Peralta, 101, Ayrosa, Osasco, SP') on conflict (key) do nothing;
 
 -- ---- v4 (scripts/migrate-2026-11-12-v4-schema.js) ----
--- Clube de pontos por itens (N3). Custo em pontos por prêmio; produto com grupo de escolha obrigatória não pode ser prêmio (regra da API).
+-- Clube de pontos por itens (N3). Custo em pontos por prêmio. Produto com grupo de escolha obrigatória não pode ser prêmio (regra da API).
 create table if not exists club_rewards (
      id serial primary key,
      product_id integer not null references products(id) on delete cascade,
@@ -403,6 +405,19 @@ create table if not exists review_gifts (
      cancelled_by text
    );
 create unique index if not exists review_gifts_pending_uq on review_gifts (phone_key) where delivered_at is null and cancelled_at is null;
--- Relatórios (N5, A-09)
-create index if not exists orders_created_status_idx on orders (created_at, payment_status);
--- Chave opcional em settings: 'google_review_url' (ausente = link padrão; vazia = bloco de avaliação desligado; só https://).
+-- Relatórios (N5, A-09): só pedidos pagos contam como venda
+create index if not exists orders_paid_created_idx on orders (created_at) where payment_status = 'approved';
+-- Pix guardado para reabrir a tela de pagamento (U-01). Apagado quando o pagamento sai de pendente.
+alter table orders add column if not exists pix_qr_code text;
+alter table orders add column if not exists pix_qr_base64 text;
+alter table orders add column if not exists pix_expires_at timestamptz;
+-- Avisos do Mercado Pago recebidos pelo webhook (O-01): aceitos e recusados (401). Sem segredo e sem dado pessoal.
+create table if not exists webhook_events (
+     id bigserial primary key,
+     at timestamptz not null default now(),
+     outcome text not null check (outcome in ('accepted', 'unauthorized')),
+     detail text
+   );
+create index if not exists webhook_events_outcome_at_idx on webhook_events (outcome, at desc);
+-- Chaves opcionais em settings: 'google_review_url' (ausente = link padrão, vazia = bloco de avaliação desligado, só https://)
+-- e 'instagram_url' (ausente ou vazia = sem botão do Instagram no pós-pagamento, só https://).

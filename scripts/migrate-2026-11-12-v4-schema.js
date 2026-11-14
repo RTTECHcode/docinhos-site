@@ -4,7 +4,11 @@
 //  - loyalty_ledger.kind passa a aceitar reward_reserve, reward_release e reward_commit (CHECK ampliado);
 //  - coupons, coupon_redemptions, coupon_campaigns, coupon_campaign_targets;
 //  - review_gifts (no máximo 1 mimo pendente por telefone: índice único parcial);
-//  - índice orders(created_at, payment_status) para os relatórios.
+//  - índice parcial orders(created_at) where payment_status = 'approved' para os relatórios (A-09);
+//  - orders.pix_qr_code, orders.pix_qr_base64, orders.pix_expires_at: Pix guardado para reabrir o pagamento (U-01);
+//  - webhook_events: avisos do Mercado Pago aceitos e recusados (401), para o /api/health e o painel (O-01).
+// Nota: uma versão anterior (não publicada) deste script criava orders_created_status_idx (created_at, payment_status).
+// Ele pode existir no banco dev; não atrapalha e não é recriado aqui (nada de DROP).
 // Idempotente e só aditiva: nenhuma tabela ou coluna é apagada ou renomeada; nenhuma linha muda.
 // A tabela ingredient_synonyms continua no banco, sem uso (N4).
 // Rodar ANTES do deploy do código v4.
@@ -91,7 +95,17 @@ const STEPS = [
      cancelled_by text
    )`],
   ['review_gifts_pending_uq', `create unique index if not exists review_gifts_pending_uq on review_gifts (phone_key) where delivered_at is null and cancelled_at is null`],
-  ['orders_created_status_idx', `create index if not exists orders_created_status_idx on orders (created_at, payment_status)`]
+  ['orders_paid_created_idx', `create index if not exists orders_paid_created_idx on orders (created_at) where payment_status = 'approved'`],
+  ['orders.pix_qr_code', `alter table orders add column if not exists pix_qr_code text`],
+  ['orders.pix_qr_base64', `alter table orders add column if not exists pix_qr_base64 text`],
+  ['orders.pix_expires_at', `alter table orders add column if not exists pix_expires_at timestamptz`],
+  ['webhook_events', `create table if not exists webhook_events (
+     id bigserial primary key,
+     at timestamptz not null default now(),
+     outcome text not null check (outcome in ('accepted', 'unauthorized')),
+     detail text
+   )`],
+  ['webhook_events_idx', `create index if not exists webhook_events_outcome_at_idx on webhook_events (outcome, at desc)`]
 ];
 
 (async () => {
