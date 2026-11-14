@@ -902,3 +902,9 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
   .ilustra-doce { animation: balanca-doce 2.8s ease-in-out infinite; }
   .ilustra-doce.alt { animation-delay: -1.4s; }
 }
+
+/* v4 A5 / U-11: campos do checkout com 16 px. Abaixo disso o Safari do iPhone amplia a tela a cada toque. */
+#checkout-form input:not([type="radio"]), #checkout-form textarea, #checkout-form select { font-size: 1rem; }
+/* v4 A5 / X-09 (parte): textos que estavam entre 10 e 12,5 px ficam legíveis, sem mudar a tipografia. */
+.price .from { font-size: .72rem; }
+.pix-wait { font-size: .85rem; }
