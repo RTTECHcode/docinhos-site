@@ -1,5 +1,5 @@
 'use strict';
-/* Aba Ajustes (A5): horários e fechamento da loja, frete, pontos, sinônimos, loja e segurança do admin.
+/* Aba Ajustes (A5): horários e fechamento da loja, frete, pontos, loja e segurança do admin. (v4 N4: sinônimos removidos.)
    Também: tela obrigatória de pergunta de segurança e "Esqueci a senha" (usadas por admin.js). */
 (function () {
   const DG = window.DG;
@@ -282,39 +282,6 @@
       el('button', { class: 'btn block', type: 'button', text: 'Abrir o Clube', on: { click: () => DG.go('club') } }));
   }
 
-  // ---------- Sinônimos ----------
-  function synonymsCard() {
-    const box = el('div', { class: 'stack' });
-    const load = async () => {
-      const r = await DG.api('synonyms').catch(() => null);
-      if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar os sinônimos.' })); return; }
-      box.replaceChildren(
-        ...(r.synonyms.length ? r.synonyms.map(x => el('div', { class: 'card row' },
-          el('div', { class: 'grow' }, el('strong', { class: 'wrap', text: x.synonym }), el('p', { class: 'muted small wrap', text: 'vale como: ' + x.canonical })),
-          el('button', { class: 'btn small', type: 'button', text: 'Editar', on: { click: () => edit(x) } }),
-          el('button', { class: 'btn small danger', type: 'button', 'aria-label': 'Apagar ' + x.synonym, text: '×', on: { click: async () => {
-            if (!(await DG.confirm('Apagar o sinônimo "' + x.synonym + '"?', 'Apagar', true))) return;
-            if (await DG.run(() => DG.api('synonym_delete', { body: { id: x.id } }), 'Apagado.')) load();
-          } } }))) : [DG.empty('Nenhum sinônimo cadastrado.')]),
-        el('button', { class: 'btn block', type: 'button', text: 'Novo sinônimo', on: { click: () => edit(null) } }));
-    };
-    const edit = x => {
-      DG.sheet(x ? 'Editar sinônimo' : 'Novo sinônimo', (body, close) => {
-        const syn = el('input', { type: 'text', maxlength: 60, value: x ? x.synonym : '', placeholder: 'Ex.: oreo' });
-        const can = el('input', { type: 'text', maxlength: 60, value: x ? x.canonical : '', placeholder: 'Ex.: biscoito oreo' });
-        body.append(el('p', { class: 'muted small', text: 'Quando você pausar um ingrediente, o painel também procura pelos sinônimos.' }),
-          el('label', { class: 'field' }, el('span', { text: 'Como você chama' }), syn), el('label', { class: 'field' }, el('span', { text: 'Nome no cardápio' }), can),
-          el('button', { class: 'btn primary block', type: 'button', text: 'Salvar', on: { click: async () => {
-            const b = { canonical: can.value.trim(), synonym: syn.value.trim() };
-            if (x) b.id = x.id;
-            if (await DG.run(() => DG.api('synonym_save', { body: b }), 'Salvo.')) { close(); load(); }
-          } } }));
-      });
-    };
-    load();
-    return box;
-  }
-
   // ---------- Segurança ----------
   function securityCard() {
     const box = el('div', { class: 'card stack' }, DG.loading());
@@ -363,7 +330,6 @@
         el('h2', { class: 'section-title', text: 'Horários e fechamento da loja' }), hoursSection(catalog),
         el('h2', { class: 'section-title', text: 'Frete' }), shippingCard(),
         el('h2', { class: 'section-title', text: 'Clube de pontos' }), pointsCard(),
-        el('h2', { class: 'section-title', text: 'Sinônimos de ingredientes' }), synonymsCard(),
         el('h2', { class: 'section-title', text: 'Loja' }), DG.storeCard(catalog),
         el('h2', { class: 'section-title', text: 'Segurança' }), securityCard());
     }
