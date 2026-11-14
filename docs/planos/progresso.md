@@ -44,3 +44,18 @@ Base: ajustes-v3 criada da painel-v3 (v2.1), que vai para a main.
 | F6 Relatório | feito | ajustes-v3 | docs/planos/relatorio-v3.md; aguarda Renan publicar e rodar W5 |
 
 Banco dev trocado em 11/11 (antigo expirou): cópia da produção; migrações v3 rodadas; horários 00:00-23:59 só no dev.
+
+## v4 — clube por itens, cupons, relatórios, mimo e Altos das auditorias
+
+Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras dos agentes: %LOCALAPPDATA%/gigi-tools/REGRAS-V4.md.
+
+| ID | Status | Branch | Nota |
+|---|---|---|---|
+| F0 A1 | feito | v4 | 4795c53; 0 Crítico, 2 Altos (S-01, O-01) |
+| F0 A5 | feito | v4 | c481d6f; 0 Crítico, 8 Altos (U-01 a U-06, P-01, P-02) |
+| F1 | feito | v4 | c481d6f; seção 2 do plano com os 10 Altos e 10 Médios/Baixos que entram |
+| F2 A2 | em andamento | v4-a2 | 14/11; WIP da sessão anterior salvo em 9d05b3a e revisado pelo A2 |
+| F4 A5 antecipada | em andamento | v4-a5 | 14/11; P-01, P-02, morango N7, N9 (sem banco, sem api/) |
+| F3 A3, A4 | aguardando | — | depois da F2 (contrato seção 10) |
+| F5 A6, A1 | aguardando | — | |
+| F6 | aguardando | — | relatorio-v4.md |
