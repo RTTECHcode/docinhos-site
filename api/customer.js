@@ -74,8 +74,9 @@ function orderView(o) {
     payment_status: o.payment_status, payment_label: paymentLabel(o.payment_status),
     delivery_method: o.delivery_method,
     items_summary: items.map(i => `${Number(i && i.qty) || 1}x ${String((i && i.name) || 'Item').slice(0, 80)}${i && i.size ? ` (${String(i.size).slice(0, 40)})` : ''}${i && i.reward ? ' (prêmio do Clube)' : ''}`),
-    // Os pedidos guardam só o SHA-256 do token de acompanhamento: sem token não há link. A tela mostra o status direto.
-    tracking_url: null
+    // F3: os pedidos guardam só o SHA-256 do token de acompanhamento (o token não volta). O link da conta usa o número interno
+    // do pedido (?o=) e só abre com a sessão do próprio cliente (order-status confere o dono). Nada novo é gravado.
+    tracking_url: Number.isInteger(o.id) ? `/pedido.html?o=${o.id}` : null
   };
 }
 // Descrição do extrato em português (o servidor monta; a tela só exibe com textContent).

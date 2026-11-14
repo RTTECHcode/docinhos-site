@@ -22,9 +22,11 @@ const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
 const NOTIFICATION_URL = `${SITE_URL}/api/mp-webhook?source_news=webhooks`;
 // Volta do Checkout Pro: com o token de rastreio, aprovado e pendente vão para a página do pedido (que mostra o
 // pagamento mudar sozinho); a falha volta para a loja, onde há o botão de tentar pagar de novo.
-function backUrls(trackingToken) {
-  const track = st => `${SITE_URL}/pedido.html?t=${encodeURIComponent(trackingToken)}&pagamento=${st}`;
-  return trackingToken
+// F3: retry_payment pela conta (sem token) volta para /pedido.html?o=<id>, que abre com a sessão do cliente.
+function backUrls(trackingToken, orderId = null) {
+  const ref = trackingToken ? `t=${encodeURIComponent(trackingToken)}` : `o=${Number(orderId)}`;
+  const track = st => `${SITE_URL}/pedido.html?${ref}&pagamento=${st}`;
+  return trackingToken || Number.isInteger(orderId)
     ? { success: track('ok'), failure: `${SITE_URL}/?pagamento=erro`, pending: track('pendente') }
     : { success: `${SITE_URL}/?pagamento=ok`, failure: `${SITE_URL}/?pagamento=erro`, pending: `${SITE_URL}/?pagamento=pendente` };
 }
@@ -254,7 +256,7 @@ function buildPreferenceBody(order, prefItems, now = new Date()) {
   return {
     items: prefItems,
     external_reference: order.code,
-    back_urls: backUrls(order.tracking_token),
+    back_urls: backUrls(order.tracking_token, order.track_order_id),
     auto_return: 'approved',
     notification_url: NOTIFICATION_URL,
     statement_descriptor: 'DOCINHOS GIGI',
@@ -433,11 +435,18 @@ async function retryPayment(req, res, sql) {
   if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
   if (!b || typeof b !== 'object' || Array.isArray(b)) b = {};
   const notFound = () => send(res, 404, { error: 'Pedido não encontrado.', code: 'order_not_found' });
+  // Pedido pelo token de rastreio (t) ou, na conta, pelo número interno (o) com a sessão do dono (F3, tracking_url).
   const token = typeof b.t === 'string' ? b.t : '';
-  if (!ordersLib.TRACKING_RE.test(token)) return notFound();
-  const where = 'tracking_token_hash = $1';
-  const params = [ordersLib.hashTrackingToken(token)];
-  let [o] = await sql.query(`select ${RETRY_COLUMNS} from orders where ${where}`, params);
+  let o;
+  if (token) {
+    if (!ordersLib.TRACKING_RE.test(token)) return notFound();
+    [o] = await sql.query(`select ${RETRY_COLUMNS} from orders where tracking_token_hash = $1`, [ordersLib.hashTrackingToken(token)]);
+  } else if (b.o !== undefined) {
+    if (!isId(b.o)) return notFound();
+    const session = await customerLib.getSession(sql, req);
+    if (!session) return send(res, 401, { error: 'Entre na sua conta para pagar este pedido.', code: 'login_required' });
+    [o] = await sql.query(`select ${RETRY_COLUMNS} from orders where id = $1 and customer_id = $2`, [b.o, session.customer.id]);
+  }
   if (!o) return notFound();
   if (await hitExceeded(sql, 'retry_payment_order', 'order:' + o.id, { windowMinutes: RETRY_WINDOW_MIN, max: RETRY_MAX_PER_ORDER })) {
     return send(res, 429, { error: MSG_RETRY_TOO_MANY, code: 'rate_limited' });
@@ -479,7 +488,7 @@ async function retryPayment(req, res, sql) {
       const prefItems = buildPreferenceItems(paidItemsOf(o), o.delivery_fee_cents, o.discount_cents, o.public_code);
       const sum = prefItems.reduce((s, i) => s + Math.round(i.unit_price * 100) * i.quantity, 0);
       if (sum !== o.total_cents) throw new Error('itens do pedido não somam o total');
-      const pref = await createPreference(mpToken, { ...o, tracking_token: token }, prefItems, `pref-${o.code}-${suffix}`);
+      const pref = await createPreference(mpToken, { ...o, tracking_token: token || null, track_order_id: o.id }, prefItems, `pref-${o.code}-${suffix}`);
       if (!pref || !pref.init_point || !pref.id) throw new Error('preferência sem link');
       const rows = await sql.query(
         `update orders set payment_method = 'mercadopago_card', payment_id = $2, payment_status = 'pending',

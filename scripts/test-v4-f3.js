@@ -1,5 +1,6 @@
 // Testes v4 (A2) da rodada F3 (pedidos do A4) contra o banco de DESENVOLVIMENTO:
 //  1. POST /api/order?a=retry_payment (novo Pix ou link do cartão do mesmo pedido);
+//  2. tracking_url em GET /api/customer?a=orders (link ?o=<id> que só abre com a sessão do dono);
 // Uso: node -r ./scripts/dev-env.js scripts/test-v4-f3.js
 //  - Produtos, categoria, pedidos, cupons e contas "ZZ-v4-a2" criados aqui e apagados no final.
 //  - Mercado Pago simulado (fetch trocado; o driver do banco segue no fetch real). Token falso no processo, nenhuma chamada externa.
@@ -262,6 +263,45 @@ const row = async id => (await Q('select payment_status, payment_method, payment
       assert.equal(r.status, 409); assert.equal(r.body.code, 'slot_full');
       await Q(`update orders set fulfillment_status = 'cancelled' where id = $1`, [other.id]);
       assert.equal((await retry({ t: o.token })).status, 200);
+    });
+
+    console.log('2. tracking_url na conta');
+    async function account(label) {
+      const { customer, token } = await customerLib.createAccount(sql, { name: `${P} F3 ${label}`, phone: phone(), password: 'Zz-' + crypto.randomBytes(9).toString('base64url'),
+        security_question: 'prof_favorito', security_answer: 'zz resposta v4' }, { ip: ip(), ua: 'test-v4-f3' });
+      return { ...customer, cookie: `${customerLib.COOKIE_NAME}=${token}` };
+    }
+    const A = await account('Cliente A'), B = await account('Cliente B');
+    const ra = await order(body({ payment_choice: 'pix' }), A.cookie);
+    assert.equal(ra.status, 201, JSON.stringify(ra.body));
+    await t('Meus pedidos: tracking_url /pedido.html?o=<id> em cada pedido do próprio cliente', async () => {
+      const r = await cust('GET', 'orders', { cookie: A.cookie });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.orders.length, 1);
+      assert.equal(r.body.orders[0].tracking_url, `/pedido.html?o=${ra.body.id}`);
+      assert.equal((await cust('GET', 'orders', { cookie: B.cookie })).body.orders.length, 0, 'B não vê o pedido de A');
+      assert.equal((await cust('GET', 'orders', {})).status, 401);
+    });
+    await t('order-status ?o=: dono vê (mesmo formato do ?t=); outro cliente 404; sem sessão 401; formato inválido 404', async () => {
+      const r = await track({ o: String(ra.body.id) }, A.cookie);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const byToken = await track({ t: ra.body.tracking_token });
+      assert.equal(r.body.public_code, byToken.body.public_code); assert.deepEqual(Object.keys(r.body).sort(), Object.keys(byToken.body).sort());
+      assert.equal((await track({ o: String(ra.body.id) }, B.cookie)).status, 404);
+      const anon = await track({ o: String(ra.body.id) });
+      assert.equal(anon.status, 401); assert.equal(anon.body.code, 'login_required');
+      assert.equal((await track({ o: '0' }, A.cookie)).status, 404);
+      assert.equal((await track({ o: '12abc' }, A.cookie)).status, 404);
+    });
+    await t('retry_payment com o=<id>: dono gera novo pagamento (cartão volta para ?o=); outro cliente 404; sem sessão 401', async () => {
+      const r = await retry({ o: ra.body.id, payment_choice: 'card' }, { cookie: A.cookie });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const pref = mp.prefs[mp.prefs.length - 1];
+      assert.ok(pref.back_urls.success.endsWith(`/pedido.html?o=${ra.body.id}&pagamento=ok`), pref.back_urls.success);
+      assert.equal((await retry({ o: ra.body.id }, { cookie: B.cookie })).status, 404);
+      const anon = await retry({ o: ra.body.id });
+      assert.equal(anon.status, 401); assert.equal(anon.body.code, 'login_required');
+      assert.equal((await retry({ o: 'abc' }, { cookie: A.cookie })).status, 404);
     });
   } finally {
     global.fetch = realFetch;

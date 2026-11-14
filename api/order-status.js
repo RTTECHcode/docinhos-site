@@ -10,6 +10,7 @@ const { TRACKING_RE, hashTrackingToken, trackingView, TRACKING_COLUMNS, sweepOrd
 const { clientIp } = require('./_lib/auth');
 const { hitExceeded } = require('./_lib/rate-limit');
 const payments = require('./_lib/payments');
+const customerLib = require('./_lib/customer');
 const gifts = require('./_lib/gifts');
 
 // A1-12: limite por IP, guardado no banco (tabela rate_hits, vale para todas as instâncias da Vercel).
@@ -62,14 +63,24 @@ module.exports = async (req, res) => {
   const query = req.query || {};
   const token = typeof query.t === 'string' ? query.t : '';
   const code = typeof query.code === 'string' ? query.code : '';
+  const orderRef = typeof query.o === 'string' ? query.o : '';
   const notFound = () => res.status(404).json({ error: 'Pedido não encontrado' });
   try {
     const sql = require('./_lib/db');
     // Limite antes de qualquer consulta ao pedido. Toda chamada conta (até 404 e as já barradas).
     if (await throttled(sql, clientIp(req))) return res.status(429).json({ error: MSG_RATE_LIMITED, code: 'rate_limited' });
-    if (token) {
-      if (!TRACKING_RE.test(token)) return notFound();
-      const [found] = await sql.query('select id from orders where tracking_token_hash = $1', [hashTrackingToken(token)]);
+    if (token || orderRef) {
+      let found;
+      if (token) {
+        if (!TRACKING_RE.test(token)) return notFound();
+        [found] = await sql.query('select id from orders where tracking_token_hash = $1', [hashTrackingToken(token)]);
+      } else {
+        // F3: link de "Meus pedidos" (?o=<id>): só com a sessão do próprio cliente. Pedido de outro cliente = 404.
+        if (!/^[1-9]\d{0,9}$/.test(orderRef)) return notFound();
+        const session = await customerLib.getSession(sql, req);
+        if (!session) return res.status(401).json({ error: 'Entre na sua conta para ver este pedido.', code: 'login_required' });
+        [found] = await sql.query('select id from orders where id = $1 and customer_id = $2', [Number(orderRef), session.customer.id]);
+      }
       if (!found) return notFound();
       await backupCheck(sql, found.id);
       await sweepOrders(sql, { id: found.id }); // pronto há mais de 1 h vira concluído (sem cron)
