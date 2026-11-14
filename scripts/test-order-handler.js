@@ -199,7 +199,10 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
     assert.equal(r.body.fulfillment_label, 'novo');
     assert.equal(r.body.delivery_method, 'pickup');
     assert.ok(r.body.created_at && 'accepted_at' in r.body && 'completed_at' in r.body);
-    const text = JSON.stringify(r.body);
+    // F3: retirada mostra o endereço da LOJA em address_summary (público); fora dele, nada de telefone/endereço.
+    assert.ok(typeof r.body.address_summary === 'string' && r.body.address_summary.length > 0, 'retirada mostra o endereço da loja');
+    const { address_summary: _storeAddr, ...rest } = r.body;
+    const text = JSON.stringify(rest);
     assert.ok(!text.includes('98888') && !text.includes(STORE_ADDRESS) && !/customer_phone|address/.test(text), 'vazou dado pessoal: ' + text);
     assert.equal(r.headers['Cache-Control'], 'no-store');
     const old = await track({ code: created.code });
