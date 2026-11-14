@@ -207,7 +207,7 @@ fetch('/api/menu').then(r => { if (!r.ok) throw 0; return r.json(); }).then(data
   statusEl.remove();
   menu = data.categories;
   setStoreState(data.store);
-  setPointsRules(data.points);
+  setClubInfo(data.club);
   renderCats();
   renderMenu();
   observeCats();
@@ -722,6 +722,7 @@ async function loadAccount() {
   renderPoints();
   renderSummary();
   refreshTrack();
+  loadClub();
 }
 
 /* ---------- V5: botão flutuante "Acompanhe" ----------
@@ -960,39 +961,79 @@ function fillSummary(el, v) {
   };
   row('Subtotal', brl(v.subtotal));
   row('Frete', v.fee == null ? 'calcule acima' : v.pickup ? 'R$ 0,00 (retirada)' : brl(v.fee));
-  if (v.discount > 0) row('Desconto com pontos', '− ' + brl(v.discount), 'sum-discount');
+  for (const r of v.rewards || []) row(`Prêmio do Clube: ${r.qty}x ${rewardName(r)}`, `grátis (${ptsText(r.points)})`, 'sum-reward');
+  if (v.discount > 0) row(v.couponCode ? `Cupom ${v.couponCode}` : 'Desconto', '− ' + brl(v.discount), 'sum-discount');
   row(v.fee == null ? 'Total (sem frete)' : 'Total', brl(v.total), 'sum-total');
 }
-let usePoints = 0;
 function currentFee() { return isPickup() ? 0 : (quote && quote.key === quoteKey() ? quote.fee_cents : null); }
+/* Subtotal: o calculado pelo servidor para este carrinho (prévia de pontos ou do cupom) assim que chega; antes disso, a soma dos
+   preços do cardápio (que também vêm do servidor). O pedido é sempre recalculado no servidor. */
+let serverSubtotal = null; // { key, cents }
+const itemsPayload = () => cart.map(i => ({ product_id: i.productId, qty: i.qty, size_id: i.size ? i.size.id : null, extras: i.extras.map(x => ({ id: x.id, qty: x.qty })) }));
+const cartSig = () => JSON.stringify(itemsPayload());
+function setServerSubtotal(key, cents) { if (Number.isInteger(cents) && cents >= 0) serverSubtotal = { key, cents }; }
+function currentSubtotal() { return serverSubtotal && serverSubtotal.key === cartSig() ? serverSubtotal.cents : cartTotal(); }
+function currentDiscount() { return 0; }
 function renderSummary() {
-  const sub = cartTotal();
+  const sub = currentSubtotal();
   const fee = currentFee();
-  const discount = usePoints / pointsRules.blockPoints * pointsRules.blockValueCents;
-  fillSummary(document.querySelector('#payment-summary'), { subtotal: sub, fee, pickup: isPickup(), discount, total: sub + (fee || 0) - discount });
+  const discount = currentDiscount();
+  fillSummary(document.querySelector('#payment-summary'), { subtotal: sub, fee, pickup: isPickup(), discount, total: sub + (fee || 0) - discount, rewards: chosenRewardList() });
 }
 
-/* Pontos (C8/U5): só logado, em blocos (padrão 100 pontos = R$ 10), limitado pelo subtotal; o servidor confere tudo.
-   A regra vem de /api/menu (Ajustes do painel); aqui só serve para montar a lista e o resumo. */
-let pointsRules = { enabled: true, pointsPerReal: 1, blockPoints: 100, blockValueCents: 1000 };
-function setPointsRules(r) {
-  const ok = n => Number.isInteger(n) && n > 0;
-  if (!r || typeof r.enabled !== 'boolean' || !ok(r.pointsPerReal) || !ok(r.blockPoints) || !ok(r.blockValueCents)) return;
-  pointsRules = { enabled: r.enabled, pointsPerReal: r.pointsPerReal, blockPoints: r.blockPoints, blockValueCents: r.blockValueCents };
+/* v4 N3: Clube da Gigi. Os pontos viram prêmios (doces) escolhidos no checkout; o desconto em reais (use_points) acabou.
+   Vitrine pública em /api/menu (club); saldo, bloqueio e quanto falta em /api/customer?a=club (só logado).
+   Aqui só se monta a escolha: o servidor confere login, saldo, bloqueio e disponibilidade no pedido. */
+let clubInfo = null;  // /api/menu club: { enabled, points_per_real, rewards[] }
+let clubMine = null;  // ?a=club: { balance, reserved, locked_until, enabled, rewards[ + missing_points, can_redeem ] }
+const chosenRewards = new Map(); // reward_id -> qty
+function setClubInfo(c) {
+  clubInfo = c && typeof c === 'object' && typeof c.enabled === 'boolean' && Array.isArray(c.rewards) ? c : null;
   renderPoints();
   renderSummary();
 }
-// Recarrega a regra (ex.: o pedido foi recusado porque a regra mudou depois que a página abriu).
-function refreshPointsRules() {
-  fetch('/api/menu', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => { if (d) setPointsRules(d.points); }).catch(() => {});
+// Recarrega a vitrine (ex.: o pedido foi recusado porque um prêmio saiu do ar depois que a página abriu).
+function refreshClubInfo() {
+  fetch('/api/menu', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => { if (d) setClubInfo(d.club); }).catch(() => {});
 }
-function maxPointBlocks() {
-  if (!account) return 0;
-  const bal = Number(account.points && account.points.balance) || 0;
-  const fee = currentFee() || 0;
-  const maxDiscount = Math.min(cartTotal(), cartTotal() + fee - 100); // não passa do subtotal; sobra pelo menos R$ 1,00
-  return Math.max(0, Math.min(Math.floor(bal / pointsRules.blockPoints), Math.floor(maxDiscount / pointsRules.blockValueCents)));
+async function loadClub() {
+  if (!account) { clubMine = null; chosenRewards.clear(); renderPoints(); renderSummary(); return; }
+  try {
+    const r = await fetch('/api/customer?a=club', { credentials: 'same-origin', cache: 'no-store' });
+    const d = r.ok ? await r.json() : null;
+    clubMine = d && d.club && typeof d.club === 'object' && Array.isArray(d.club.rewards) ? d.club : null;
+  } catch { clubMine = null; }
+  pruneRewards();
+  renderPoints();
+  renderSummary();
+  onRewardsChanged();
 }
+const clubLocked = () => !!(clubMine && clubMine.locked_until && Date.parse(clubMine.locked_until) > Date.now());
+const rewardById = id => (clubMine && clubMine.rewards.find(r => r.id === id)) || null;
+const rewardName = r => String(r.name || '') + (r.size_name ? ` (${r.size_name})` : '');
+// Escolhas que não valem mais (prêmio saiu do ar, saldo não cobre, Clube pausado ou bloqueado) saem sozinhas.
+function pruneRewards() {
+  if (!account || !clubMine || !clubMine.enabled || clubLocked()) { chosenRewards.clear(); return; }
+  let left = Math.max(0, Number(clubMine.balance) || 0);
+  for (const [id, qty] of [...chosenRewards]) {
+    const r = rewardById(id);
+    const q = r && r.can_redeem ? Math.min(qty, r.max_per_order, Math.floor(left / r.points_cost)) : 0;
+    if (q < 1) { chosenRewards.delete(id); continue; }
+    chosenRewards.set(id, q);
+    left -= q * r.points_cost;
+  }
+}
+function chosenRewardList() {
+  return [...chosenRewards].map(([id, qty]) => {
+    const r = rewardById(id);
+    return r ? { id, qty, name: r.name, size_name: r.size_name, points: r.points_cost * qty } : null;
+  }).filter(Boolean);
+}
+const chosenPoints = () => chosenRewardList().reduce((s, r) => s + r.points, 0);
+const rewardsPayload = () => [...chosenRewards].map(([reward_id, qty]) => ({ reward_id, qty }));
+// Hook para quem depende dos prêmios escolhidos (o cupom confere de novo; v4 N6).
+function onRewardsChanged() {}
+
 /* L6: quantos pontos este pedido rende (POST /api/customer?a=points_preview). Só exibição: o servidor decide na hora do pedido. */
 let pointsPreview = { points: 0, enabled: true };
 let previewKey = '', previewSeq = 0, previewTimer = null;
@@ -1001,106 +1042,120 @@ function loadPointsPreview() {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(async () => {
     if (!cart.length) { pointsPreview = { points: 0, enabled: true }; previewKey = ''; renderPoints(); return; }
-    const items = cart.map(i => ({ product_id: i.productId, qty: i.qty, size_id: i.size ? i.size.id : undefined, extras: i.extras.map(x => ({ id: x.id, qty: x.qty })) }));
-    const body = { items };
-    if (usePoints > 0) body.use_points = usePoints;
-    const key = JSON.stringify(body);
+    const key = cartSig();
     if (key === previewKey) return;
     const mine = ++previewSeq;
     try {
-      const r = await fetch('/api/customer?a=points_preview', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: key });
+      const r = await fetch('/api/customer?a=points_preview', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: itemsPayload() }) });
       if (mine !== previewSeq) return;
       if (!r.ok) { pointsPreview = { points: 0, enabled: true }; previewKey = ''; renderPoints(); return; }
       const d = await r.json();
       previewKey = key;
       pointsPreview = { points: Number.isInteger(d.points) && d.points > 0 ? d.points : 0, enabled: d.enabled !== false };
+      setServerSubtotal(key, d.subtotal_cents);
     } catch { if (mine !== previewSeq) return; pointsPreview = { points: 0, enabled: true }; previewKey = ''; }
     renderPoints();
+    renderSummary();
   }, 150);
 }
-// Visitante: convite para entrar (volta ao checkout, o carrinho fica no aparelho). Logado: aviso de quantos pontos o pedido gera.
+
+// Caixa do Clube no checkout. Visitante: convite para entrar e a vitrine. Logado: prêmios que dá para trocar, o que falta e avisos.
 function renderPoints() {
-  const earn = pointsRules.enabled && pointsPreview.enabled ? pointsPreview.points : 0;
-  if (!account && pointsRules.enabled) {
-    usePoints = 0;
-    pointsBoxEl.replaceChildren();
-    pointsBoxEl.hidden = !(earn > 0);
-    if (earn > 0) {
-      const note = document.createElement('p');
-      note.className = 'points-note points-earn';
-      note.textContent = `Entre na sua conta e ganhe ${ptsText(earn)} com este pedido.`;
-      const a = document.createElement('a');
-      a.className = 'button secondary points-login';
-      a.href = '/conta/?voltar=checkout#entrar';
-      a.textContent = 'Entrar na minha conta';
-      pointsBoxEl.append(note, a);
-    }
-    return;
-  }
-  renderPointsInner();
-  if (account && earn > 0 && !pointsBoxEl.hidden) {
-    const e = document.createElement('p');
-    e.className = 'points-note points-earn';
-    e.textContent = `Este pedido vai gerar ${ptsText(earn)}.`;
-    pointsBoxEl.append(e);
-  }
-}
-function renderPointsInner() {
-  pointsBoxEl.replaceChildren();
+  const box = pointsBoxEl;
+  const focusId = box.contains(document.activeElement) ? document.activeElement.id : '';
+  box.replaceChildren();
   const p = (text, cls) => { const e = document.createElement('p'); e.className = 'points-note' + (cls ? ' ' + cls : ''); e.textContent = text; return e; };
-  const BP = pointsRules.blockPoints, BV = brl(pointsRules.blockValueCents);
-  if (!pointsRules.enabled) {
-    usePoints = 0;
-    pointsBoxEl.hidden = !account;
-    if (account) pointsBoxEl.append(p('O programa de pontos está pausado no momento. Você pode comprar normalmente; seu saldo continua guardado.'));
-    return;
-  }
+  const title = () => { const h = document.createElement('h3'); h.className = 'club-title'; h.textContent = 'Clube da Gigi'; return h; };
+  const enabled = clubMine ? !!clubMine.enabled : !!(clubInfo && clubInfo.enabled);
+  const earn = enabled && pointsPreview.enabled ? pointsPreview.points : 0;
+  const earnNote = () => { if (earn > 0) box.append(p(account ? `Este pedido vai gerar ${ptsText(earn)}.` : `Entre na sua conta e ganhe ${ptsText(earn)} com este pedido.`, 'points-earn')); };
   if (!account) {
-    usePoints = 0;
-    const note = p(`Tem conta? Entre para usar seus pontos (${BP} pontos = ${BV}). `);
-    const a = document.createElement('a'); a.href = '/conta/'; a.textContent = 'Entrar';
-    note.append(a);
-    pointsBoxEl.append(note);
-    pointsBoxEl.hidden = false;
+    chosenRewards.clear();
+    const shown = clubInfo && clubInfo.enabled ? clubInfo.rewards.filter(r => r.available) : [];
+    box.hidden = !enabled || (!earn && !shown.length);
+    if (box.hidden) return;
+    box.append(title());
+    earnNote();
+    if (shown.length) {
+      const names = shown.slice(0, 3).map(r => `${rewardName(r)} por ${ptsText(r.points_cost)}`).join('; ');
+      box.append(p(`No Clube, seus pontos viram doces: ${names}${shown.length > 3 ? ' e mais' : ''}.`));
+    }
+    const a = document.createElement('a');
+    a.className = 'button secondary points-login';
+    a.href = '/conta/?voltar=checkout#entrar';
+    a.textContent = 'Entrar para juntar e trocar pontos';
+    box.append(a);
     return;
   }
-  const bal = Number(account.points && account.points.balance) || 0;
-  const lockedUntil = account.points && account.points.locked_until;
-  pointsBoxEl.hidden = false;
-  if (lockedUntil && Date.parse(lockedUntil) > Date.now()) {
-    usePoints = 0;
-    pointsBoxEl.append(p(`Seus pontos estão bloqueados por segurança até ${fmtWhen(lockedUntil)} (depois da recuperação da conta). Você pode comprar normalmente, sem usar pontos.`, 'warn'));
+  if (!clubMine) { box.hidden = !enabled || !earn; if (!box.hidden) { box.append(title()); earnNote(); } return; }
+  box.hidden = false;
+  box.append(title());
+  if (!clubMine.enabled) { box.append(p('O Clube está pausado no momento. Você pode comprar normalmente; seu saldo continua guardado.')); return; }
+  const bal = Math.max(0, Number(clubMine.balance) || 0);
+  if (clubLocked()) {
+    box.append(p(`A troca de pontos está bloqueada por segurança até ${fmtWhen(clubMine.locked_until)} (depois da recuperação da conta). Você pode comprar normalmente, sem prêmio.`, 'warn'));
+    earnNote();
     return;
   }
-  if (bal < BP) {
-    usePoints = 0;
-    pointsBoxEl.append(p(`Você tem ${bal} pontos. A partir de ${BP} pontos você troca por ${BV} de desconto.`));
-    return;
+  if (!clubMine.rewards.length) { box.append(p(`Você tem ${ptsText(bal)}. Ainda não há prêmios para trocar.`)); earnNote(); return; }
+  const fs = document.createElement('fieldset');
+  fs.className = 'club-rewards';
+  const lg = document.createElement('legend');
+  lg.textContent = `Trocar pontos por um prêmio (você tem ${ptsText(bal)})`;
+  fs.append(lg);
+  const used = chosenPoints();
+  for (const r of clubMine.rewards) {
+    const qty = chosenRewards.get(r.id) || 0;
+    const left = bal - used + qty * r.points_cost; // saldo livre para este prêmio
+    const max = r.can_redeem ? Math.min(r.max_per_order, Math.floor(left / r.points_cost)) : 0;
+    const row = document.createElement('div');
+    row.className = 'club-reward';
+    const nm = document.createElement('span'); nm.className = 'cr-name'; nm.textContent = rewardName(r);
+    const cost = document.createElement('span'); cost.className = 'cr-cost'; cost.textContent = ptsText(r.points_cost) + (r.max_per_order > 1 ? ' cada' : '');
+    const id = 'rw-' + r.id;
+    if (max >= 1 || qty > 0) {
+      if (r.max_per_order === 1) {
+        const lb = document.createElement('label'); lb.className = 'cr-pick';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = id; cb.checked = qty > 0; cb.dataset.reward = String(r.id);
+        lb.append(cb, nm, cost);
+        row.append(lb);
+      } else {
+        const lb = document.createElement('label'); lb.className = 'cr-label'; lb.htmlFor = id;
+        lb.append(nm, cost);
+        const sl = document.createElement('select'); sl.id = id; sl.dataset.reward = String(r.id);
+        for (let n = 0; n <= Math.max(max, qty); n++) {
+          const o = document.createElement('option');
+          o.value = String(n);
+          o.textContent = n === 0 ? 'Não trocar' : `${n} (${ptsText(n * r.points_cost)})`;
+          sl.append(o);
+        }
+        sl.value = String(qty);
+        row.append(lb, sl);
+      }
+    } else {
+      row.classList.add('is-off');
+      const miss = document.createElement('span'); miss.className = 'cr-miss';
+      miss.textContent = !r.available ? 'Indisponível agora' : r.missing_points > 0 ? `Faltam ${ptsText(r.missing_points)}` : 'Seu saldo já está no outro prêmio';
+      row.append(nm, cost, miss);
+    }
+    fs.append(row);
   }
-  const max = maxPointBlocks();
-  if (max < 1) {
-    usePoints = 0;
-    pointsBoxEl.append(p(`Você tem ${bal} pontos, mas este pedido é pequeno para usar um bloco de ${BP} pontos (o desconto não pode passar do valor dos itens e o total mínimo é R$ 1,00).`));
-    return;
-  }
-  if (usePoints % BP !== 0) usePoints = 0; // a regra mudou: escolhe de novo
-  if (usePoints / BP > max) usePoints = max * BP;
-  const label = document.createElement('label');
-  label.textContent = `Usar pontos (você tem ${bal})`;
-  const sel = document.createElement('select');
-  sel.id = 'use-points';
-  sel.name = 'use_points_ui';
-  for (let b = 0; b <= max; b++) {
-    const o = document.createElement('option');
-    o.value = String(b * BP);
-    o.textContent = b === 0 ? 'Não usar pontos' : `${b * BP} pontos (− ${brl(b * pointsRules.blockValueCents)})`;
-    sel.append(o);
-  }
-  sel.value = String(usePoints);
-  sel.addEventListener('change', () => { usePoints = Number(sel.value) || 0; renderSummary(); loadPointsPreview(); });
-  label.append(sel);
-  pointsBoxEl.append(label);
+  box.append(fs);
+  box.append(p('O prêmio sai de graça. O pedido precisa ter pelo menos R$ 1,00 em outros produtos.', 'club-rule'));
+  earnNote();
+  if (focusId) { const el = document.getElementById(focusId); if (el) el.focus({ preventScroll: true }); }
 }
+pointsBoxEl.addEventListener('change', e => {
+  const t = e.target;
+  const id = Number(t && t.dataset.reward);
+  if (!id) return;
+  const n = t.type === 'checkbox' ? (t.checked ? 1 : 0) : Number(t.value) || 0;
+  if (n > 0) chosenRewards.set(id, n); else chosenRewards.delete(id);
+  pruneRewards();
+  renderPoints();
+  renderSummary();
+  onRewardsChanged();
+});
 
 /* ---------- Etapa pós-pedido: cartão (link), Pix (QR no site) ou sem pagamento. O botão do WhatsApp só vem depois de aprovado (C6). ---------- */
 const payEls = {
@@ -1370,13 +1425,15 @@ function buildWhatsAppMessage(srv, cust) {
     let line = `• ${i.qty}x ${i.name}`;
     if (i.size) line += ` (${i.size})`;
     if (Array.isArray(i.extras) && i.extras.length) line += `\n   ${i.extras.join(', ')}`;
-    if (Number.isInteger(i.unit_total_cents)) line += `\n   ${brl(i.unit_total_cents * i.qty)}`;
+    if (i.reward) line += '\n   prêmio do Clube (grátis)';
+    else if (Number.isInteger(i.unit_total_cents)) line += `\n   ${brl(i.unit_total_cents * i.qty)}`;
     lines.push(line);
   }
   lines.push('');
   if (Number.isInteger(srv.subtotal_cents)) lines.push(`Subtotal: ${brl(srv.subtotal_cents)}`);
   if (Number.isInteger(srv.delivery_fee_cents)) lines.push(`Frete: ${brl(srv.delivery_fee_cents)}`);
-  if (srv.discount_cents > 0) lines.push(`Desconto (pontos): − ${brl(srv.discount_cents)}`);
+  if (srv.discount_cents > 0) lines.push(`${srv.coupon_code ? `Cupom ${srv.coupon_code}` : 'Desconto'}: − ${brl(srv.discount_cents)}`);
+  if (srv.club_points > 0) lines.push(`Prêmio do Clube: ${srv.club_points} pontos`);
   lines.push(`*Total: ${brl(srv.total_cents)}*`);
   lines.push('', `Nome: ${cust.customer_name}`);
   lines.push(`WhatsApp: ${cust.customer_phone}`);
@@ -1389,21 +1446,22 @@ function buildWhatsAppMessage(srv, cust) {
 }
 
 // Erros do POST /api/order, em português claro (contrato seção 3)
+const CLUB_ERRORS = new Set(['login_required', 'insufficient_points', 'points_locked', 'points_disabled', 'reward_unavailable', 'reward_max_per_order', 'reward_min_subtotal', 'invalid_rewards', 'points_discount_ended']);
 function handleOrderError(status, d) {
   const code = d && d.code;
   if (code === 'store_closed') { setStoreState(d.store || { open: false, reason: null, message: d.error }); toast('A loja está fechada agora. ' + closedMessage(store || {}), 7000); return; }
-  if (code === 'login_required') { account = null; usePoints = 0; renderAccount(); renderPoints(); renderSummary(); toast('Sua sessão acabou. Entre na sua conta para usar pontos, ou faça o pedido sem pontos.', 6000); return; }
-  if (code === 'insufficient_points') { usePoints = 0; loadAccount(); toast('Você não tem pontos suficientes. Atualizamos seu saldo; confira e tente de novo.', 6000); return; }
-  if (code === 'points_locked') { usePoints = 0; loadAccount(); toast('Seus pontos estão bloqueados por segurança após a recuperação da conta. Faça o pedido sem usar pontos.', 6000); return; }
+  // v4 N3: prêmios do Clube. Mostra a mensagem do servidor e atualiza saldo e vitrine.
+  if (CLUB_ERRORS.has(code)) {
+    if (code === 'login_required') { account = null; clubMine = null; chosenRewards.clear(); renderAccount(); }
+    else if (code !== 'reward_min_subtotal') { loadClub(); refreshClubInfo(); }
+    renderPoints(); renderSummary();
+    toast((d && d.error) || 'Confira os prêmios do Clube e tente de novo.', 7000);
+    return;
+  }
   // F5 (A1-05): origem/tipo barrados pelo servidor. O site manda os dois certos; isso só acontece com página antiga, extensão ou proxy.
   if (code === 'forbidden_origin' || status === 403 && !code) { toast('Não conseguimos confirmar de onde veio o pedido. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
   if (code === 'unsupported_type' || status === 415) { toast('O pedido chegou num formato que não reconhecemos. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
   if (status === 429) { toast('Recebemos muitos pedidos seguidos desta conexão ou deste telefone. Aguarde uns 10 minutos e tente de novo, ou chame a gente no WhatsApp.', 8000); return; }
-  // Regra de pontos pode ter mudado depois que a página abriu: recarrega a regra e mostra a mensagem do servidor.
-  if (code === 'points_disabled') { usePoints = 0; refreshPointsRules(); toast('O programa de pontos está pausado no momento. Faça o pedido sem usar pontos.', 6000); return; }
-  if (code === 'invalid_block') { usePoints = 0; refreshPointsRules(); toast((d && d.error) || 'Quantidade de pontos fora da regra. Escolha de novo.', 6000); return; }
-  if (code === 'invalid_points') { toast('Quantidade de pontos inválida. Escolha de novo.', 5000); return; }
-  if (code === 'discount_too_big') { refreshPointsRules(); toast('O desconto não pode ser maior que o valor dos itens. Use menos pontos.', 5000); return; }
   if (['out_of_area', 'cep_not_found', 'address_not_found', 'origin_unavailable', 'invalid_cep', 'invalid_address'].includes(code)) {
     quote = null;
     const msg = quoteErrorText(status, d);
@@ -1449,7 +1507,8 @@ checkoutFormEl.addEventListener('submit', async e => {
     } else {
       order.address = '';
     }
-    if (usePoints > 0) order.use_points = usePoints;
+    const rw = rewardsPayload();
+    if (rw.length) order.rewards = rw;
     const res = await fetch('/api/order', {
       method: 'POST',
       credentials: 'same-origin',
@@ -1462,12 +1521,13 @@ checkoutFormEl.addEventListener('submit', async e => {
     const srv = { ...data, items: Array.isArray(data.items) ? data.items : [] };
     const whatsappText = buildWhatsAppMessage(srv, order);
     const payment = normalizePayment(data.payment);
-    const summary = { subtotal: srv.subtotal_cents, fee: srv.delivery_fee_cents, pickup: srv.delivery_method === 'pickup', discount: srv.discount_cents || 0, total: srv.total_cents };
+    const rewardsDone = srv.items.filter(i => i && i.reward).map(i => ({ qty: i.qty, name: i.name, size_name: i.size, points: (Number(i.points_cost) || 0) * i.qty }));
+    const summary = { subtotal: srv.subtotal_cents, fee: srv.delivery_fee_cents, pickup: srv.delivery_method === 'pickup', discount: srv.discount_cents || 0, couponCode: srv.coupon_code || null, total: srv.total_cents, rewards: rewardsDone };
     // pedido criado com sucesso: só agora o carrinho é limpo (cópia guardada para "refazer")
     lastCartCopy = cart.map(i => ({ ...i }));
     cart = [];
     save();
-    usePoints = 0;
+    chosenRewards.clear();
     quote = null;
     addRecent({ public_code: data.public_code, code: data.code, token: data.tracking_token });
     const card = payment && payment.type === 'card';

@@ -915,3 +915,17 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
 .card.is-paused:not(:disabled) { cursor: pointer; }
 .pm-paused-note { margin: 0 0 12px; padding: 10px 14px; font-size: .9rem; font-weight: 800; color: var(--brand-deep); background: var(--brand-soft); border: 2px dashed var(--brand); border-radius: 14px; }
 #pm-add:disabled { opacity: .6; cursor: not-allowed; }
+/* N3: Clube no checkout */
+.club-title { font-size: 1.05rem; margin: 0 0 6px; color: var(--brand-deep); }
+.club-rewards { border: 0; padding: 0; margin: 6px 0; display: grid; gap: 8px; }
+.club-rewards legend { font-weight: 800; font-size: .92rem; margin-bottom: 6px; padding: 0; }
+.club-reward { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 10px 12px; border: 1.5px solid var(--chip-line); border-radius: 14px; background: #fff; min-height: 48px; }
+.club-reward.is-off { background: #faf5f2; color: var(--ink-soft); }
+.club-reward .cr-pick, .club-reward .cr-label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; flex: 1 1 auto; margin: 0; font-weight: 700; cursor: pointer; }
+.club-reward .cr-pick input { width: 22px; height: 22px; accent-color: var(--brand); flex: 0 0 auto; }
+.club-reward .cr-name { font-weight: 800; }
+.club-reward .cr-cost { font-size: .85rem; color: var(--ink-soft); font-weight: 700; }
+.club-reward .cr-miss { margin-left: auto; font-size: .82rem; font-weight: 800; color: var(--brand-deep); }
+.club-reward select { flex: 0 0 auto; min-height: 44px; width: auto; }
+.club-rule { font-size: .82rem; color: var(--ink-soft); }
+.sum-row.sum-reward span:last-child { color: var(--ok); font-weight: 700; }
