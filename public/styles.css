@@ -962,3 +962,15 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
 .pm-best { margin: -4px 0 6px; }
 .cart-info, .checkout-eta { margin: -6px 0 14px; font-size: .84rem; font-weight: 700; color: var(--ink-soft); text-align: center; }
 .checkout-eta { margin: 0 0 10px; text-align: left; }
+
+/* v4 N7: Quem somos (texto oficial, assinatura com morango e chocolate, botão do Instagram) */
+.about-story p { font-size: 1.02rem; line-height: 1.6; }
+.about-sign { margin-top: 14px; font-weight: 700; color: var(--cacau); }
+.ilustras { display: inline-flex; gap: 4px; vertical-align: middle; margin-left: 4px; }
+.ilustra-doce { width: 28px; height: 28px; display: inline-block; transform-origin: 50% 80%; animation: ilustra-balanca 3.2s ease-in-out infinite; }
+.ilustra-doce.alt { animation-delay: -1.6s; }
+@keyframes ilustra-balanca { 0%, 100% { transform: rotate(-6deg) translateY(0); } 50% { transform: rotate(6deg) translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .ilustra-doce { animation: none; } }
+.about-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.about-ig { gap: 8px; color: var(--brand-deep); background: #fff; box-shadow: 0 4px 0 var(--brand-deep), inset 0 0 0 2px var(--brand-deep); }
+@media (hover: hover) { .about-ig:hover { background: var(--brand-soft); } }
