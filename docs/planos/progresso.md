@@ -56,7 +56,9 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F1 | feito | v4 | c481d6f; seção 2 do plano com os 10 Altos e 10 Médios/Baixos que entram |
 | F2 A2 | feito | v4-a2 | 89c63af; N1-N11 backend, Altos do A2, push sem dependência; 15 suítes ok; migração v4 rodada só no dev |
 | F4 A5 antecipada | feito | v4-a5 | 7a5d893; logo 1,7 MB para 9 KB, OG, CLS 0,47 para 0,00, morango/chocolate, N9, U-11 |
-| F3 A3, A4 | em andamento | v4-a3, v4-a4 | 14/11 madrugada |
+| F3 A4 | feito | v4-a4 | 9e15662; N1-N3, N6-N8, N10, N11, U-01 a U-05, U-08 a U-10, X-01, P-06, P-12; 39 prints |
+| F3 A2 extra | em andamento | v4-a2 | pedidos do A4: retry_payment, tracking_url na conta, itens/bairro no rastreio |
+| F3 A3 | em andamento | v4-a3 | painel v4 |
 | F5 A6, A1 | aguardando | — | |
 | F6 Netlify | aguardando | — | migração (plano seção 5); deploy só com o Renan |
 | F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
