@@ -478,4 +478,70 @@ Variável `SITE_URL` (só `https://`; `http://localhost` no dev). Sem ela: `http
 
 ### 10.11 Banco (v4)
 
-Migração `scripts/migrate-2026-11-12-v4-schema.js` (aditiva, idempotente; `schema.sql` espelhado e sobe em banco vazio): `club_rewards`, `coupons`, `coupon_redemptions`, `coupon_campaigns`, `coupon_campaign_targets`, `review_gifts`, `webhook_events`, `admin_push_subscriptions`; em `orders`: `club_points`, `coupon_id`, `coupon_code`, `coupon_discount_cents`, `pix_qr_code`, `pix_qr_base64`, `pix_expires_at`, `push_notified_at`; índice parcial `orders_paid_created_idx`; CHECK do ledger com `reward_*`. Prêmios de exemplo (só dev): `scripts/migrate-2026-11-12-v4-club-seed.js`. `ingredient_synonyms` fica no banco, sem uso.
+Migração `scripts/migrate-2026-11-12-v4-schema.js` (aditiva, idempotente; `schema.sql` espelhado e sobe em banco vazio): `club_rewards`, `coupons`, `coupon_redemptions`, `coupon_campaigns`, `coupon_campaign_targets`, `review_gifts`, `webhook_events`, `admin_push_subscriptions`; em `orders`: `club_points`, `coupon_id`, `coupon_code`, `coupon_discount_cents`, `pix_qr_code`, `pix_qr_base64`, `pix_expires_at`, `push_notified_at`, `scheduled_for` (N10); índices parciais `orders_paid_created_idx` e `orders_scheduled_for_idx`; CHECK do ledger com `reward_*`. Prêmios de exemplo (só dev): `scripts/migrate-2026-11-12-v4-club-seed.js`. `ingredient_synonyms` fica no banco, sem uso.
+
+### 10.12 Encomenda com data marcada (N10)
+
+**Regra:** o pedido pode mandar `scheduled_for` (ISO 8601 com fuso, ex.: `2026-11-21T18:00:00.000Z` ou `2026-11-21T15:00:00-03:00`). Ausente, `null` ou `""` = "o quanto antes" (como hoje). O servidor aceita só se TUDO vale:
+- agendamento ligado (`scheduling_enabled`);
+- início alinhado a :00 ou :30 (sem segundos) e a janela de 30 min cabe inteira numa faixa do horário de funcionamento daquele dia (`store_hours`, fuso de São Paulo). Ex.: faixa 09:00-18:00 = janelas 09:00 a 17:30;
+- pelo menos `scheduling_min_lead_min` minutos à frente de agora e no máximo `scheduling_max_days` dias de calendário à frente (hoje = dia 0);
+- sem fechamento manual cobrindo a janela: "até reabrir" e a pausa antiga bloqueiam todas; fechamento com prazo bloqueia as janelas que começam antes da reabertura;
+- vaga na janela (`scheduling_slot_capacity`, 0 = sem limite). Entrega e retirada dividem a mesma vaga. Ocupa a vaga o pedido não cancelado que está pago (`approved`) ou que espera pagamento (`pending`, `in_process`, `authorized`) há menos de 60 min. Recusado, cancelado, vencido, estornado e checkout abandonado há mais de 60 min não ocupam.
+
+Loja fechada agora + `scheduled_for` válido = pedido aceito (pagamento na hora, igual hoje). Loja fechada sem `scheduled_for` = 503 `store_closed` (como antes). Preço, frete, cupom, Clube e pagamento não mudam.
+
+Trava contra corrida: `pg_advisory_xact_lock(3, floor(epoch_ms / 1800000))` na mesma transação do insert do pedido, depois das travas 1 (pontos) e 2 (cupom). O insert só entra se a contagem da janela ainda estiver abaixo da vaga. Testado com 6 pedidos simultâneos e vaga 1: entra 1.
+
+**Erros do `POST /api/order`:**
+
+| HTTP | `code` | Quando |
+|---|---|---|
+| 400 | `invalid_schedule` | formato inválido, não alinhado a 30 min ou fora das janelas do dia |
+| 400 | `schedule_too_soon` | antes de agora + antecedência mínima |
+| 400 | `schedule_too_far` | depois do máximo de dias |
+| 400 | `schedule_closed` | fechamento manual cobre a janela |
+| 409 | `scheduling_disabled` | agendamento desligado (oferecer "o quanto antes") |
+| 409 | `slot_full` | a janela lotou (recarregar as janelas e escolher outra) |
+
+**Resposta 201** ganha `scheduled_for` (ISO UTC ou `null`) e `scheduled_label` (`"Agendado: sex 21/11, 15:00-15:30"` ou `null`).
+
+**Janelas:** `GET /api/store?a=slots&date=AAAA-MM-DD&mode=delivery|pickup` (limite 120 consultas por IP em 10 min, 429 `rate_limited`; 400 `invalid_date` e `invalid_mode`):
+
+```json
+{ "enabled": true, "date": "2026-11-21", "mode": "pickup", "slot_minutes": 30, "min_lead_min": 120, "max_days": 7,
+  "slots": [ { "start": "2026-11-21T12:00:00.000Z", "end": "2026-11-21T12:30:00.000Z", "label": "09:00-09:30", "available": true, "reason": null } ] }
+```
+
+`reason`: `null` (livre), `too_soon`, `too_far`, `closed`, `full`. Agendamento desligado, data no passado ou além de `max_days` = `slots: []`. Dia sem horário = `slots: []`. A tela manda o `start` escolhido como `scheduled_for`. `mode` só é validado (a vaga é a mesma).
+
+**`GET /api/menu`** ganha `scheduling: { enabled, min_lead_min, max_days, slot_minutes: 30 }`.
+
+**Acompanhamento e "Meus pedidos"** (`/api/order-status?t=`, `customer?a=orders`): `scheduled_for` e `scheduled_label` (null quando "o quanto antes").
+
+**Painel:**
+- todo pedido (`orders`, `order_history`) traz `scheduled_for` e `scheduled_label`;
+- `orders?f=scheduled`: só agendados, ordenados pela data marcada (a mais próxima primeiro). `order_history?f=scheduled` também filtra (ordem continua por criação);
+- a lista principal mostra pedidos criados há menos de 24 h OU com data marcada há menos de 24 h (encomenda feita há 3 dias para amanhã aparece). O histórico é o resto;
+- conclusão automática ("pronto" ou "aguardando entrega" há mais de 1 h) conta a partir do mais tarde entre pronto e data marcada: pronto às 10:00 para as 15:00 só conclui às 16:00 (`completed_at` = data marcada + 1 h);
+- a devolução de reserva de pontos e cupom (24 h sem pagar) continua contando da criação, porque o pagamento é na hora do pedido.
+
+**Ajustes:** `GET order_settings` (admin e staff) e `POST order_settings_save` (só admin, auditado em `ajustes_pedido_salvos`). Manda só os campos que mudam. Se um campo for inválido, nada é gravado (400, `code: invalid_settings`; corpo vazio = 400 `Nada para alterar.`).
+
+| Campo | Tipo | Padrão | Limites |
+|---|---|---|---|
+| `scheduling_enabled` | boolean | `true` | |
+| `scheduling_min_lead_min` | inteiro (min) | 120 | 0 a 2880 |
+| `scheduling_max_days` | inteiro (dias) | 7 | 1 a 30 |
+| `scheduling_slot_capacity` | inteiro | 0 (sem limite) | 0 a 100 |
+| `best_seller_enabled` | boolean | `true` | (N11) |
+| `delivery_eta_min` | inteiro (min) | 30 | 0 a 600 (N11) |
+| `delivery_eta_max` | inteiro (min) | 50 | 0 a 600, maior ou igual ao mínimo (N11) |
+
+Resposta: `{ settings: { ...campos acima, limits: { scheduling_min_lead_min: [0, 2880], scheduling_max_days: [1, 30], scheduling_slot_capacity: [0, 100], delivery_eta: [0, 600] } } }`.
+
+### 10.13 Selo "Mais pedido" e prazo de entrega (N11)
+
+- `GET /api/menu`: todo produto ganha `best_seller` (boolean). `true` nos até 3 produtos ativos com mais unidades vendidas nos últimos 30 dias, em pedidos pagos (`approved`) e não cancelados, com no mínimo 5 unidades cada. Prêmios do Clube não contam. Empate: menor id. `best_seller_enabled = false` = todos `false`. Sem dado pessoal.
+- `GET /api/menu`: `delivery_eta_min` e `delivery_eta_max` (minutos, padrão 30 e 50). Só informativos. A4 mostra "Entrega em 30 a 50 min".
+- Ajustes no painel: `order_settings` / `order_settings_save` (10.12).
