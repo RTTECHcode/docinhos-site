@@ -38,7 +38,7 @@ Nenhum Crítico nas duas auditorias. Entram todos os Altos (10) e os Médios/Bai
 | U-03 | Aviso de loja fechada escondido | A4 (+A5 visual) | Faixa visível no topo do cardápio, no carrinho e no topo do checkout com o horário de reabertura (resolve também X-06). |
 | U-04 | Frete só aparece no fim | A4 | Linha no cardápio e no carrinho com as faixas que já vêm em `/api/menu` ("Entrega até 10 km: de R$ 6 a R$ 14. Retirada grátis."). Cálculo por CEP no carrinho fica de backlog. |
 | U-05 | Faltam sinais de confiança | A4 + A5 + Renan | A4: rodapé e topo com bairro/cidade, horário de hoje (de `/api/menu`), "Pix e cartão" e Instagram (junto com N7). Textos reais de "Quem somos" e prazo médio dependem do Renan: deixar marcado `CONFIRMAR`. |
-| U-06 | Painel não avisa pedido novo | A2 + A3 | Decisão do Renan (14/11): som no PC com a aba aberta é o mínimo, e o admin vira app instalável. A3: som (arquivo em `public/admin/`), vibração e contagem no título da aba ("(1) Pedidos") quando chegar pedido pago; botão "Ativar som" (o navegador exige um toque). A3: admin como PWA (`public/admin/manifest.webmanifest`, service worker com escopo `/admin/`, ícones, instalável no PC e no celular; sem cache de dados de pedido ou de cliente no service worker). A2: Web Push para pedido pago: tabela `admin_push_subscriptions`, ações `push_subscribe`, `push_unsubscribe` e `push_test`, envio ao confirmar o pagamento (webhook e conferência), chaves VAPID em `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` (sem as variáveis, o push fica desligado sem erro) e `scripts/gerar-vapid.js` para o Renan gerar as chaves. Pode adicionar a dependência `web-push` no `package.json`. A notificação não traz dado pessoal: só "Pedido DG-1234 pago" e o valor. WhatsApp automático: aguarda decisão do Renan. |
+| U-06 | Painel não avisa pedido novo | A2 + A3 | Decisão do Renan (14/11): som no PC com a aba aberta é o mínimo, e o admin vira app instalável. A3: som (arquivo em `public/admin/`), vibração e contagem no título da aba ("(1) Pedidos") quando chegar pedido pago; botão "Ativar som" (o navegador exige um toque). A3: admin como PWA (`public/admin/manifest.webmanifest`, service worker com escopo `/admin/`, ícones, instalável no PC e no celular; sem cache de dados de pedido ou de cliente no service worker). A2: Web Push para pedido pago: tabela `admin_push_subscriptions`, ações `push_subscribe`, `push_unsubscribe` e `push_test`, envio ao confirmar o pagamento (webhook e conferência), chaves VAPID em `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` (sem as variáveis, o push fica desligado sem erro) e `scripts/gerar-vapid.js` para o Renan gerar as chaves. Pode adicionar a dependência `web-push` no `package.json`. A notificação não traz dado pessoal: só "Pedido DG-1234 pago" e o valor. WhatsApp automático: fica para a v5, via coexistência (CoEx) no número da loja (decisão do Renan, 14/11). |
 | P-01 | Logo de 1,7 MB | A5 | Logo 330x330 em WebP (< 30 KB) com `width`/`height`; original fora de `public/`. |
 | P-02 | Sem Open Graph | A5 (+A4 nas páginas dele) | `og:*`, `twitter:card` e imagem 1200x630 nas páginas públicas. A URL definitiva ainda não existe: usar `https://docinhos-site.vercel.app` por enquanto, num ponto só fácil de trocar. |
 
@@ -58,7 +58,7 @@ Nenhum Crítico nas duas auditorias. Entram todos os Altos (10) e os Médios/Bai
 | U-10 | A4 | "Meus pedidos" com link para acompanhar o pedido. |
 | X-01 | A4 | Modais de produto e carrinho com nome acessível (`aria-labelledby`). |
 
-Pendências que só o Renan resolve (não travam os agentes): cadastrar o monitor externo (O-01), decidir sobre o WhatsApp automático (U-06), prazo médio de entrega (U-05), registrar o domínio `docinhosdagigioz.com.br` e apontar na Vercel (P-02, N9), gerar as chaves VAPID e colocar na Vercel.
+Pendências que só o Renan resolve (não travam os agentes): cadastrar o monitor externo (O-01), concluir o registro do domínio `docinhosdagigioz.com.br` (solicitado em 14/11) e apontar na Vercel (P-02, N9), gerar as chaves VAPID e colocar na Vercel.
 
 ## 3. Desenho técnico das demandas
 
@@ -155,6 +155,22 @@ Os emojis 🍓🍫 do fim saem e viram ilustrações próprias (SVG, com animaç
 
 ### N9 — Benchmarking, domínio e landing
 A5: `docs/planos/benchmarking-v4.md`, `/experimental.html` (noindex, sem link, arquivos próprios `experimental.css`/`experimental.js`), recomendação de domínio e melhorias de esforço P.
+
+### N10 — Encomenda com data marcada (pedido do Renan, 14/11)
+Banco: `orders.scheduled_for timestamptz null` (null = o quanto antes). Ajustes novos: `scheduling_enabled` (padrão ligado), `scheduling_min_lead_min` (padrão 120), `scheduling_max_days` (padrão 7), `scheduling_slot_capacity` (pedidos por janela de 30 min; 0 = sem limite).
+
+Regras (servidor decide tudo):
+- O pedido pode mandar `scheduled_for`. Aceito só se: agendamento ligado, janela de 30 min alinhada, dentro do horário de funcionamento daquele dia (`store_hours`, fuso de São Paulo), pelo menos `scheduling_min_lead_min` à frente, no máximo `scheduling_max_days` à frente e com vaga na janela (conta pedidos não cancelados e não falhos daquela janela, com trava para dois pedidos simultâneos não estourarem a vaga).
+- Com a loja fechada agora, o cliente pode agendar para quando ela abrir (resolve a opinião do U-03). Pedido "o quanto antes" com a loja fechada continua recusado.
+- Pagamento igual ao de hoje (na hora, Pix ou cartão). Sem mudança em preço, frete, cupom e Clube.
+- `/api/store?a=slots&date=AAAA-MM-DD&mode=delivery|pickup` (ou ação equivalente num arquivo existente): devolve as janelas com `available`. `/api/menu` informa `scheduling: { enabled, min_lead_min, max_days }`.
+- Admin: pedido agendado traz `scheduled_for` e etiqueta "Agendado: sex 21/11, 15:00-15:30"; filtro "Agendados" e ordenação pela data marcada; o sweep automático (24 h sem pagar, conclusão automática) respeita a data marcada.
+- Telas: A4 põe "Quando?" no checkout ("O quanto antes" ou "Agendar": dia e janela); A3 mostra a etiqueta, o filtro e os quatro ajustes em Ajustes.
+
+### N11 — Selo "Mais pedido" e prazo de entrega
+- Selo automático: os 3 produtos com mais unidades vendidas (pedidos `approved`, não cancelados) nos últimos 30 dias, com mínimo de 5 unidades cada. `/api/menu` manda `best_seller: true` no produto. Ajuste `best_seller_enabled` (padrão ligado). Calculado no servidor, sem dado pessoal.
+- Prazo médio de entrega (Renan, 14/11): 30 a 50 minutos. Ajustes `delivery_eta_min` = 30 e `delivery_eta_max` = 50, devolvidos em `/api/menu`; A4 mostra no topo, no carrinho e no checkout (U-05); A3 permite editar.
+- Título da home aprovado (P-13): "Docinhos da Gigi — Doces artesanais em Osasco, peça online". Imagem de compartilhamento aprovada.
 
 ## 4. Divisão de arquivos (evita conflito)
 

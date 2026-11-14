@@ -885,3 +885,26 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
   .topbar { padding-inline: 8px; gap: 6px; }
 }
 @media (min-width: 420px) { .topbar-btn.points .pts-word { display: inline; } .topbar-btn.account .acc-name { max-width: 14ch; } }
+
+/* v4 A5 / P-03 (CLS): reserva o espaço antes de o cardápio chegar.
+   A faixa de categorias já nasce com a altura final (8 + 44 do chip + 10 + 1 da borda)
+   e a área do cardápio ocupa ao menos uma tela, para o rodapé não aparecer e depois "pular". */
+.categorias { min-height: 63px; }
+#cardapio { min-height: 100vh; min-height: 100svh; }
+
+/* v4 A5 / N7: ilustrações da assinatura do "Quem somos" (substituem os emojis 🍓🍫).
+   Uso (A4): <img src="/images/branding/morango.svg" alt="" class="ilustra-doce" width="28" height="28">
+             <img src="/images/branding/chocolate.svg" alt="" class="ilustra-doce alt" width="28" height="28">
+   alt="" porque são decorativas ao lado da assinatura. A animação só roda sem prefers-reduced-motion. */
+.ilustra-doce { display: inline-block; width: 1.75em; height: 1.75em; vertical-align: -.45em; margin-left: .2em; transform-origin: 50% 85%; }
+@keyframes balanca-doce { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg) translateY(-2px); } }
+@media (prefers-reduced-motion: no-preference) {
+  .ilustra-doce { animation: balanca-doce 2.8s ease-in-out infinite; }
+  .ilustra-doce.alt { animation-delay: -1.4s; }
+}
+
+/* v4 A5 / U-11: campos do checkout com 16 px. Abaixo disso o Safari do iPhone amplia a tela a cada toque. */
+#checkout-form input:not([type="radio"]), #checkout-form textarea, #checkout-form select { font-size: 1rem; }
+/* v4 A5 / X-09 (parte): textos que estavam entre 10 e 12,5 px ficam legíveis, sem mudar a tipografia. */
+.price .from { font-size: .72rem; }
+.pix-wait { font-size: .85rem; }
