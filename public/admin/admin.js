@@ -48,6 +48,22 @@
   const STATUS_CLASS = { awaiting_payment: 'warn', payment_failed: 'off', refunded: 'off', cancelled: 'off', received: 'ok', completed: 'ok' };
   DG.statusPill = o => el('span', { class: 'pill st-' + (o.status_key || 'x') + ' ' + (STATUS_CLASS[o.status_key] || ''), text: o.status_label || o.fulfillment_label || o.fulfillment_status || '' });
   DG.isAdmin = () => !!(DG.state.user && DG.state.user.role === 'admin');
+  // v4: datas no fuso da loja (São Paulo). daySP devolve AAAA-MM-DD (para <input type="date">), fmtDay mostra dd/mm/aaaa.
+  DG.daySP = iso => (iso ? new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) : '');
+  DG.fmtDay = iso => (iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '');
+  DG.todaySP = () => DG.daySP(new Date().toISOString());
+  // Campo numérico inteiro com rótulo. Lê com DG.readInt(input, min, max, rótulo): número ou { problem }.
+  DG.intField = (label, value, min, max) => {
+    const input = el('input', { type: 'number', inputmode: 'numeric', step: 1, min, max, value: value === null || value === undefined ? '' : String(value) });
+    return { input, field: el('label', { class: 'field' }, el('span', { text: label }), input) };
+  };
+  DG.readInt = (input, min, max, label, optional) => {
+    const raw = String(input.value).trim();
+    if (raw === '' && optional) return null;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < min || n > max) return { problem: label + ': use um número inteiro de ' + min.toLocaleString('pt-BR') + ' a ' + max.toLocaleString('pt-BR') + '.' };
+    return n;
+  };
   DG.fmtDate = iso => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
   let toastTimer = null;
@@ -178,14 +194,24 @@
     sheetStack.length = 0;
   }
   function stopTab() { const t = DG.tabs[DG.state.tab]; if (t && t.stop) t.stop(); }
+  // v4: telas que ficam dentro de "Mais" (a barra de baixo não cabe mais abas no celular).
+  const SUB_TABS = { club: 'Clube', coupons: 'Cupons e WhatsApp', reports: 'Relatórios', account: 'Conta' };
   DG.go = async function (tab) {
+    if (!DG.tabs[tab]) tab = 'orders';
     stopTab();
     DG.state.tab = tab;
-    document.querySelectorAll('#tabbar button').forEach(b => { if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    const navTab = SUB_TABS[tab] ? 'more' : tab;
+    document.querySelectorAll('#tabbar button').forEach(b => { if (b.dataset.tab === navTab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     const view = $('#view');
-    view.replaceChildren(DG.loading());
+    let target = view;
+    if (SUB_TABS[tab]) {
+      target = el('div', { class: 'sub-body' }, DG.loading());
+      view.replaceChildren(el('div', { class: 'sub-head' },
+        el('button', { class: 'btn small', type: 'button', text: '‹ Mais', 'aria-label': 'Voltar para Mais', on: { click: () => DG.go('more') } }),
+        el('h2', { class: 'sub-title', text: SUB_TABS[tab] })), target);
+    } else view.replaceChildren(DG.loading());
     window.scrollTo(0, 0);
-    try { await DG.tabs[tab].render(view); } catch (e) { if (DG.state.tab === tab) view.replaceChildren(el('p', { class: 'error', text: e.message })); }
+    try { await DG.tabs[tab].render(target); } catch (e) { if (DG.state.tab === tab) target.replaceChildren(el('p', { class: 'error', text: e.message })); }
   };
   DG.reload = () => DG.go(DG.state.tab);
   DG.loadCatalog = async () => { DG.state.catalog = await DG.api('catalog'); return DG.state.catalog; };
@@ -203,6 +229,23 @@
   // Rótulos em pt-BR para eventos da atividade; os de AUDIT_WARN aparecem em destaque (pedem ação de alguém).
   const AUDIT_LABELS = { pagamento_apos_cancelamento: 'Pagamento recebido após cancelamento – verificar devolução' };
   const AUDIT_WARN = new Set(['pagamento_apos_cancelamento']);
+
+  // ---- aba Mais (v4): atalhos para Clube, Cupons, Relatórios e Conta ----
+  DG.tabs.more = {
+    render(view) {
+      const admin = DG.isAdmin();
+      const item = (tab, title, sub, icon) => el('button', { class: 'card item-btn more-item', type: 'button', on: { click: () => DG.go(tab) } },
+        el('span', { class: 'more-ico', 'aria-hidden': 'true', text: icon }),
+        el('span', { class: 'grow' }, el('strong', { class: 'more-t', text: title }), el('span', { class: 'muted small more-s', text: sub })),
+        el('span', { class: 'more-go', 'aria-hidden': 'true', text: '›' }));
+      view.replaceChildren(
+        el('h2', { class: 'section-title', text: 'Mais' }),
+        item('club', 'Clube de pontos', admin ? 'Prêmios que o cliente troca por pontos e pontos por real.' : 'Prêmios do Clube (só leitura).', '★'),
+        admin ? item('coupons', 'Cupons e WhatsApp', 'Criar cupons e montar envios pelo WhatsApp.', '%') : null,
+        admin ? item('reports', 'Relatórios', 'Clientes e vendas, com exportação em planilha.', '▤') : null,
+        item('account', 'Conta e avisos', 'Senha, avisos de pedido neste aparelho, usuários e atividade.', '☺'));
+    }
+  };
 
   // ---- aba Conta ----
   DG.tabs.account = {
