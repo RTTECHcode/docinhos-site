@@ -210,6 +210,7 @@ fetch('/api/menu').then(r => { if (!r.ok) throw 0; return r.json(); }).then(data
   setClubInfo(data.club);
   setEta(data.delivery_eta_min, data.delivery_eta_max);
   setScheduling(data.scheduling);
+  setShipping(data.shipping);
   renderCats();
   renderMenu();
   observeCats();
@@ -293,13 +294,15 @@ document.addEventListener('click', e => {
 });
 
 function renderMenu() {
+  let imgN = 0; // P-06: as primeiras fotos (acima da dobra) carregam já; as outras, sob demanda
   menuEl.innerHTML = menu.map(c => `
     <section class="category" id="cat-${c.id}">
       <h2>${brigIcon(c)}${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
         <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable && !p.paused ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
-          ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
+          ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="104" height="104" ${imgN++ < 4 ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
           <span class="body">
+            ${p.best_seller === true ? '<span class="best-tag">Mais pedido</span>' : ''}
             <span class="name">${esc(p.name)}</span>
             ${p.description ? `<span class="desc">${esc(p.description)}</span>` : ''}
             ${p.unavailable && !p.paused ? '<span class="unavail-tag">Indisponível no momento</span>' : ''}
@@ -342,8 +345,9 @@ function openProduct(id, opener) {
   const loose = extras.filter(c => !grouped.has(c.id));
 
   document.querySelector('#product-modal-body').innerHTML = `
-    <div class="pm-photo">${activeProduct.imagePath ? `<img src="${esc(encodeURI(activeProduct.imagePath))}" alt="${esc(activeProduct.name)}">` : ''}</div>
-    <h3 class="pm-name">${esc(activeProduct.name)}</h3>
+    <div class="pm-photo">${activeProduct.imagePath ? `<img src="${esc(encodeURI(activeProduct.imagePath))}" alt="${esc(activeProduct.name)}" width="200" height="200" decoding="async">` : ''}</div>
+    <h3 class="pm-name" id="pm-name">${esc(activeProduct.name)}</h3>
+    ${activeProduct.best_seller === true ? '<p class="best-tag pm-best">Mais pedido</p>' : ''}
     ${activeProduct.description ? `<p class="pm-desc">${esc(activeProduct.description)}</p>` : ''}
     <div class="pm-price">${activeProduct.priceCents != null ? brl(activeProduct.priceCents) : ''}</div>
     ${sizes.length ? `
@@ -549,6 +553,7 @@ function renderCart() {
     itemsEl.innerHTML = '<div class="cart-empty">Seu carrinho está vazio. Escolha um docinho no cardápio!</div>';
     document.querySelector('#checkout-btn').hidden = true;
     document.querySelector('#cart-total').innerHTML = '';
+    renderInfo();
     return;
   }
   document.querySelector('#checkout-btn').hidden = false;
@@ -569,6 +574,7 @@ function renderCart() {
     </div>`;
   }).join('');
   document.querySelector('#cart-total').innerHTML = `<span>Total</span><span>${brl(cartTotal())}</span>`;
+  renderInfo();
 }
 
 document.addEventListener('click', e => {
@@ -671,10 +677,10 @@ function setStoreState(st) {
     storeBadgeEl.title = store.open ? '' : closedMessage(store);
   }
   const closed = !!store && !store.open;
-  closedNoteEl.hidden = !closed;
-  closedNoteEl.textContent = closed ? closedMessage(store) + ' Você pode montar o carrinho, mas só conseguimos receber o pedido com a loja aberta.' : '';
+  if (store && Array.isArray(store.hours)) storeHours = store.hours;
   syncSubmitState();
   renderWhen();
+  renderInfo();
 }
 async function refreshStore() {
   try {
@@ -837,6 +843,7 @@ function syncDelivery() {
   pickupInfoEl.hidden = !pickup;
   renderPoints();
   renderSummary();
+  renderInfo();
 }
 checkoutFormEl.addEventListener('change', e => { if (e.target.name === 'delivery') syncDelivery(); });
 
@@ -1396,6 +1403,75 @@ function couponOnOpen() {
   toast(`Cupom ${code} guardado! Ele é conferido quando você finalizar o pedido.`, 5000);
 })();
 
+/* ---------- v4 U-03/X-06, U-04, U-05, N11: loja fechada no topo, faixa de confiança, prazo e frete ----------
+   Tudo vem do servidor (/api/menu e /api/store?a=state); aqui só se monta o texto. */
+let shipping = null;  // { bands: [{ max_km, fee_cents }], maxKm, pickupFeeCents }
+let storeHours = null; // [{ weekday, opens, closes }]
+const closedStripEl = document.querySelector('#closed-strip');
+const closedStripTextEl = document.querySelector('#closed-strip-text');
+const closedStripBtnEl = document.querySelector('#closed-strip-btn');
+const cartClosedEl = document.querySelector('#cart-closed');
+const cartInfoEl = document.querySelector('#cart-info');
+const checkoutEtaEl = document.querySelector('#checkout-eta');
+function setShipping(s) {
+  const ok = s && Array.isArray(s.bands) && s.bands.length && s.bands.every(b => b && Number.isFinite(Number(b.max_km)) && Number.isInteger(b.fee_cents));
+  shipping = ok ? s : null;
+  renderInfo();
+}
+const brlShort = c => (c % 100 ? brl(c) : 'R$ ' + c / 100);
+// "até 10 km: de R$ 6 a R$ 14"
+function shipText() {
+  if (!shipping) return '';
+  const fees = shipping.bands.map(b => b.fee_cents);
+  const min = Math.min(...fees), max = Math.max(...fees);
+  const km = kmText(Number(shipping.maxKm) || shipping.bands[shipping.bands.length - 1].max_km);
+  return `até ${km} km: ${min === max ? brlShort(min) : `de ${brlShort(min)} a ${brlShort(max)}`}`;
+}
+const pickupText = () => (shipping && shipping.pickupFeeCents > 0 ? `Retirada: ${brlShort(shipping.pickupFeeCents)}` : 'Retirada grátis');
+// Horário de hoje (São Paulo): "10:00 às 22:00" ou "fechado hoje".
+function todayHoursText() {
+  if (!Array.isArray(storeHours)) return '';
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(new Intl.DateTimeFormat('en-US', { timeZone: SP_TZ, weekday: 'short' }).format(new Date()));
+  const rows = storeHours.filter(h => h && h.weekday === wd && /^\d{2}:\d{2}$/.test(h.opens) && /^\d{2}:\d{2}$/.test(h.closes));
+  return rows.length ? rows.map(h => `${h.opens} às ${h.closes}`).join(' e ') : 'fechado hoje';
+}
+function closedText(where) {
+  const base = closedMessage(store || {});
+  if (scheduling) return base + (where === 'checkout' ? ' Você pode agendar o pedido em "Quando?", logo abaixo.' : ' Você já pode agendar o seu pedido.');
+  return base + ' Você pode montar o carrinho, mas só conseguimos receber o pedido com a loja aberta.';
+}
+function renderInfo() {
+  const closed = !!store && !store.open;
+  // faixa de loja fechada (topo), no carrinho e no checkout
+  closedStripEl.hidden = !closed;
+  closedStripTextEl.textContent = closed ? closedText('top') : '';
+  closedStripBtnEl.hidden = !(closed && scheduling);
+  cartClosedEl.hidden = !closed;
+  cartClosedEl.textContent = closed ? closedText('cart') : '';
+  closedNoteEl.hidden = !closed;
+  closedNoteEl.textContent = closed ? closedText('checkout') : '';
+  // faixa de confiança
+  const hours = todayHoursText();
+  document.querySelector('#trust-hours').hidden = !hours;
+  document.querySelector('#trust-hours-text').textContent = hours;
+  document.querySelector('#trust-eta').hidden = !etaText();
+  document.querySelector('#trust-eta-text').textContent = etaText() ? `chega em ${etaText()}` : '';
+  document.querySelector('#trust-ship').hidden = !shipText();
+  document.querySelector('#trust-ship-text').textContent = shipText() ? `${shipText()} · ${pickupText().toLowerCase()}` : '';
+  // carrinho: prazo e frete
+  const parts = [etaText() && `Entrega em ${etaText()}`, shipText() && `frete ${shipText()}`, shipping && pickupText()].filter(Boolean);
+  cartInfoEl.hidden = !parts.length || !cart.length;
+  cartInfoEl.textContent = parts.length ? parts.join(' · ') + '. O frete exato aparece no checkout.' : '';
+  // checkout: prazo quando "Quando?" não aparece
+  checkoutEtaEl.hidden = !etaText() || !!scheduling;
+  checkoutEtaEl.textContent = etaText() ? `${isPickup() ? 'Pronto para retirar' : 'Entrega'} em ${etaText()}, depois da confirmação do pagamento.` : '';
+}
+closedStripBtnEl.addEventListener('click', () => {
+  if (cart.length) { confirmRmKey = null; renderCart(); openModal('#cart-modal', { opener: closedStripBtnEl }); return; }
+  scrollToEl(document.getElementById('cardapio'), '#cardapio');
+  toast('Escolha seus doces. No checkout, em "Quando?", escolha o dia e o horário.', 5000);
+});
+
 /* ---------- Etapa pós-pedido: cartão (link), Pix (QR no site) ou sem pagamento. O botão do WhatsApp só vem depois de aprovado (C6). ---------- */
 const payEls = {
   codeRow: document.querySelector('#payment-code-row'),
@@ -1852,6 +1928,7 @@ syncDelivery();
 renderCartFab();
 renderAccount();
 loadAccount();
+refreshStore(); // horário de hoje (a=state traz hours)
 handlePaymentReturn();
 
 /* L6: voltar da página de entrar/criar conta (/?checkout=1) reabre o checkout com o carrinho que ficou no aparelho. */
