@@ -118,6 +118,18 @@
         <label class="radio"><input type="radio" name="delivery" value="delivery" checked> Entrega</label>
         <label class="radio"><input type="radio" name="delivery" value="pickup"> Retirada</label>
       </fieldset>
+      <fieldset id="when-field" class="when-field" hidden>
+        <legend>Quando?</legend>
+        <label class="radio"><input type="radio" name="when" value="asap" id="when-asap" checked> <span id="when-asap-text">O quanto antes</span></label>
+        <label class="radio"><input type="radio" name="when" value="schedule" id="when-sched"> Agendar</label>
+        <div id="when-schedule" class="when-schedule" hidden>
+          <div class="field-row">
+            <label>Dia<select id="when-day" name="when_day"></select></label>
+            <label>Horário<select id="when-slot" name="when_slot" aria-describedby="when-status"></select></label>
+          </div>
+          <p id="when-status" class="when-status" role="status" aria-live="polite" hidden></p>
+        </div>
+      </fieldset>
       <div id="address-field" class="address-field">
         <label>CEP<input name="cep" required inputmode="numeric" maxlength="9" autocomplete="postal-code" placeholder="00000-000"></label>
         <p id="cep-status" class="cep-status" role="status" aria-live="polite" hidden></p>
@@ -163,6 +175,7 @@
     </form>
     <div id="payment-step" class="payment-step" hidden>
       <p class="payment-code" id="payment-code-row" hidden>Pedido <strong id="payment-code"></strong></p>
+      <p class="payment-sched" id="pay-sched" hidden></p>
       <p class="payment-text" id="payment-text"></p>
       <div id="pay-summary" class="order-summary" hidden></div>
       <p class="payment-track" id="pay-track" hidden><a id="pay-track-link" href="#">Acompanhar meu pedido</a></p>

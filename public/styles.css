@@ -939,3 +939,10 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
 .coupon-status.ok { background: var(--ok-soft); color: var(--ok); }
 .coupon-status.warn { background: var(--brand-soft); color: var(--brand-deep); }
 .link-btn { background: none; border: 0; padding: 8px 2px; min-height: 44px; font: inherit; font-size: .88rem; font-weight: 800; color: var(--brand-deep); text-decoration: underline; cursor: pointer; }
+/* N10: Quando? */
+.when-field .radio:has(input:disabled) { opacity: .6; cursor: not-allowed; }
+.when-schedule { flex: 1 1 100%; }
+.when-schedule .field-row > label { margin-bottom: 8px; }
+.when-status { margin: 0 0 4px; padding: 9px 12px; border-radius: 12px; font-size: .88rem; font-weight: 800; background: var(--brand-soft); color: var(--brand-deep); }
+.payment-sched { margin: 0 0 10px; padding: 9px 12px; border-radius: 12px; font-weight: 800; background: var(--manteiga); color: var(--cacau); }
+.when-eta { display: block; font-size: .78rem; font-weight: 700; color: var(--ink-soft); }

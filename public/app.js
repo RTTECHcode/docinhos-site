@@ -208,6 +208,8 @@ fetch('/api/menu').then(r => { if (!r.ok) throw 0; return r.json(); }).then(data
   menu = data.categories;
   setStoreState(data.store);
   setClubInfo(data.club);
+  setEta(data.delivery_eta_min, data.delivery_eta_max);
+  setScheduling(data.scheduling);
   renderCats();
   renderMenu();
   observeCats();
@@ -672,6 +674,7 @@ function setStoreState(st) {
   closedNoteEl.hidden = !closed;
   closedNoteEl.textContent = closed ? closedMessage(store) + ' Você pode montar o carrinho, mas só conseguimos receber o pedido com a loja aberta.' : '';
   syncSubmitState();
+  renderWhen();
 }
 async function refreshStore() {
   try {
@@ -768,11 +771,11 @@ async function refreshTrack() {
     if (s === null || (!s.unknown && !trackActive(s))) return;
     const code = (s && s.public_code) || r.public_code || '';
     if (code) seen.add(code);
-    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.status_label || ''), date: r.date });
+    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.status_label || ''), sched: s.unknown ? '' : String(s.scheduled_label || ''), date: r.date });
   });
   for (const o of mine) {
     if (!trackActive(o) || !trackFresh(o.created_at) || (o.public_code && seen.has(o.public_code))) continue;
-    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.status_label || ''), date: o.created_at });
+    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.status_label || ''), sched: String(o.scheduled_label || ''), date: o.created_at });
   }
   items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
   trackItems = items;
@@ -797,7 +800,7 @@ trackFab.addEventListener('click', () => {
     code.textContent = it.code || 'Pedido';
     const info = document.createElement('span');
     const d = new Date(it.date);
-    info.textContent = [it.label, isNaN(d) ? '' : dateTimeFmt.format(d).replace(',', ' às')].filter(Boolean).join(' · ');
+    info.textContent = [it.label, it.sched, isNaN(d) ? '' : dateTimeFmt.format(d).replace(',', ' às')].filter(Boolean).join(' · ');
     a.append(code, info);
     li.append(a);
     list.append(li);
@@ -823,7 +826,8 @@ const isPickup = () => field('delivery').value === 'pickup';
 document.querySelector('#store-address').textContent = STORE_ADDRESS;
 
 let submitting = false;
-function syncSubmitState() { submitBtnEl.disabled = submitting || (!!store && !store.open); }
+// Loja fechada: só dá para enviar pedido agendado (v4 N10).
+function syncSubmitState() { submitBtnEl.disabled = submitting || (!!store && !store.open && !wantsSchedule()); }
 
 // Retirada: some o endereço do cliente (sem required nem envio) e mostra o endereço da loja.
 function syncDelivery() {
@@ -1157,6 +1161,128 @@ pointsBoxEl.addEventListener('change', e => {
   onRewardsChanged();
 });
 
+/* v4 N10: "Quando?" O quanto antes ou agendado (dia + janela de 30 min de /api/store?a=slots). O servidor confere janela,
+   antecedência e vaga no pedido; com a loja fechada só dá para agendar. */
+let scheduling = null;  // /api/menu scheduling: { enabled, min_lead_min, max_days, slot_minutes } (só quando ligado)
+let deliveryEta = null; // { min, max } em minutos (/api/menu delivery_eta_min/max)
+const whenFieldEl = document.querySelector('#when-field');
+const whenSchedEl = document.querySelector('#when-schedule');
+const whenDayEl = document.querySelector('#when-day');
+const whenSlotEl = document.querySelector('#when-slot');
+const whenStatusEl = document.querySelector('#when-status');
+const whenAsapEl = document.querySelector('#when-asap');
+const whenAsapTextEl = document.querySelector('#when-asap-text');
+const SCHEDULE_ERRORS = new Set(['invalid_schedule', 'schedule_too_soon', 'schedule_too_far', 'schedule_closed', 'slot_full']);
+const SLOT_CACHE_MS = 60000;
+const slotCache = new Map(); // "AAAA-MM-DD|mode" -> { at, slots }
+let slotSeq = 0;
+const etaText = () => (deliveryEta ? `${deliveryEta.min} a ${deliveryEta.max} min` : '');
+function setEta(min, max) {
+  deliveryEta = Number.isInteger(min) && Number.isInteger(max) && min > 0 && max >= min ? { min, max } : null;
+}
+function setScheduling(s) {
+  scheduling = s && typeof s === 'object' && s.enabled === true && Number.isInteger(s.max_days) ? s : null;
+  renderWhen();
+}
+const wantsSchedule = () => !!scheduling && field('when').value === 'schedule';
+const scheduledFor = () => (wantsSchedule() && whenSlotEl.value ? whenSlotEl.value : null);
+function showWhenStatus(msg, kind) {
+  whenStatusEl.textContent = msg;
+  whenStatusEl.className = 'when-status' + (kind ? ' ' + kind : '');
+  whenStatusEl.hidden = !msg;
+}
+const option = (value, text) => { const o = document.createElement('option'); o.value = value; o.textContent = text; return o; };
+// Dias de hoje até max_days (horário de São Paulo).
+function fillDays() {
+  const prev = whenDayEl.value;
+  whenDayEl.replaceChildren();
+  const fmt = new Intl.DateTimeFormat('pt-BR', { timeZone: SP_TZ, weekday: 'long', day: '2-digit', month: '2-digit' });
+  const now = Date.now();
+  for (let i = 0; i <= scheduling.max_days; i++) {
+    const d = new Date(now + i * 864e5);
+    const key = dayKey(d);
+    const parts = Object.fromEntries(fmt.formatToParts(d).map(p => [p.type, p.value]));
+    const dm = `${parts.day}/${parts.month}`;
+    whenDayEl.append(option(key, i === 0 ? `Hoje (${dm})` : i === 1 ? `Amanhã (${dm})` : `${parts.weekday} (${dm})`));
+  }
+  if (prev && [...whenDayEl.options].some(o => o.value === prev)) whenDayEl.value = prev;
+}
+function renderWhen() {
+  whenFieldEl.hidden = !scheduling;
+  const closed = !!store && !store.open;
+  whenAsapEl.disabled = closed && !!scheduling;
+  const sub = document.createElement('small');
+  sub.className = 'when-eta';
+  sub.textContent = closed ? 'loja fechada agora' : etaText() ? `${isPickup() ? 'pronto em' : 'chega em'} ${etaText()}` : '';
+  whenAsapTextEl.replaceChildren('O quanto antes', ...(sub.textContent ? [sub] : []));
+  if (!scheduling) { field('when').value = 'asap'; whenSchedEl.hidden = true; syncSubmitState(); return; }
+  if (closed && field('when').value !== 'schedule') field('when').value = 'schedule';
+  const sched = field('when').value === 'schedule';
+  whenSchedEl.hidden = !sched;
+  if (sched && !whenDayEl.options.length) fillDays();
+  syncSubmitState();
+}
+async function loadSlots(force) {
+  if (!wantsSchedule()) return;
+  if (!whenDayEl.options.length) fillDays();
+  const date = whenDayEl.value;
+  const mode = isPickup() ? 'pickup' : 'delivery';
+  const ck = date + '|' + mode;
+  const cached = slotCache.get(ck);
+  if (!force && cached && Date.now() - cached.at < SLOT_CACHE_MS) { fillSlots(cached.slots); return; }
+  const mine = ++slotSeq;
+  whenSlotEl.disabled = true;
+  whenSlotEl.replaceChildren(option('', 'Carregando horários...'));
+  showWhenStatus('', '');
+  try {
+    const r = await fetch(`/api/store?a=slots&date=${encodeURIComponent(date)}&mode=${mode}`, { cache: 'no-store' });
+    let d = {};
+    try { d = await r.json(); } catch { /* corpo não-JSON */ }
+    if (mine !== slotSeq) return;
+    if (!r.ok) { fillSlots([]); showWhenStatus((d && d.error) || 'Não foi possível carregar os horários agora. Tente de novo.', 'warn'); return; }
+    if (d.enabled === false) { setScheduling(null); toast('O agendamento foi desligado agora. Faça o pedido para o quanto antes.', 6000); return; }
+    const slots = Array.isArray(d.slots) ? d.slots.filter(s => s && typeof s.start === 'string' && typeof s.label === 'string') : [];
+    slotCache.set(ck, { at: Date.now(), slots });
+    fillSlots(slots);
+  } catch {
+    if (mine === slotSeq) { fillSlots([]); showWhenStatus('Sem conexão para carregar os horários. Tente de novo.', 'warn'); }
+  }
+}
+// Mostra as janelas livres; as lotadas aparecem desativadas (as que já passaram ou estão em cima da hora ficam de fora).
+function fillSlots(slots) {
+  const prev = whenSlotEl.value;
+  whenSlotEl.replaceChildren();
+  const free = slots.filter(s => s.available);
+  if (!free.length) {
+    whenSlotEl.append(option('', 'Sem horários livres'));
+    whenSlotEl.disabled = true;
+    showWhenStatus(slots.some(s => s.reason === 'full') ? 'Todos os horários deste dia lotaram. Escolha outro dia.' : 'Não há horários livres neste dia. Escolha outro dia.', 'warn');
+    return;
+  }
+  whenSlotEl.append(option('', 'Escolha o horário'));
+  for (const s of slots) {
+    if (!s.available && s.reason !== 'full') continue;
+    const o = option(s.start, s.available ? s.label : `${s.label} (lotado)`);
+    o.disabled = !s.available;
+    whenSlotEl.append(o);
+  }
+  whenSlotEl.disabled = false;
+  if (prev && free.some(s => s.start === prev)) whenSlotEl.value = prev;
+  showWhenStatus('', '');
+}
+// Texto curto do agendamento escolhido (antes da resposta do servidor), ex.: "Amanhã (15/11), 14:00-14:30".
+function chosenWhenText() {
+  if (!scheduledFor()) return '';
+  const day = whenDayEl.selectedOptions[0], slot = whenSlotEl.selectedOptions[0];
+  return day && slot ? `${day.textContent}, ${slot.textContent}` : '';
+}
+checkoutFormEl.addEventListener('change', e => {
+  const n = e.target && e.target.name;
+  if (n === 'when') { renderWhen(); loadSlots(); }
+  else if (n === 'when_day') loadSlots();
+  else if (n === 'delivery') { renderWhen(); loadSlots(); }
+});
+
 /* v4 N6: cupom de desconto. O servidor confere o código e calcula o desconto (POST /api/customer?a=coupon_check); aqui só se
    mostra o valor que ele devolveu. O link /?cupom=CODIGO guarda o código neste aparelho e ele é conferido ao abrir o checkout. */
 const COUPON_KEY = 'dg-coupon';
@@ -1274,6 +1400,7 @@ function couponOnOpen() {
 const payEls = {
   codeRow: document.querySelector('#payment-code-row'),
   code: document.querySelector('#payment-code'),
+  sched: document.querySelector('#pay-sched'),
   text: document.querySelector('#payment-text'),
   summary: document.querySelector('#pay-summary'),
   track: document.querySelector('#pay-track'),
@@ -1338,7 +1465,7 @@ async function loadPrefill() {
     }
   } catch { /* sem pré-preenchimento: segue à mão */ }
 }
-modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); couponOnOpen(); }, close: stopPayWatch };
+modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); couponOnOpen(); if (scheduling) { fillDays(); renderWhen(); loadSlots(); } }, close: stopPayWatch };
 
 function normalizePayment(p) {
   if (!p || typeof p !== 'object') return null;
@@ -1375,6 +1502,8 @@ function renderOrderStep(order, { title, text, watchNow } = {}) {
   payEls.codeRow.hidden = !(order.publicCode || order.code);
   payEls.track.hidden = !order.token;
   if (order.token) payEls.trackLink.href = trackUrl(order.token);
+  payEls.sched.hidden = !order.scheduledLabel;
+  payEls.sched.textContent = order.scheduledLabel || '';
   payEls.summary.hidden = !order.summary;
   if (order.summary) fillSummary(payEls.summary, order.summary);
   setPayStatus('', '');
@@ -1550,6 +1679,7 @@ function buildWhatsAppMessage(srv, cust) {
   lines.push(`*Total: ${brl(srv.total_cents)}*`);
   lines.push('', `Nome: ${cust.customer_name}`);
   lines.push(`WhatsApp: ${cust.customer_phone}`);
+  if (srv.scheduled_label) lines.push(srv.scheduled_label);
   if (srv.delivery_method === 'pickup') lines.push(`Retirada em: ${STORE_ADDRESS}`);
   else lines.push(`Entrega: ${srv.address || cust.address || 'a combinar'}`);
   lines.push(`Pagamento: ${cust.payment_choice === 'card' ? 'Cartão de crédito ou débito' : 'Pix'}`);
@@ -1562,7 +1692,16 @@ function buildWhatsAppMessage(srv, cust) {
 const CLUB_ERRORS = new Set(['login_required', 'insufficient_points', 'points_locked', 'points_disabled', 'reward_unavailable', 'reward_max_per_order', 'reward_min_subtotal', 'invalid_rewards', 'points_discount_ended']);
 function handleOrderError(status, d) {
   const code = d && d.code;
-  if (code === 'store_closed') { setStoreState(d.store || { open: false, reason: null, message: d.error }); toast('A loja está fechada agora. ' + closedMessage(store || {}), 7000); return; }
+  if (code === 'store_closed') { setStoreState(d.store || { open: false, reason: null, message: d.error }); toast('A loja está fechada agora. ' + closedMessage(store || {}) + (scheduling ? ' Você pode agendar o pedido em "Quando?".' : ''), 7000); return; }
+  // v4 N10: janela recusada (lotou, ficou em cima da hora...): recarrega os horários e mostra o motivo.
+  if (SCHEDULE_ERRORS.has(code)) {
+    slotCache.clear();
+    loadSlots(true).then(() => { showWhenStatus((d && d.error) || 'Escolha outro horário.', 'warn'); });
+    toast((d && d.error) || 'Esse horário não está mais disponível. Escolha outro.', 7000);
+    whenSlotEl.focus({ preventScroll: false });
+    return;
+  }
+  if (code === 'scheduling_disabled') { setScheduling(null); toast((d && d.error) || 'O agendamento está desligado. Faça o pedido para o quanto antes.', 7000); return; }
   // v4 N3: prêmios do Clube. Mostra a mensagem do servidor e atualiza saldo e vitrine.
   if (CLUB_ERRORS.has(code)) {
     if (code === 'login_required') { account = null; clubMine = null; chosenRewards.clear(); renderAccount(); }
@@ -1598,7 +1737,8 @@ function handleOrderError(status, d) {
 checkoutFormEl.addEventListener('submit', async e => {
   e.preventDefault();
   if (submitting) return;
-  if (store && !store.open) { toast(closedMessage(store), 6000); return; }
+  if (store && !store.open && !wantsSchedule()) { toast(closedMessage(store) + (scheduling ? ' Você pode agendar o pedido em "Quando?".' : ''), 6000); return; }
+  if (wantsSchedule() && !scheduledFor()) { toast('Escolha o dia e o horário do agendamento.', 5000); (whenSlotEl.disabled ? whenDayEl : whenSlotEl).focus(); return; }
   const removed = pruneCart();
   if (removed.length) { renderSummary(); toast('Um item ficou indisponível e saiu do carrinho. Confira o resumo.', 5000); return; }
   if (!cart.length) { toast('Seu carrinho está vazio.'); return; }
@@ -1639,6 +1779,7 @@ checkoutFormEl.addEventListener('submit', async e => {
       return;
     }
     if (couponValid()) order.coupon_code = coupon.code;
+    if (scheduledFor()) order.scheduled_for = scheduledFor();
     const res = await fetch('/api/order', {
       method: 'POST',
       credentials: 'same-origin',
@@ -1662,9 +1803,10 @@ checkoutFormEl.addEventListener('submit', async e => {
     if (srv.coupon_code) { removeStore(COUPON_KEY); coupon = null; couponInputEl.value = ''; showCouponStatus('', ''); syncCouponUi(); }
     addRecent({ public_code: data.public_code, code: data.code, token: data.tracking_token });
     const card = payment && payment.type === 'card';
-    saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice,
+    saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice, scheduled_label: srv.scheduled_label || null,
       ...(card ? { paymentUrl: payment.url, whatsappText } : {}) });
-    renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary });
+    slotCache.clear();
+    renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary, scheduledLabel: srv.scheduled_label || null });
     toast(payment ? 'Pedido registrado! Agora é só pagar.' : 'Pedido registrado!');
     if (account) loadAccount(); // saldo mudou (pontos reservados)
   } catch {

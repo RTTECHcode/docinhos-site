@@ -86,6 +86,10 @@
     ol.hidden = false;
     $('t-msg').textContent = cancelled ? 'Este pedido foi cancelado. Se tiver dúvida, fale com a gente pelo WhatsApp.' : status === 'completed' ? 'Pedido concluído. Obrigada pela preferência!' : (label ? 'Situação atual: ' + label + '.' : '');
     $('t-pay').textContent = label;
+    // v4 N10: encomenda com data marcada (rótulo pronto do servidor: "Agendado: sex 21/11, 15:00-15:30").
+    var sched = String(d.scheduled_label || '').replace(/^Agendado:\s*/, '');
+    $('t-sched-row').hidden = !sched;
+    $('t-sched').textContent = sched;
     $('t-total').textContent = Number.isInteger(d.total_cents) ? brl(d.total_cents) : '';
     $('t-created').textContent = when(d.created_at);
     $('t-info').hidden = false;

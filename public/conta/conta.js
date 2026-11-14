@@ -339,7 +339,7 @@
       el('span', { class: 'badge ' + tone, text: o.status_label || '' }));
     const meta = el('p', { class: 'order-meta' }, el('span', { text: fmtDate(o.created_at) }), el('span', { text: o.delivery_method === 'pickup' ? 'Retirada' : 'Entrega' }));
     // v4 N10: encomenda com data marcada (rótulo pronto do servidor).
-    const sched = o.scheduled_label ? el('p', { class: 'order-sched' }, el('strong', { text: 'Agendado: ' }), el('span', { text: o.scheduled_label })) : null;
+    const sched = o.scheduled_label ? el('p', { class: 'order-sched', text: o.scheduled_label }) : null;
     const items = el('ul', { class: 'order-items' }, ...(o.items_summary || []).map(t => el('li', { text: t })));
     const rows = [el('div', { class: 'order-row' }, el('span', { text: 'Total' }), el('strong', { text: money(o.total_cents) }))];
     // v4 N6/N3: desconto é do cupom; prêmio do Clube sai de graça (só os pontos). Pedido antigo pode ter desconto de pontos.
