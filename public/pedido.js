@@ -23,8 +23,10 @@
     { key: 'awaiting_delivery', at: 'awaiting_delivery_at' },
     { key: 'completed', at: 'completed_at' }
   ];
-  var LABELS = { new: 'Pedido recebido', accepted: 'Aceito', preparing: 'Em preparo', ready: 'Pronto', awaiting_delivery: 'Aguardando entrega', completed: 'Concluído', cancelled: 'Cancelado' };
-  var PAY = { approved: 'Pago', pending: 'Aguardando pagamento', in_process: 'Em análise', rejected: 'Recusado', cancelled: 'Cancelado', refunded: 'Reembolsado', charged_back: 'Contestado' };
+  // Nomes fixos das etapas da linha do tempo. O rótulo da situação atual vem pronto do servidor (status_label, v4 N1).
+  var STEP_NAMES = { new: 'Pedido recebido', accepted: 'Aceito', preparing: 'Em preparo', ready: 'Pronto', awaiting_delivery: 'Saiu para entrega', completed: 'Concluído' };
+  // status_key -> etapa da linha do tempo (todas as situações de pagamento ficam na primeira etapa).
+  var KEY_STEP = { awaiting_payment: 'new', payment_failed: 'new', refunded: 'new', received: 'new', accepted: 'accepted', preparing: 'preparing', ready: 'ready', awaiting_delivery: 'awaiting_delivery', completed: 'completed' };
 
   var timer = null;
   var busy = false;
@@ -52,18 +54,22 @@
 
   function render(d) {
     var pickup = d.delivery_method === 'pickup';
-    var status = d.fulfillment_status === 'delivered' ? 'completed' : d.fulfillment_status;
+    var key = String(d.status_key || '');
+    var status = key === 'cancelled' ? 'cancelled' : (KEY_STEP[key] || 'new');
+    var label = String(d.status_label || '');
     $('t-code').textContent = d.public_code || '';
     var ol = $('t-timeline');
     ol.replaceChildren();
     var cancelled = status === 'cancelled';
     var current = STEPS.findIndex(function (s) { return s.key === status; });
     STEPS.forEach(function (s, i) {
-      var label = s.key === 'awaiting_delivery' && pickup ? 'Aguardando retirada' : LABELS[s.key];
+      var stepName = s.key === 'awaiting_delivery' && pickup ? 'Pronto para retirada' : STEP_NAMES[s.key];
+      // Etapa atual: mostra o rótulo do servidor (ex.: "Aguardando pagamento" na primeira etapa).
+      if (s.key === status && label) stepName = label;
       var li = document.createElement('li');
       var state = cancelled ? (d[s.at] ? 'done' : 'todo') : i < current ? 'done' : i === current ? 'current' : 'todo';
       li.className = 'tl-step ' + state;
-      var name = document.createElement('span'); name.className = 'tl-name'; name.textContent = label;
+      var name = document.createElement('span'); name.className = 'tl-name'; name.textContent = stepName;
       li.append(name);
       if (d[s.at]) { var t = document.createElement('span'); t.className = 'tl-time'; t.textContent = when(d[s.at]); li.append(t); }
       if (state === 'current') li.setAttribute('aria-current', 'step');
@@ -72,14 +78,14 @@
     if (cancelled) {
       var c = document.createElement('li');
       c.className = 'tl-step cancelled';
-      var n = document.createElement('span'); n.className = 'tl-name'; n.textContent = LABELS.cancelled;
+      var n = document.createElement('span'); n.className = 'tl-name'; n.textContent = label || 'Cancelado';
       c.append(n);
       if (d.cancelled_at) { var tt = document.createElement('span'); tt.className = 'tl-time'; tt.textContent = when(d.cancelled_at); c.append(tt); }
       ol.append(c);
     }
     ol.hidden = false;
-    $('t-msg').textContent = cancelled ? 'Este pedido foi cancelado. Se tiver dúvida, fale com a gente pelo WhatsApp.' : status === 'completed' ? 'Pedido concluído. Obrigada pela preferência!' : 'Situação atual: ' + (status === 'awaiting_delivery' && pickup ? 'aguardando retirada' : (d.fulfillment_label || LABELS[status] || '')).toLowerCase() + '.';
-    $('t-pay').textContent = PAY[d.payment_status] || d.payment_status || '';
+    $('t-msg').textContent = cancelled ? 'Este pedido foi cancelado. Se tiver dúvida, fale com a gente pelo WhatsApp.' : status === 'completed' ? 'Pedido concluído. Obrigada pela preferência!' : (label ? 'Situação atual: ' + label + '.' : '');
+    $('t-pay').textContent = label;
     $('t-total').textContent = Number.isInteger(d.total_cents) ? brl(d.total_cents) : '';
     $('t-created').textContent = when(d.created_at);
     $('t-info').hidden = false;

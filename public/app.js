@@ -724,15 +724,15 @@ async function loadAccount() {
 /* ---------- V5: botão flutuante "Acompanhe" ----------
    Aparece quando há pedido não concluído: dos recentes no aparelho (dg-recent-orders, status consultado em /api/order-status)
    ou do cliente logado (/api/customer?a=orders). Um pedido: abre direto o acompanhamento. Mais de um: lista. */
-const TRACK_DONE = new Set(['completed', 'delivered', 'cancelled']);
-const TRACK_PAY_DEAD = new Set(['rejected', 'cancelled', 'refunded', 'charged_back']);
+// v4 N1: situação do pedido pelo status_key do servidor; estes não aparecem mais no "Acompanhe".
+const TRACK_ENDED = new Set(['completed', 'cancelled', 'payment_failed', 'refunded']);
 const TRACK_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const TRACK_CHECKS = 5;      // no máximo 5 consultas de status por rodada (limite do servidor: 300 em 10 min por IP)
 const TRACK_EVERY_MS = 60000;
 let trackItems = [];
 let trackSeq = 0;
 let trackLastAt = 0;
-const trackActive = o => !!o && !TRACK_DONE.has(o.fulfillment_status) && !TRACK_PAY_DEAD.has(o.payment_status);
+const trackActive = o => !!o && typeof o.status_key === 'string' && !TRACK_ENDED.has(o.status_key);
 const trackFresh = iso => { const t = Date.parse(iso); return !isNaN(t) && Date.now() - t < TRACK_MAX_AGE_MS; };
 async function trackStatusOf(r) {
   try {
@@ -764,11 +764,11 @@ async function refreshTrack() {
     if (s === null || (!s.unknown && !trackActive(s))) return;
     const code = (s && s.public_code) || r.public_code || '';
     if (code) seen.add(code);
-    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.fulfillment_label || ''), date: r.date });
+    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.status_label || ''), date: r.date });
   });
   for (const o of mine) {
     if (!trackActive(o) || !trackFresh(o.created_at) || (o.public_code && seen.has(o.public_code))) continue;
-    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.fulfillment_label || ''), date: o.created_at });
+    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.status_label || ''), date: o.created_at });
   }
   items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
   trackItems = items;

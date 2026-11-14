@@ -330,19 +330,18 @@
   });
 
   // ---------- U4: pedidos ----------
-  const STATUS_TONE = { new: 'tone-info', accepted: 'tone-info', preparing: 'tone-warn', ready: 'tone-ok', awaiting_delivery: 'tone-ok', completed: 'tone-done', cancelled: 'tone-bad' };
-  const PAY_TONE = { pago: 'tone-ok', recusado: 'tone-bad', cancelado: 'tone-bad', estornado: 'tone-bad' };
+  // v4 N1: o rótulo vem pronto do servidor (status_label); status_key só escolhe a cor.
+  const STATUS_TONE = { awaiting_payment: 'tone-warn', payment_failed: 'tone-bad', refunded: 'tone-bad', received: 'tone-info', accepted: 'tone-info', preparing: 'tone-warn', ready: 'tone-ok', awaiting_delivery: 'tone-ok', completed: 'tone-done', cancelled: 'tone-bad' };
   function orderCard(o) {
-    const tone = STATUS_TONE[o.fulfillment_status] || 'tone-info';
+    const tone = STATUS_TONE[o.status_key] || 'tone-info';
     const head = el('div', { class: 'order-head' },
       el('strong', { class: 'order-code', text: o.public_code || 'Pedido' }),
-      el('span', { class: 'badge ' + tone, text: o.fulfillment_label || '' }));
+      el('span', { class: 'badge ' + tone, text: o.status_label || '' }));
     const meta = el('p', { class: 'order-meta' }, el('span', { text: fmtDate(o.created_at) }), el('span', { text: o.delivery_method === 'pickup' ? 'Retirada' : 'Entrega' }));
     const items = el('ul', { class: 'order-items' }, ...(o.items_summary || []).map(t => el('li', { text: t })));
-    const pay = el('span', { class: 'badge ' + (PAY_TONE[o.payment_label] || 'tone-warn'), text: 'Pagamento: ' + o.payment_label });
     const rows = [el('div', { class: 'order-row' }, el('span', { text: 'Total' }), el('strong', { text: money(o.total_cents) }))];
     if (o.discount_cents > 0) rows.unshift(el('div', { class: 'order-row sub' }, el('span', { text: `Desconto de pontos (${fmtPoints(o.points_redeemed)} pts)` }), el('span', { text: '- ' + money(o.discount_cents) })));
-    const foot = el('div', { class: 'order-foot' }, pay);
+    const foot = el('div', { class: 'order-foot' });
     // Link de acompanhamento só existe quando o servidor entrega a URL (hoje os pedidos guardam só o hash do token).
     if (o.tracking_url && /^\/pedido\.html\?t=[0-9a-f]{32}$/.test(o.tracking_url)) foot.append(el('a', { class: 'order-link', href: o.tracking_url, text: 'Acompanhar pedido' }));
     return el('li', { class: 'order' }, head, meta, items, ...rows, foot);
