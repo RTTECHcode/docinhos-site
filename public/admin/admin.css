@@ -315,7 +315,7 @@ p.error:not(:empty) { padding: 10px 12px; border-radius: var(--radius-sm); backg
 .ord-act-row .row { margin-bottom: 2px; }
 @media (min-width: 900px) {
   .ord-seg { display: none; }
-  .ord-board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: start; }
+  .ord-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: start; }
   .ord-col, .ord-col.is-active { display: block; min-height: 120px; }
   .ord-col-h { display: flex; }
   .ord-activity { column-gap: 12px; }
@@ -366,3 +366,9 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 .audit.warn strong::before { content: "⚠ "; }
 .audit.warn .muted { color: var(--warn); }
 /* fim A9 */
+
+/* v4 A3: painel v4 (N1 colunas, Clube, cupons, relatórios, avisos, PWA) */
+.ord-seg-btn.ord-pay[aria-selected="true"] { background: var(--cacau-2); border-color: var(--cacau); }
+.ord-col.ord-pay { background: #f6efec; border-top: 4px solid var(--cacau-2); }
+.ord-seg-btn { font-size: 12.5px; }
+.pill.st-refunded, .pill.st-payment_failed { background: var(--danger-soft); color: var(--danger); }

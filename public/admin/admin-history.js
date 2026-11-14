@@ -9,8 +9,8 @@
   const FILTERS = [['', 'Todos'], ['completed', 'Concluídos'], ['cancelled', 'Cancelados'], ['paid', 'Pagos'], ['new', 'Novos'], ['accepted', 'Aceitos'], ['preparing', 'Em preparo'], ['ready', 'Prontos'], ['awaiting_delivery', 'Aguardando entrega']];
   const st = { from: '', to: '', f: '', s: '', page: 1 };
 
-  const payClass = s => (s === 'approved' ? 'ok' : (s === 'pending' || s === 'in_process') ? 'warn' : 'off');
-  const statusText = o => o.fulfillment_label || STATUS[o.fulfillment_status] || o.fulfillment_status;
+  // v4 N1: o rótulo vem pronto da API (status_label).
+  const statusText = o => o.status_label || o.fulfillment_label || STATUS[o.fulfillment_status] || o.fulfillment_status;
   const fullDate = iso => (iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
 
   function card(o) {
@@ -18,8 +18,7 @@
       el('div', { class: 'row between' }, el('strong', { text: o.public_code || o.code }), el('span', { class: 'muted small', text: fullDate(o.created_at) })),
       el('div', { class: 'row between' }, el('span', { class: 'ellipsis grow', text: o.customer_name }), el('strong', { text: DG.money(o.total_cents) })),
       el('div', { class: 'row wrap-row' },
-        el('span', { class: 'pill ' + payClass(o.payment_status), text: PAY[o.payment_status] || o.payment_status }),
-        el('span', { class: 'pill off', text: statusText(o) }),
+        DG.statusPill(o),
         el('span', { class: 'muted small', text: (o.delivery_method === 'pickup' ? 'Retirada' : 'Entrega') + (o.payment_method ? ' - ' + (METHOD[o.payment_method] || o.payment_method) : '') })));
   }
 

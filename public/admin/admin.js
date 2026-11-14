@@ -44,6 +44,10 @@
     return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : NaN;
   };
   DG.moneyInput = cents => (cents === null || cents === undefined ? '' : (cents / 100).toFixed(2).replace('.', ','));
+  // v4 N1: situação única do pedido. A API manda status_key (cor) e status_label (texto); a tela não monta rótulo.
+  const STATUS_CLASS = { awaiting_payment: 'warn', payment_failed: 'off', refunded: 'off', cancelled: 'off', received: 'ok', completed: 'ok' };
+  DG.statusPill = o => el('span', { class: 'pill st-' + (o.status_key || 'x') + ' ' + (STATUS_CLASS[o.status_key] || ''), text: o.status_label || o.fulfillment_label || o.fulfillment_status || '' });
+  DG.isAdmin = () => !!(DG.state.user && DG.state.user.role === 'admin');
   DG.fmtDate = iso => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
   let toastTimer = null;
