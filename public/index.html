@@ -191,26 +191,38 @@
     </form>
     <div id="payment-step" class="payment-step" hidden>
       <p class="payment-code" id="payment-code-row" hidden>Pedido <strong id="payment-code"></strong></p>
+      <p id="pay-status" class="pay-status" role="status" aria-live="polite" hidden></p>
+      <!-- v4 U-02: valor e botão de copiar no topo; QR recolhido (quem paga no mesmo celular não precisa dele) -->
+      <section id="pix-box" class="pix-box" aria-label="Pagamento por Pix" hidden>
+        <p class="pix-amount" id="pix-amount-row" hidden><span>Valor do Pix</span> <strong id="pix-amount"></strong></p>
+        <button type="button" id="pix-copy" class="button primary full">Copiar código Pix</button>
+        <p id="pix-copy-status" class="pix-copy-status" role="status" aria-live="polite"></p>
+        <p class="pix-instr">Abra o app do seu banco &gt; Pix &gt; Pix Copia e Cola e cole o código.</p>
+        <p id="pix-timer" class="pix-timer"></p>
+        <label class="pix-label" for="pix-code">Código Pix Copia e Cola</label>
+        <textarea id="pix-code" class="pix-code" readonly rows="3" spellcheck="false"></textarea>
+        <details id="pix-qr-box" class="pix-qr-box">
+          <summary>Pagar por outro aparelho (QR Code)</summary>
+          <img id="pix-qr" class="pix-qr" alt="QR Code do Pix" width="220" height="220">
+        </details>
+      </section>
       <p class="payment-sched" id="pay-sched" hidden></p>
       <p class="payment-text" id="payment-text"></p>
       <div id="pay-summary" class="order-summary" hidden></div>
       <p class="payment-track" id="pay-track" hidden><a id="pay-track-link" href="#">Acompanhar meu pedido</a></p>
-      <p id="pay-status" class="pay-status" role="status" aria-live="polite" hidden></p>
-      <section id="pix-box" class="pix-box" aria-label="Pagamento por Pix" hidden>
-        <p class="pix-instr">Abra o app do seu banco &gt; Pix &gt; Pix Copia e Cola</p>
-        <img id="pix-qr" class="pix-qr" alt="QR Code do Pix" width="220" height="220" hidden>
-        <label class="pix-label" for="pix-code">Código Pix Copia e Cola</label>
-        <textarea id="pix-code" class="pix-code" readonly rows="4" spellcheck="false"></textarea>
-        <button type="button" id="pix-copy" class="button primary full">Copiar código Pix</button>
-        <p id="pix-copy-status" class="pix-copy-status" role="status" aria-live="polite"></p>
-        <p id="pix-timer" class="pix-timer"></p>
-        <p class="pix-wait">Aguardando o pagamento. Esta tela confirma sozinha quando o Pix cair.</p>
-      </section>
       <a id="pay-mp" class="button primary full" href="#" hidden>Pagar com cartão (crédito ou débito)</a>
       <p class="payment-support" id="pay-support" hidden>Você paga com segurança no Mercado Pago</p>
       <button type="button" id="pay-retry" class="button secondary full" hidden>Refazer pedido</button>
       <a id="pay-wa" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Enviar pedido no WhatsApp</a>
       <a id="pay-help" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Falar com a Gigi no WhatsApp</a>
+      <!-- v4 N8: avaliação no Google e Instagram, só quando /api/order-status manda post_payment (pagamento aprovado) -->
+      <section id="pay-thanks" class="post-pay" aria-labelledby="pay-thanks-title" hidden>
+        <h3 id="pay-thanks-title">Obrigada pela preferência!</h3>
+        <p>Sua opinião ajuda muito a Docinhos da Gigi a crescer.</p>
+        <a id="pay-review" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Avaliar no Google</a>
+        <a id="pay-insta" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Seguir no Instagram</a>
+        <button type="button" id="pay-thanks-close" class="link-btn">Agora não</button>
+      </section>
     </div>
   </div>
 </div>

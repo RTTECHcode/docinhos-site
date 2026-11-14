@@ -974,3 +974,22 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
 .about-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 .about-ig { gap: 8px; color: var(--brand-deep); background: #fff; box-shadow: 0 4px 0 var(--brand-deep), inset 0 0 0 2px var(--brand-deep); }
 @media (hover: hover) { .about-ig:hover { background: var(--brand-soft); } }
+
+/* v4 U-01/U-02: Pix com valor e botão de copiar no topo; QR recolhido em "Pagar por outro aparelho" */
+.pix-amount { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.pix-amount span { font-size: .82rem; font-weight: 800; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; }
+.pix-amount strong { font-family: var(--display); font-weight: 400; font-size: 2rem; line-height: 1.1; color: var(--brand-deep); }
+.pix-qr-box { width: 100%; border: 2px dashed var(--chip-line); border-radius: 14px; background: #fff; }
+.pix-qr-box summary { min-height: 44px; display: flex; align-items: center; justify-content: center; padding: 8px 12px; font-weight: 800; font-size: .9rem; color: var(--brand-deep); cursor: pointer; text-align: center; }
+.pix-qr-box summary:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; border-radius: 12px; }
+.pix-qr-box[open] summary { border-bottom: 1px solid var(--chip-line); }
+.pix-qr-box .pix-qr { margin: 12px auto; }
+.track-pix h2 { text-align: center; }
+.track-pix .pix-box { margin-top: 6px; }
+
+/* v4 N8: convite pós-pagamento (avaliação no Google e Instagram) */
+.post-pay { display: grid; gap: 10px; justify-items: center; text-align: center; padding: 14px; border-radius: 16px; background: var(--brand-soft); }
+.post-pay h2, .post-pay h3 { font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--cacau); }
+.post-pay p { font-size: .92rem; }
+.post-pay .button { width: 100%; }
+.about-section.post-pay { padding: 22px 18px; }

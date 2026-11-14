@@ -153,6 +153,7 @@ function hideModal(id) {
 
 function requestClose(id, after) {
   if (!modalStack.includes(id) || closing.has(id)) return;
+  if (id === '#checkout-modal' && pixPending() && !confirmPixClose()) return; // v4 U-01
   if (after) modalEl(id)._after = after;
   const seq = modalEl(id)._seq;
   if (history.state && history.state.dgModal === id && history.state.dgSeq === seq) {
@@ -173,6 +174,12 @@ window.addEventListener('popstate', () => {
     // volta uma entrada para o estado dele, em vez de fechá-lo.
     abandoned.delete(wantSeq);
     if (modalStack.length) history.forward(); else history.replaceState(null, '');
+    return;
+  }
+  // v4 U-01: botão voltar com o Pix ainda em aberto pergunta antes; se a pessoa ficar, devolve a entrada do modal ao histórico.
+  const topId = modalStack[modalStack.length - 1];
+  if (topId === '#checkout-modal' && !closing.has(topId) && (modalEl(topId)._seq || 0) > wantSeq && pixPending() && !confirmPixClose()) {
+    history.pushState({ dgModal: topId, dgSeq: modalEl(topId)._seq }, '');
     return;
   }
   while (modalStack.length && (modalEl(modalStack[modalStack.length - 1])._seq || 0) > wantSeq) hideModal(modalStack[modalStack.length - 1]);
@@ -1488,6 +1495,13 @@ const payEls = {
   copyBtn: document.querySelector('#pix-copy'),
   copyStatus: document.querySelector('#pix-copy-status'),
   timer: document.querySelector('#pix-timer'),
+  amountRow: document.querySelector('#pix-amount-row'),
+  amount: document.querySelector('#pix-amount'),
+  qrBox: document.querySelector('#pix-qr-box'),
+  thanks: document.querySelector('#pay-thanks'),
+  review: document.querySelector('#pay-review'),
+  insta: document.querySelector('#pay-insta'),
+  thanksClose: document.querySelector('#pay-thanks-close'),
   card: document.querySelector('#pay-mp'),
   support: document.querySelector('#pay-support'),
   retry: document.querySelector('#pay-retry'),
@@ -1541,7 +1555,7 @@ async function loadPrefill() {
     }
   } catch { /* sem pré-preenchimento: segue à mão */ }
 }
-modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); couponOnOpen(); if (scheduling) { fillDays(); renderWhen(); loadSlots(); } }, close: stopPayWatch };
+modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); couponOnOpen(); if (scheduling) { fillDays(); renderWhen(); loadSlots(); } }, close() { stopPayWatch(); closeThanks(); } };
 
 function normalizePayment(p) {
   if (!p || typeof p !== 'object') return null;
@@ -1588,31 +1602,40 @@ function renderOrderStep(order, { title, text, watchNow } = {}) {
   payEls.retry.hidden = true;
   payEls.wa.hidden = true; // só depois do pagamento confirmado
   payEls.help.hidden = true;
+  payEls.thanks.hidden = true;
   payEls.copyStatus.textContent = '';
   payEls.timer.textContent = '';
+  const failed = !pay && !watchNow; // v4 U-08: pedido registrado, mas o pagamento não foi gerado
+  const canRetry = failed && !!(lastCartCopy && lastCartCopy.length);
   let msg = text;
   if (msg == null) {
-    msg = type === 'pix' ? 'Pedido registrado! Pague com o Pix abaixo. Esta tela confirma sozinha quando o pagamento cair.'
+    msg = type === 'pix' ? 'Pedido registrado! Esta tela confirma sozinha quando o Pix cair.'
       : type === 'card' ? 'Pedido registrado! Pague com cartão no botão abaixo. Esta tela confirma sozinha quando o pagamento for aprovado.'
-      : 'Pedido registrado! Não foi possível gerar o pagamento agora. Fale com a Gigi pelo WhatsApp para combinar o pagamento.';
+      : 'Pedido registrado, mas não foi possível gerar o pagamento agora.' + (canRetry ? ' Toque em "Tentar pagar de novo" para enviar outra vez' + (WHATSAPP_NUMBER ? ', ou fale com a Gigi pelo WhatsApp com o código do pedido.' : '.') : ' Fale com a Gigi pelo WhatsApp para combinar o pagamento.');
   }
   payEls.text.textContent = msg;
   if (type === 'card') payEls.card.href = pay.url;
   if (type === 'pix') {
     payEls.pixCode.value = pay.qr_code;
-    if (pay.qr_code_base64) { payEls.qr.src = 'data:image/png;base64,' + pay.qr_code_base64; payEls.qr.hidden = false; }
-    else { payEls.qr.removeAttribute('src'); payEls.qr.hidden = true; }
+    // v4 U-02: valor em destaque (total do servidor) e QR recolhido em "Pagar por outro aparelho".
+    const total = Number.isInteger(order.total) ? order.total : order.summary && Number.isInteger(order.summary.total) ? order.summary.total : null;
+    payEls.amountRow.hidden = total === null;
+    payEls.amount.textContent = total === null ? '' : brl(total);
+    payEls.qrBox.open = false;
+    if (pay.qr_code_base64) { payEls.qr.src = 'data:image/png;base64,' + pay.qr_code_base64; payEls.qrBox.hidden = false; }
+    else { payEls.qr.removeAttribute('src'); payEls.qrBox.hidden = true; }
   }
-  if (!pay && !watchNow && WHATSAPP_NUMBER) {
+  if (canRetry) { payEls.retry.textContent = 'Tentar pagar de novo'; payEls.retry.hidden = false; }
+  if (failed && WHATSAPP_NUMBER) {
     payEls.help.hidden = false;
     payEls.help.href = waLink(`Olá! Fiz o pedido ${order.publicCode || order.code} pelo site e o pagamento não foi gerado. Pode me ajudar?`);
   }
   checkoutFormEl.hidden = true;
   paymentStepEl.hidden = false;
-  checkoutTitleEl.textContent = title || (type === 'pix' ? 'Pague com Pix' : type === 'card' ? 'Pagamento' : 'Pedido registrado');
+  checkoutTitleEl.textContent = title || (type === 'pix' ? 'Falta só pagar o Pix' : type === 'card' ? 'Pagamento' : 'Pedido registrado');
   const panel = paymentStepEl.closest('.modal-panel');
   if (panel) panel.scrollTop = 0;
-  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : payEls.help.hidden ? payEls.trackLink : payEls.help).focus({ preventScroll: true });
+  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : !payEls.retry.hidden ? payEls.retry : payEls.help.hidden ? payEls.trackLink : payEls.help).focus({ preventScroll: true });
   if (type || watchNow) startPayWatch(order, pay, !!watchNow);
 }
 
@@ -1642,9 +1665,10 @@ function startPayWatch(order, pay, immediate) {
       if (!r.ok) return;
       const d = await r.json();
       if (token !== watch.token) return;
-      if (d.payment_status === 'approved') onPayApproved(order);
+      if (d.payment_status === 'approved') onPayApproved(order, d.post_payment);
       else if (d.payment_status === 'rejected') onPayEnded(order, 'O pagamento foi recusado. Você pode tentar de novo ou refazer o pedido.');
       else if (d.payment_status === 'cancelled') onPayEnded(order, 'O pagamento foi cancelado. Você pode refazer o pedido.');
+      else if (d.status_key === 'cancelled') onPayEnded(order, 'O pedido foi cancelado. Se tiver dúvida, fale com a Gigi pelo WhatsApp.');
     } catch { /* sem rede: tenta de novo no próximo ciclo */ } finally { busy = false; }
   };
   watch.pollNow = poll;
@@ -1652,8 +1676,9 @@ function startPayWatch(order, pay, immediate) {
   if (immediate) poll();
 }
 
-function onPayApproved(order) {
+function onPayApproved(order, postPayment) {
   stopPayWatch();
+  markLastOrder(order.token, { status: 'approved' });
   payEls.pixBox.hidden = true;
   payEls.card.hidden = payEls.support.hidden = true;
   payEls.retry.hidden = true;
@@ -1665,14 +1690,17 @@ function onPayApproved(order) {
     : `Olá! Fiz o pedido ${order.publicCode || order.code || ''} pelo site e o pagamento foi confirmado ✓` + (order.token ? `\nAcompanhar: ${location.origin}${trackUrl(order.token)}` : ''));
   (payEls.wa.hidden ? payEls.trackLink : payEls.wa).focus({ preventScroll: true });
   toast('Pagamento confirmado! ✓', 3000);
+  showThanks(order.publicCode || order.code, postPayment);
 }
 
 function onPayEnded(order, msg) {
   stopPayWatch();
+  markLastOrder(order.token, { status: 'ended' });
   payEls.pixBox.hidden = true;
   setPayStatus(msg, 'warn');
   payEls.text.textContent = 'Se já pagou, fale com a Gigi pelo WhatsApp informando o número do pedido.';
   checkoutTitleEl.textContent = 'Pagamento não concluído';
+  payEls.retry.textContent = 'Refazer pedido';
   payEls.retry.hidden = !(lastCartCopy && lastCartCopy.length);
   if (WHATSAPP_NUMBER) {
     payEls.help.hidden = false;
@@ -1691,6 +1719,67 @@ payEls.retry.addEventListener('click', () => {
   renderPoints();
   renderSummary();
 });
+
+/* v4 U-01: Pix em aberto. Ao recarregar a loja, o último pedido com Pix pendente reabre a tela de pagamento (o código vem
+   de /api/order-status, só enquanto pendente e não vencido). Fechar com o Pix em aberto pede confirmação. */
+const PIX_CLOSE_MSG = 'O Pix ainda não foi pago. Se fechar agora, você volta a ele pelo botão "Acompanhe" ou pelo link do pedido. Fechar mesmo assim?';
+const pixPending = () => modalStack.includes('#checkout-modal') && !paymentStepEl.hidden && !payEls.pixBox.hidden && watch.tick !== null;
+function markLastOrder(token, patch) {
+  const last = readLastOrder();
+  if (last && token && last.token === token) writeStore(LAST_ORDER_KEY, { ...last, ...patch });
+}
+function confirmPixClose() {
+  if (!window.confirm(PIX_CLOSE_MSG)) return false;
+  const last = readLastOrder();
+  if (last) markLastOrder(last.token, { pix_dismissed: true }); // não reabre sozinho de novo; segue no "Acompanhe"
+  return true;
+}
+async function resumePix() {
+  const last = readLastOrder();
+  if (!last || last.status !== 'awaiting_payment' || last.payment_choice !== 'pix' || last.pix_dismissed) return;
+  if (!(Date.parse(last.pix_expires_at) > Date.now())) return;
+  try {
+    const r = await fetch('/api/order-status?t=' + encodeURIComponent(last.token), { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const pay = d && d.pix && typeof d.pix === 'object' ? normalizePayment({ type: 'pix', ...d.pix }) : null;
+    if (!pay) { markLastOrder(last.token, { status: d && d.payment_status === 'approved' ? 'approved' : 'ended' }); return; }
+    if (modalStack.length) return; // a pessoa já abriu outra coisa
+    openModal('#checkout-modal', { opener: document.body });
+    renderOrderStep({ publicCode: d.public_code || last.public_code, token: last.token, payment: pay, summary: last.summary,
+      total: Number.isInteger(d.total_cents) ? d.total_cents : undefined, scheduledLabel: d.scheduled_label || last.scheduled_label || null });
+    toast('Seu Pix ainda está esperando o pagamento.', 4000);
+  } catch { /* sem rede: o "Acompanhe" continua levando ao pedido */ }
+}
+
+/* v4 N8: depois do pagamento aprovado, convite para avaliar no Google e seguir no Instagram. Só aparece se o servidor
+   mandar post_payment e uma vez por pedido (marcado no aparelho ao fechar ou ao tocar num dos links). */
+const POST_SEEN_KEY = 'dg-post-payment-seen';
+const httpsUrl = u => { if (typeof u !== 'string' || u.length > 500) return ''; try { const x = new URL(u); return x.protocol === 'https:' ? x.href : ''; } catch { return ''; } };
+const postSeen = () => { const v = readStore(POST_SEEN_KEY); return Array.isArray(v) ? v.filter(c => typeof c === 'string') : []; };
+function markPostSeen(code) {
+  if (!code) return;
+  writeStore(POST_SEEN_KEY, [code, ...postSeen().filter(c => c !== code)].slice(0, 30));
+}
+function showThanks(code, pp) {
+  if (!pp || typeof pp !== 'object' || !code || postSeen().includes(code)) return;
+  const review = httpsUrl(pp.review_url), insta = httpsUrl(pp.instagram_url);
+  if (!review && !insta) return;
+  payEls.review.hidden = !review;
+  payEls.insta.hidden = !insta;
+  if (review) payEls.review.href = review;
+  if (insta) payEls.insta.href = insta;
+  payEls.thanks.dataset.code = code;
+  payEls.thanks.hidden = false;
+}
+function closeThanks() {
+  if (payEls.thanks.hidden) return;
+  markPostSeen(payEls.thanks.dataset.code);
+  payEls.thanks.hidden = true;
+}
+payEls.thanksClose.addEventListener('click', () => { closeThanks(); (payEls.wa.hidden ? payEls.trackLink : payEls.wa).focus({ preventScroll: true }); });
+payEls.review.addEventListener('click', () => markPostSeen(payEls.thanks.dataset.code));
+payEls.insta.addEventListener('click', () => markPostSeen(payEls.thanks.dataset.code));
 
 // Ao voltar para a aba, confere o pagamento na hora (o navegador atrasa timers em segundo plano)
 document.addEventListener('visibilitychange', () => { if (!document.hidden && watch.pollNow) watch.pollNow(); });
@@ -1879,8 +1968,10 @@ checkoutFormEl.addEventListener('submit', async e => {
     if (srv.coupon_code) { removeStore(COUPON_KEY); coupon = null; couponInputEl.value = ''; showCouponStatus('', ''); syncCouponUi(); }
     addRecent({ public_code: data.public_code, code: data.code, token: data.tracking_token });
     const card = payment && payment.type === 'card';
+    // v4 U-01: com Pix, guarda só o prazo; o código volta do servidor (/api/order-status pix) ao reabrir.
+    const pixUntil = payment && payment.type === 'pix' ? (Number.isFinite(Date.parse(payment.expires_at)) ? new Date(Date.parse(payment.expires_at)).toISOString() : new Date(Date.now() + PIX_DEFAULT_MS).toISOString()) : null;
     saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice, scheduled_label: srv.scheduled_label || null,
-      ...(card ? { paymentUrl: payment.url, whatsappText } : {}) });
+      ...(card ? { paymentUrl: payment.url, whatsappText } : {}), ...(pixUntil ? { pix_expires_at: pixUntil } : {}) });
     slotCache.clear();
     renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary, scheduledLabel: srv.scheduled_label || null });
     toast(payment ? 'Pedido registrado! Agora é só pagar.' : 'Pedido registrado!');
@@ -1924,12 +2015,14 @@ function handlePaymentReturn() {
 
 payEls.wa.addEventListener('click', forgetWhatsAppText); // texto enviado: não fica mais guardado no aparelho
 readLastOrder(); // apaga o último pedido vencido (24 h) ou no formato antigo
+const resumeOnLoad = !new URLSearchParams(location.search).has('pagamento');
 syncDelivery();
 renderCartFab();
 renderAccount();
 loadAccount();
 refreshStore(); // horário de hoje (a=state traz hours)
 handlePaymentReturn();
+if (resumeOnLoad) resumePix();
 
 /* L6: voltar da página de entrar/criar conta (/?checkout=1) reabre o checkout com o carrinho que ficou no aparelho. */
 (function reopenCheckout() {

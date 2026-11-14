@@ -332,6 +332,15 @@
   // ---------- U4: pedidos ----------
   // v4 N1: o rótulo vem pronto do servidor (status_label); status_key só escolhe a cor.
   const STATUS_TONE = { awaiting_payment: 'tone-warn', payment_failed: 'tone-bad', refunded: 'tone-bad', received: 'tone-info', accepted: 'tone-info', preparing: 'tone-warn', ready: 'tone-ok', awaiting_delivery: 'tone-ok', completed: 'tone-done', cancelled: 'tone-bad' };
+  // v4 U-10: código público -> token de acompanhamento, dos pedidos feitos neste aparelho.
+  function recentTokens() {
+    const m = new Map();
+    try {
+      const list = JSON.parse(localStorage.getItem('dg-recent-orders') || '[]');
+      if (Array.isArray(list)) for (const r of list) if (r && typeof r.public_code === 'string' && typeof r.token === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(r.token) && !m.has(r.public_code)) m.set(r.public_code, r.token);
+    } catch { /* sem lista */ }
+    return m;
+  }
   function orderCard(o) {
     const tone = STATUS_TONE[o.status_key] || 'tone-info';
     const head = el('div', { class: 'order-head' },
@@ -347,8 +356,11 @@
     else if (o.discount_cents > 0 && o.points_redeemed > 0) rows.unshift(el('div', { class: 'order-row sub' }, el('span', { text: `Desconto de pontos (${fmtPoints(o.points_redeemed)} pts)` }), el('span', { text: '- ' + money(o.discount_cents) })));
     if (o.club_points > 0) rows.unshift(el('div', { class: 'order-row sub' }, el('span', { text: 'Prêmio do Clube' }), el('span', { text: `${fmtPoints(o.club_points)} pontos` })));
     const foot = el('div', { class: 'order-foot' });
-    // Link de acompanhamento só existe quando o servidor entrega a URL (hoje os pedidos guardam só o hash do token).
-    if (o.tracking_url && /^\/pedido\.html\?t=[0-9a-f]{32}$/.test(o.tracking_url)) foot.append(el('a', { class: 'order-link', href: o.tracking_url, text: 'Acompanhar pedido' }));
+    // Link de acompanhamento: a URL do servidor quando vier; senão o token guardado neste aparelho (dg-recent-orders) pelo código
+    // do pedido (v4 U-10). O banco guarda só o hash do token, então pedido feito em outro aparelho fica sem link.
+    const recentToken = o.public_code ? recentTokens().get(o.public_code) : null;
+    const trackHref = o.tracking_url && /^\/pedido\.html\?t=[A-Za-z0-9_-]{16,64}$/.test(o.tracking_url) ? o.tracking_url : recentToken ? '/pedido.html?t=' + encodeURIComponent(recentToken) : '';
+    if (trackHref) foot.append(el('a', { class: 'order-link', href: trackHref, text: 'Acompanhar pedido', 'aria-label': `Acompanhar o pedido ${o.public_code || ''}`.trim() }));
     return el('li', { class: 'order' }, head, meta, sched, items, ...rows, foot);
   }
   async function loadOrders() {

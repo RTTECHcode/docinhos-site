@@ -37,6 +37,23 @@
 </header>
 
 <main class="about order-track" id="track">
+  <!-- v4 U-01/U-09: Pix pendente (código de /api/order-status, só enquanto pendente e não vencido). Fora da região aria-live: o contador muda a cada segundo. -->
+  <section class="about-section track-pix" id="t-pix" aria-labelledby="t-pix-title" hidden>
+    <h2 id="t-pix-title">Falta só pagar o Pix</h2>
+    <div class="pix-box">
+      <p class="pix-amount" id="t-pix-amount-row" hidden><span>Valor do Pix</span> <strong id="t-pix-amount"></strong></p>
+      <button type="button" id="t-pix-copy" class="button full">Copiar código Pix</button>
+      <p id="t-pix-copy-status" class="pix-copy-status" role="status" aria-live="polite"></p>
+      <p class="pix-instr">Abra o app do seu banco &gt; Pix &gt; Pix Copia e Cola e cole o código.</p>
+      <p id="t-pix-timer" class="pix-timer"></p>
+      <label class="pix-label" for="t-pix-code">Código Pix Copia e Cola</label>
+      <textarea id="t-pix-code" class="pix-code" readonly rows="3" spellcheck="false"></textarea>
+      <details id="t-pix-qr-box" class="pix-qr-box">
+        <summary>Pagar por outro aparelho (QR Code)</summary>
+        <img id="t-pix-qr" class="pix-qr" alt="QR Code do Pix" width="220" height="220">
+      </details>
+    </div>
+  </section>
   <section class="about-section" aria-labelledby="pedido-titulo" aria-live="polite">
     <h2 id="pedido-titulo">Pedido <span id="t-code">...</span></h2>
     <p id="t-pay-banner" class="track-msg pay-banner" role="status" aria-live="polite" hidden></p>
@@ -50,6 +67,14 @@
     </dl>
     <p class="track-note" id="t-note" hidden>Esta página atualiza sozinha.</p>
   </section>
+  <!-- v4 N8: só com post_payment do servidor (pagamento aprovado), uma vez por pedido -->
+  <section class="about-section post-pay" id="t-thanks" aria-labelledby="t-thanks-title" hidden>
+    <h2 id="t-thanks-title">Obrigada pela preferência!</h2>
+    <p>Sua opinião ajuda muito a Docinhos da Gigi a crescer.</p>
+    <a id="t-review" class="button full" href="#" target="_blank" rel="noopener noreferrer" hidden>Avaliar no Google</a>
+    <a id="t-insta" class="button full post-pay-ig" href="#" target="_blank" rel="noopener noreferrer" hidden>Seguir no Instagram</a>
+    <button type="button" id="t-thanks-close" class="link-btn">Fechar</button>
+  </section>
   <section class="about-section" id="t-recent-box" hidden>
     <h2>Seus pedidos recentes</h2>
     <ul id="t-recent" class="recent-list"></ul>
@@ -57,7 +82,7 @@
   <section class="about-section about-cta">
     <h2>Dúvidas sobre o pedido?</h2>
     <p>Fale com a gente pelo WhatsApp informando o código do pedido.</p>
-    <a class="button wa" data-wa data-wa-text="Olá! Tenho uma dúvida sobre o meu pedido." href="https://wa.me/5511987882303?text=Ol%C3%A1!%20Tenho%20uma%20d%C3%BAvida%20sobre%20o%20meu%20pedido." target="_blank" rel="noopener noreferrer">Falar no WhatsApp</a>
+    <a class="button wa" id="t-wa" data-wa data-wa-text="Olá! Tenho uma dúvida sobre o meu pedido." href="https://wa.me/5511987882303?text=Ol%C3%A1!%20Tenho%20uma%20d%C3%BAvida%20sobre%20o%20meu%20pedido." target="_blank" rel="noopener noreferrer">Falar no WhatsApp</a>
   </section>
 </main>
 
