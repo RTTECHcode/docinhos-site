@@ -61,9 +61,10 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F3 A4 extra | em andamento | v4-a4 | tela de retry_payment e rastreio ?o=; Frete e aviso de nova aba |
 | F3 A3 | feito | v4-a3 | 5972489; N1, N3-N6, N8, N10, N11, U-06 (som, PWA, push), O-01; 44 prints |
 | F4 A5 revisão | feito | v4-a5 | 6c46ab2; só CSS: toque 44 px, Quando? em 360, pós-pagamento, foco, barra do Clube; prints "depois" interrompidos por falta de memória (A6 cobre na F5) |
-| F5 A1 segurança | em andamento | v4-a1 | revisão do diff bff189f..v4; achados em seguranca-v4-f5.md |
+| F5 A1 segurança | feito | v4-a1 | 9f17bb2; 0 Crítico/Alto; 2 Médios (F5-S-01, S-02) e 7 Baixos em seguranca-v4-f5.md |
+| F5 A2 correções + F6 Netlify | em andamento | v4-a2 | F5-S-01 a S-08; M1-M6; F5-S-06 decidido: health_detail só admin |
 | F5 A6 QA | em andamento | v4-a6 | etapa 1 regressão de banco; etapa 2 navegador depois do A4 |
-| F6 Netlify | aguardando | — | migração (plano seção 5); deploy só com o Renan |
+| F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
 | F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
 
