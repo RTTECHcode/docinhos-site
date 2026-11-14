@@ -234,7 +234,7 @@ create table if not exists loyalty_ledger (
      id bigserial primary key,
      customer_id integer not null references customers(id) on delete cascade,
      order_id integer references orders(id) on delete set null,
-     kind text not null check (kind in ('earn','redeem_reserve','redeem_release','redeem_commit','reversal','adjust')),
+     kind text not null check (kind in ('earn','redeem_reserve','redeem_release','redeem_commit','reversal','adjust','reward_reserve','reward_release','reward_commit')),
      points integer not null,
      note text,
      created_at timestamptz not null default now()
@@ -284,6 +284,8 @@ create table if not exists route_cache (
      created_at timestamptz not null default now(),
      primary key (origin, dest)
    );
+-- OBSOLETO (v4 N4): ingredient_synonyms não é mais lida nem gravada (a busca da pausa normaliza o termo e procura no nome, complemento e descrição).
+-- A tabela e as linhas continuam no banco, sem uso.
 create table if not exists ingredient_synonyms (
      id serial primary key,
      canonical text not null,
@@ -320,3 +322,87 @@ create index if not exists ingredient_pause_items_product_idx on ingredient_paus
 -- (v3 D6) a chave 'default_pause_label' não é mais criada nem lida (obsoleta).
 insert into settings (key, value) values ('shipping_bands', '[{"max_km":3,"fee_cents":600},{"max_km":6,"fee_cents":900},{"max_km":10,"fee_cents":1400}]') on conflict (key) do nothing;
 insert into settings (key, value) values ('store_origin_address', 'Rua Manoel Hare Peralta, 101, Ayrosa, Osasco, SP') on conflict (key) do nothing;
+
+-- ---- v4 (scripts/migrate-2026-11-12-v4-schema.js) ----
+-- Clube de pontos por itens (N3). Custo em pontos por prêmio; produto com grupo de escolha obrigatória não pode ser prêmio (regra da API).
+create table if not exists club_rewards (
+     id serial primary key,
+     product_id integer not null references products(id) on delete cascade,
+     size_complement_id integer references complements(id) on delete cascade,
+     points_cost integer not null check (points_cost > 0),
+     max_per_order integer not null default 1 check (max_per_order >= 1),
+     active boolean not null default true,
+     starts_at timestamptz,
+     ends_at timestamptz,
+     sort_order integer not null default 0,
+     created_at timestamptz not null default now(),
+     updated_at timestamptz not null default now()
+   );
+create index if not exists club_rewards_active_idx on club_rewards (active, sort_order);
+-- Cupons (N6)
+create table if not exists coupons (
+     id serial primary key,
+     code text not null unique check (code ~ '^[A-Z0-9-]{3,20}$'),
+     kind text not null check (kind in ('percent', 'fixed')),
+     value integer not null check (value > 0),
+     min_order_cents integer not null default 0 check (min_order_cents >= 0),
+     starts_at timestamptz,
+     expires_at timestamptz,
+     max_uses integer check (max_uses is null or max_uses > 0),
+     max_uses_per_customer integer check (max_uses_per_customer is null or max_uses_per_customer > 0),
+     active boolean not null default true,
+     stacks_with_club boolean not null default false,
+     note text,
+     created_by text,
+     created_at timestamptz not null default now(),
+     updated_at timestamptz not null default now()
+   );
+alter table orders add column if not exists club_points integer not null default 0;
+alter table orders add column if not exists coupon_id integer references coupons(id) on delete set null;
+alter table orders add column if not exists coupon_code text;
+alter table orders add column if not exists coupon_discount_cents integer not null default 0;
+create table if not exists coupon_redemptions (
+     id bigserial primary key,
+     coupon_id integer not null references coupons(id) on delete cascade,
+     order_id integer not null unique references orders(id) on delete cascade,
+     customer_id integer references customers(id) on delete set null,
+     phone_key text not null,
+     status text not null check (status in ('reserved', 'committed', 'released')),
+     discount_cents integer not null default 0,
+     created_at timestamptz not null default now(),
+     updated_at timestamptz not null default now()
+   );
+create index if not exists coupon_redemptions_coupon_idx on coupon_redemptions (coupon_id, status, phone_key);
+create table if not exists coupon_campaigns (
+     id serial primary key,
+     coupon_id integer not null references coupons(id) on delete cascade,
+     audience jsonb not null,
+     created_by text,
+     created_at timestamptz not null default now()
+   );
+create table if not exists coupon_campaign_targets (
+     campaign_id integer not null references coupon_campaigns(id) on delete cascade,
+     customer_id integer not null references customers(id) on delete cascade,
+     sent_at timestamptz,
+     sent_by text,
+     primary key (campaign_id, customer_id)
+   );
+-- Mimo da avaliação no Google (N8): no máximo 1 pendente por telefone (phone_key = telefone sem 55, só dígitos)
+create table if not exists review_gifts (
+     id serial primary key,
+     phone_key text not null,
+     customer_id integer references customers(id) on delete set null,
+     granted_order_id integer references orders(id) on delete set null,
+     after_order_id integer,
+     label text not null default '1 brigadeirinho',
+     granted_by text not null,
+     granted_at timestamptz not null default now(),
+     delivered_order_id integer references orders(id) on delete set null,
+     delivered_at timestamptz,
+     cancelled_at timestamptz,
+     cancelled_by text
+   );
+create unique index if not exists review_gifts_pending_uq on review_gifts (phone_key) where delivered_at is null and cancelled_at is null;
+-- Relatórios (N5, A-09)
+create index if not exists orders_created_status_idx on orders (created_at, payment_status);
+-- Chave opcional em settings: 'google_review_url' (ausente = link padrão; vazia = bloco de avaliação desligado; só https://).

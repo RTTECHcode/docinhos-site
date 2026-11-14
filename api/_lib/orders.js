@@ -44,6 +44,28 @@ const statusLabel = (status, method) => {
   return (method === 'pickup' && PICKUP_LABELS[s]) || LABELS[s] || s;
 };
 
+// N1 (v4): rótulo para o cliente derivado do pagamento + preparo. Nenhum valor gravado muda.
+// Retorna { key, label }. Cancelado vale sempre; "novo" depende do pagamento; os demais seguem o preparo.
+const DISPLAY_LABELS = {
+  cancelled: 'Cancelado', refunded: 'Pagamento estornado', payment_failed: 'Pagamento não concluído', awaiting_payment: 'Aguardando pagamento',
+  received: 'Pedido recebido', accepted: 'Pedido aceito', preparing: 'Em preparo', ready: 'Pronto',
+  awaiting_delivery: 'Saiu para entrega', completed: 'Concluído'
+};
+function displayStatus(row) {
+  const f = normalizeStatus(row.fulfillment_status);
+  const pay = row.payment_status;
+  let key;
+  if (f === 'cancelled') key = 'cancelled';
+  else if (f === 'new') {
+    if (pay === 'refunded' || pay === 'charged_back') key = 'refunded';
+    else if (pay === 'rejected' || pay === 'cancelled' || pay === 'expired') key = 'payment_failed';
+    else if (pay === 'approved') key = 'received';
+    else key = 'awaiting_payment';
+  } else key = DISPLAY_LABELS[f] ? f : 'awaiting_payment';
+  const label = key === 'awaiting_delivery' && row.delivery_method === 'pickup' ? 'Pronto para retirada' : DISPLAY_LABELS[key];
+  return { key, label };
+}
+
 // Regras: só avança (pode pular etapas), nunca volta; cancelar vale até antes de concluir; concluído e cancelado são finais.
 function checkTransition(fromRaw, to) {
   const from = normalizeStatus(fromRaw);
@@ -58,12 +80,15 @@ function checkTransition(fromRaw, to) {
 // Conclusão automática, calculada na leitura (sem cron): pronto/aguardando entrega há mais de 1 h viram concluído.
 // completed_at fica igual ao instante em que a regra venceu (ready_at + 1 h), não ao da consulta.
 async function sweepOrders(sql, { id = null } = {}) {
-  await sql.query(
+  const done = await sql.query(
     `update orders
         set fulfillment_status = 'completed', completed_at = coalesce(ready_at, created_at) + interval '${AUTO_COMPLETE_AFTER}'
       where fulfillment_status in ('ready', 'awaiting_delivery')
         and coalesce(ready_at, created_at) < now() - interval '${AUTO_COMPLETE_AFTER}'
-        and ($1::int is null or id = $1::int)`, [id]);
+        and ($1::int is null or id = $1::int)
+      returning id`, [id]);
+  // N8: pedido concluído pela regra automática também entrega o mimo pendente do telefone (idempotente).
+  if (done.length) await require('./gifts').deliverForOrders(sql, done.map(r => r.id));
 }
 
 // Muda o status com validação no servidor. Retorna a linha atualizada.
@@ -81,6 +106,7 @@ async function changeStatus(sql, { id, to, reason }) {
       returning id, code, public_code, delivery_method, fulfillment_status`,
     [id, to, cur.fulfillment_status, cancel, cancel && reason ? String(reason).slice(0, 200) : null]);
   if (!rows[0]) throw new OrderError(409, 'O pedido foi alterado por outra pessoa. Atualize a lista.', 'conflict');
+  if (to === 'completed') await require('./gifts').deliverForOrders(sql, [id]); // N8: entrega o mimo pendente do telefone
   return { ...rows[0], changed: true, from: normalizeStatus(cur.fulfillment_status) };
 }
 
@@ -90,7 +116,10 @@ const iso = v => (v ? new Date(v).toISOString() : null);
 // Visão pública (rastreio): nunca telefone nem endereço.
 function trackingView(row) {
   const status = normalizeStatus(row.fulfillment_status);
+  const shown = displayStatus(row);
   return {
+    status_key: shown.key,
+    status_label: shown.label,
     public_code: row.public_code || null,
     payment_status: row.payment_status,
     fulfillment_status: status,
@@ -111,11 +140,14 @@ const TRACKING_COLUMNS = `public_code, payment_status, fulfillment_status, deliv
 
 // Colunas completas para o painel admin (inclui dados pessoais: só atrás de login).
 const ADMIN_COLUMNS = `id, code, public_code, customer_name, customer_phone, delivery_method, address, items, subtotal_cents,
-  delivery_fee_cents, discount_cents, points_redeemed, total_cents, distance_km, payment_method, payment_status, fulfillment_status,
+  delivery_fee_cents, discount_cents, points_redeemed, club_points, coupon_code, coupon_discount_cents, total_cents, distance_km, payment_method, payment_status, fulfillment_status,
   notes, created_at, accepted_at, preparing_at, ready_at, awaiting_delivery_at, completed_at, cancelled_at, cancel_reason, customer_id`;
 function adminView(row) {
+  const shown = displayStatus(row);
   return {
     ...row,
+    status_key: shown.key,
+    status_label: shown.label,
     distance_km: row.distance_km === null || row.distance_km === undefined ? null : Number(row.distance_km),
     fulfillment_status: normalizeStatus(row.fulfillment_status),
     fulfillment_label: statusLabel(row.fulfillment_status, row.delivery_method)
@@ -124,6 +156,6 @@ function adminView(row) {
 
 module.exports = {
   OrderError, PUBLIC_CODE_RE, PUBLIC_CODE_WINDOW, newPublicCode, TRACKING_RE, newTrackingToken, hashTrackingToken,
-  FLOW, STATUSES, LABELS, TS_COLUMN, normalizeStatus, statusLabel, checkTransition, sweepOrders, changeStatus,
+  FLOW, STATUSES, LABELS, TS_COLUMN, normalizeStatus, statusLabel, displayStatus, DISPLAY_LABELS, checkTransition, sweepOrders, changeStatus,
   trackingView, TRACKING_COLUMNS, ADMIN_COLUMNS, adminView
 };
