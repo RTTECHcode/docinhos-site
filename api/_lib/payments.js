@@ -67,6 +67,17 @@ async function noteCancelledPaid(sql, orderId, paymentId) {
     [orderId, CANCELLED_PAID_ACTION, paymentId]);
 }
 
+// Status do Mercado Pago em que o pagamento ainda pode acontecer (o Pix continua valendo).
+const PENDING_STATUSES = ['pending', 'in_process', 'authorized'];
+
+// U-01: apaga o Pix guardado quando o pagamento não está mais pendente ou o pedido foi cancelado. Idempotente.
+async function clearPix(sql, orderId) {
+  await sql.query(
+    `update orders set pix_qr_code = null, pix_qr_base64 = null, pix_expires_at = null
+      where id = $1 and (pix_qr_code is not null or pix_qr_base64 is not null or pix_expires_at is not null)
+        and (payment_status <> all($2::text[]) or fulfillment_status = 'cancelled')`, [orderId, PENDING_STATUSES]);
+}
+
 /**
  * Aplica um pagamento lido da API do Mercado Pago ao pedido do external_reference.
  * @returns {Promise<{outcome: 'invalid'|'no_order'|'currency_mismatch'|'amount_mismatch'|'updated'|'unchanged',
@@ -79,7 +90,8 @@ async function syncPayment(sql, pay, { source = 'webhook' } = {}) {
   if (!order) return { outcome: 'no_order' };
 
   // Só confirma se moeda e valor pago batem com o total gravado no servidor.
-  if (pay.currency_id && pay.currency_id !== 'BRL') {
+  // S-06 (v4): a moeda é obrigatória. Pagamento sem currency_id também é recusado (antes passava).
+  if (pay.currency_id !== 'BRL') {
     console.error(`[${source}] Moeda do pagamento diferente de BRL`, code, pay.id);
     return { outcome: 'currency_mismatch', order_id: order.id };
   }
@@ -100,6 +112,8 @@ async function syncPayment(sql, pay, { source = 'webhook' } = {}) {
   // Pontos (O11): idempotente; aprovado credita e confirma o resgate, rejeitado/cancelado devolve a reserva,
   // estornado reverte. Roda sempre para consertar execução interrompida. Pedido já cancelado e pagamento aprovado
   // depois: não credita e avisa o admin na auditoria para estornar à mão (nada é estornado no Mercado Pago).
+  // U-01 (v4): o Pix guardado só serve enquanto o pagamento está pendente. Saiu de pendente: apaga o código e o QR.
+  await clearPix(sql, order.id);
   await noteCancelledPaid(sql, order.id, String(pay.id));
   await require('./loyalty').onPaymentStatus(sql, order.id);
   const [now] = await sql.query('select payment_status from orders where id = $1', [order.id]);
@@ -128,5 +142,5 @@ async function checkOrderPayment(sql, order, { source = 'check', timeoutMs } = {
 
 module.exports = {
   PaymentLookupError, MP_API, mpGet, fetchPayment, searchPaymentsByReference, pickPayment, paymentMethodOf,
-  CANCELLED_PAID_ACTION, noteCancelledPaid, syncPayment, checkOrderPayment
+  CANCELLED_PAID_ACTION, noteCancelledPaid, syncPayment, checkOrderPayment, PENDING_STATUSES, clearPix
 };
