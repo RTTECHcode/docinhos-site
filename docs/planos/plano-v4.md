@@ -7,7 +7,7 @@ Regras que valem para todos os agentes:
 - Nada de push, merge na main, deploy, escrita no banco de produção ou leitura de `.env`. Só `.env.dev` via `scripts/dev-env.js`.
 - Migração nova, aditiva e idempotente em `scripts/migrate-2026-11-12-v4-*.js`, espelhada em `scripts/schema.sql`. Nada de DROP de tabela ou coluna.
 - Preço, frete, pontos, cupom e total: só o servidor calcula.
-- Limite de 12 funções em `api/` (hoje 9): ação nova entra como `?a=` nos arquivos que já existem; a regra de negócio vai para `api/_lib/`.
+- Ação nova entra como `?a=` nos arquivos de `api/` que já existem; a regra de negócio vai para `api/_lib/`. (O limite de 12 funções era da Vercel Hobby; com a Netlify ele cai, mas a estrutura fica igual.)
 - Testes um script por vez (o banco dev é compartilhado). Dados de teste com prefixo `ZZ-`, apagados no fim.
 - Portas do servidor local: A1 3401, A2 3402, A3 3403, A4 3404, A5 3405, A6 3406.
 
@@ -21,7 +21,9 @@ Regras que valem para todos os agentes:
 | F3 | A3, A4 | telas do admin e da loja/conta, N1 a N8 |
 | F4 | A5 | visual, morango do N7, `/experimental.html`, N9 |
 | F5 | A6, A1 | QA completo e revisão de segurança do que mudou |
-| F6 | A0 | `relatorio-v4.md` |
+| F6 | A2 (+A4) | Migração para a Netlify (seção 5), testada localmente; deploy só com o Renan |
+| F7 | A2, A4, A5, A6 | Polimento final e limpeza do que não serve mais (seção 6), com regressão do A6 |
+| F8 | A0 | `relatorio-v4.md` com o passo a passo do Renan (seção 5.3) |
 
 ## 2. Críticos e Altos da auditoria (entram na F2/F3)
 
@@ -58,7 +60,7 @@ Nenhum Crítico nas duas auditorias. Entram todos os Altos (10) e os Médios/Bai
 | U-10 | A4 | "Meus pedidos" com link para acompanhar o pedido. |
 | X-01 | A4 | Modais de produto e carrinho com nome acessível (`aria-labelledby`). |
 
-Pendências que só o Renan resolve (não travam os agentes): cadastrar o monitor externo (O-01), concluir o registro do domínio `docinhosdagigioz.com.br` (solicitado em 14/11) e apontar na Vercel (P-02, N9), gerar as chaves VAPID e colocar na Vercel, ligar Vercel Web Analytics (Analytics → Enable; pedir no relatório final, A4 coloca o script `/_vercel/insights/script.js`), avaliar o plano Pro da Vercel (o Hobby não permite uso comercial).
+Pendências que só o Renan resolve (não travam os agentes): cadastrar o monitor externo (O-01), apontar o domínio `docinhosdagigioz.com.br` (registrado e publicado em 14/11/2026, vence em 14/11/2027) para a Netlify depois da migração (P-02, N9), gerar as chaves VAPID e colocar na Vercel, ligar Vercel Web Analytics (Analytics → Enable; pedir no relatório final, A4 coloca o script `/_vercel/insights/script.js`), seguir o passo a passo da migração para a Netlify (seção 5.3). Decisão de 14/11: sair da Vercel (o Hobby não permite uso comercial e o Pro custa US$ 20/mês) para a Netlify grátis, que permite uso comercial. Medição de visitas passa a ser o Cloudflare Web Analytics (grátis, sem cookie), no lugar do Vercel Web Analytics.
 
 ## 3. Desenho técnico das demandas
 
@@ -183,3 +185,44 @@ Regras (servidor decide tudo):
 | A6 | `scripts/test-*.js` novos, `docs/planos/qa-v4.md` |
 
 CSS novo de A3 vai em `public/admin/admin.css`. CSS novo de A4 vai num bloco marcado no fim de `public/styles.css` ou `public/conta/conta.css`; A5 revisa na F4.
+
+## 5. Migração para a Netlify (F6)
+
+Decisão do Renan (14/11): hospedar na Netlify grátis (uso comercial permitido, 300 créditos por mês; cada deploy de produção gasta 15). Custo fixo da loja: só o domínio. Vercel fica no ar até a Netlify estar testada e o domínio apontado.
+
+### 5.1 O que o A2 faz (faixa: `api/**`, `scripts/**`, `netlify/**`, `netlify.toml`, `vercel.json`, `package.json`)
+- M1. Adaptador único `netlify/functions/<nome>.js` (ou um roteador só) que entrega aos handlers de `api/*.js` o mesmo `req`/`res` de hoje (`req.query`, `req.body` já lido, `req.headers`, cookies, `res.status().json()`, `res.setHeader`, redirecionamento). Os handlers não mudam. Reaproveitar o que `scripts/dev-server.js` já faz.
+- M2. `netlify.toml`: `publish = "public"`, funções em `netlify/functions` com `node_bundler = "esbuild"` e `included_files` de `api/**`; redirecionamento `/api/:nome` para a função (status 200); cabeçalhos de segurança e CSP copiados do `vercel.json` (mesmos valores) e os `Cache-Control` por rota. Corpo cru preservado para a assinatura do webhook do Mercado Pago.
+- M3. Ambiente sem `VERCEL_ENV`: criar `api/_lib/env.js` com `isProduction()`. Regra fail-closed: produção, a menos que `APP_ENV` seja `development`/`preview` ou `NODE_ENV=test`. `scripts/dev-server.js` define `APP_ENV=development`. Trocar todos os usos de `VERCEL_ENV` (webhook, S-01, health) e ajustar `scripts/test-mp-webhook.js`.
+- M4. `SITE_URL` de produção passa a ser `https://docinhosdagigioz.com.br` (fallback continua o da variável). `notification_url` e `back_urls` do Mercado Pago vêm de `SITE_URL`. USER_AGENT de `shipping.js` também.
+- M5. `scripts/dev-server.js` lê os cabeçalhos do `netlify.toml` (fonte única). Testar com o adaptador de verdade: `npx netlify-cli` instalado só em `%LOCALAPPDATA%/gigi-tools` (nunca no projeto), `netlify dev`/`functions:serve` na porta 3402, contra o banco dev. Rodar os testes de pedido, webhook (assinatura com corpo cru), login admin/cliente (scrypt) e cookies.
+- M6. `docs/planos/deploy-netlify.md`: lista de variáveis (só nomes), contexto de cada uma (produção x deploy preview), e o passo a passo da seção 5.3.
+- O `vercel.json` só sai na F7, depois do corte.
+
+### 5.2 O que o A4/A5 fazem
+- Trocar `https://docinhos-site.vercel.app` por `https://docinhosdagigioz.com.br` em canonical, `og:url`, `og:image` (A5) e onde houver no front (A4). `robots.txt` e `sitemap.xml` com o domínio (P-09).
+- Cloudflare Web Analytics: script `https://static.cloudflareinsights.com/beacon.min.js` com o token em atributo `data-cf-beacon` (sem script inline), só nas páginas públicas (nunca no admin, na conta ou em `pedido.html`); CSP com `script-src https://static.cloudflareinsights.com` e `connect-src https://cloudflareinsights.com`. Sem token configurado, nada é carregado.
+
+### 5.3 Passo a passo do Renan (vai no relatório final)
+1. Criar conta na Netlify (de preferência no e-mail da Gigi) e importar o repositório do GitHub; branch de produção `main`.
+2. Cadastrar as variáveis da lista do `deploy-netlify.md`: produção com os valores de produção e `APP_ENV=production`; deploy preview com o banco dev e `APP_ENV=preview`.
+3. Abrir o deploy preview da branch `v4` e conferir o roteiro curto de teste.
+4. Aprovar o merge da `v4` na `main` e o push (a Vercel e a Netlify publicam juntas).
+5. No registro.br, apontar o domínio para a Netlify (Netlify DNS ou os registros indicados por ela; `www` redireciona para o domínio sem `www`). HTTPS é automático.
+6. No Mercado Pago, trocar a URL do webhook para `https://docinhosdagigioz.com.br/api/mp-webhook` e conferir que o segredo é o mesmo da variável.
+7. UptimeRobot: trocar a URL para `https://docinhosdagigioz.com.br/api/health`.
+8. Cloudflare Web Analytics: criar o site (grátis) e mandar o token para o A0 colocar.
+9. Depois de 48 h estável: o projeto da Vercel vira só redirecionamento para o domínio (ou é desligado).
+
+## 6. Polimento final e limpeza (F7)
+
+Retirar o que não serve:
+- Tudo que é só da Vercel: `vercel.json` (depois do corte), `"start": "vercel dev"` no `package.json`, menções a Vercel em docs vivas (o histórico fica), código morto dos sinônimos (N4).
+- Scripts de uso único já rodados em produção vão para `scripts/migracoes/` (não apagar: são histórico), com um README curto.
+- Worktrees e branches locais das rodadas v2/v3 já juntadas na `main` (o A0 remove só as que estiverem limpas e contidas na `main`).
+
+Polir (esforço P das auditorias que ainda estiverem abertos):
+- A2: A-04 (duplicação de `parseCookies`/`sameOrigin`), A-06 (escrita em leitura do saldo), S-05 (fail-closed já resolvido no M3), S-07, O-03 (anular `client_ip` com mais de 90 dias), `npm test` rodando os testes em sequência (parte do A-08), cache curto de `/api/menu` (P-04).
+- A4: P-04/P-05 (cache de estáticos com versão no nome ou `must-revalidate` + ETag), P-06, P-12, P-09 (robots/sitemap), P-10 (página 404), P-08 (JSON-LD da loja com endereço e horário), manifest da loja, X-02 a X-05, U-07, U-12 a U-17 que forem esforço P.
+- A5: P-07 (fontes no próprio site e CSP sem Google Fonts), revisão visual de tudo que A3/A4 fizeram, prints finais.
+- A6: regressão completa depois do polimento.
