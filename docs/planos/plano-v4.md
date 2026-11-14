@@ -1,7 +1,7 @@
 # Plano da rodada v4 — Docinhos da Gigi
 
 Base: branch `v4` (criada da `main`, bff189f). Sub-branches por agente em `.claude/worktrees/v4-<agente>`.
-Auditoria: `docs/planos/auditoria-v4.md`. Contrato da API: `docs/planos/api-contrato.md` (seção 10, v4).
+Auditoria: `docs/planos/auditoria-v4-a1.md` (segurança, arquitetura, operação) e `docs/planos/auditoria-v4-a5.md` (UX, acessibilidade, performance, SEO). Contrato da API: `docs/planos/api-contrato.md` (seção 10, v4).
 
 Regras que valem para todos os agentes:
 - Nada de push, merge na main, deploy, escrita no banco de produção ou leitura de `.env`. Só `.env.dev` via `scripts/dev-env.js`.
@@ -25,7 +25,39 @@ Regras que valem para todos os agentes:
 
 ## 2. Críticos e Altos da auditoria (entram na F2/F3)
 
-(preenchido ao fim da F0)
+Nenhum Crítico nas duas auditorias. Entram todos os Altos (10) e os Médios/Baixos que tocam o mesmo código da v4 (custam pouco agora e ficam caros depois). O resto fica de backlog nas auditorias.
+
+### 2.1 Altos
+
+| ID | Achado | Quem | O que fazer na v4 |
+|---|---|---|---|
+| S-01 | Senha fraca do admin e força bruta distribuída | A2 + Renan | A2: em produção (`VERCEL_ENV=production`) recusar login com senha < 8 caracteres (força troca) e criar teto diário por usuário que vale para qualquer IP (50 falhas em 24 h), com aviso em `admin_audit`. Renan: trocar a senha do admin por uma de 12+ caracteres. |
+| O-01 | Sem monitoramento nem alerta | A2 + Renan | A2: `/api/health` (público) responde só `ok` e verificações sim/não: banco, `MERCADOPAGO_ACCESS_TOKEN` e `MERCADOPAGO_WEBHOOK_SECRET` presentes (nunca o valor) e webhook sem 401 nas últimas 24 h; 503 se alguma falhar. O webhook registra cada 401 e cada aviso aceito; o admin ganha `health_detail` (hora do último aviso aceito, quantidade de 401 em 24 h). A3: aviso no painel quando houver 401 recentes. Renan: cadastrar UptimeRobot (ou Better Stack) em `/api/health`. |
+| U-01 | Código do Pix se perde ao recarregar ou voltar | A2 + A4 | A2: hoje o Pix não é guardado (`api/order.js:472` só devolve na resposta). Gravar em colunas novas de `orders` (`pix_qr_code`, `pix_qr_base64`, `pix_expires_at`) e `/api/order-status` devolve `pix: { qr_code, qr_code_base64, expires_at }` só enquanto o pagamento estiver pendente e não vencido (mesmo token do pedido). Limpar as colunas quando o pagamento sair de pendente. A4: guardar o último pedido com Pix no aparelho e reabrir a tela de pagamento; bloco "Copiar código Pix" em `pedido.html`; confirmação ao fechar o modal com Pix em aberto. |
+| U-02 | Botão "Copiar código Pix" fora da tela | A4 (+A5 visual) | Título "Falta só pagar o Pix", valor em destaque, botão de copiar logo abaixo, QR recolhido em "Pagar por outro aparelho". |
+| U-03 | Aviso de loja fechada escondido | A4 (+A5 visual) | Faixa visível no topo do cardápio, no carrinho e no topo do checkout com o horário de reabertura (resolve também X-06). |
+| U-04 | Frete só aparece no fim | A4 | Linha no cardápio e no carrinho com as faixas que já vêm em `/api/menu` ("Entrega até 10 km: de R$ 6 a R$ 14. Retirada grátis."). Cálculo por CEP no carrinho fica de backlog. |
+| U-05 | Faltam sinais de confiança | A4 + A5 + Renan | A4: rodapé e topo com bairro/cidade, horário de hoje (de `/api/menu`), "Pix e cartão" e Instagram (junto com N7). Textos reais de "Quem somos" e prazo médio dependem do Renan: deixar marcado `CONFIRMAR`. |
+| U-06 | Painel não avisa pedido novo | A3 | Som (arquivo em `public/admin/`), vibração e contagem no título da aba ("(1) Pedidos") quando chegar pedido pago; botão "Ativar som" (navegador exige um toque). Aviso fora do painel (push/WhatsApp) é decisão do Renan: backlog. |
+| P-01 | Logo de 1,7 MB | A5 | Logo 330x330 em WebP (< 30 KB) com `width`/`height`; original fora de `public/`. |
+| P-02 | Sem Open Graph | A5 (+A4 nas páginas dele) | `og:*`, `twitter:card` e imagem 1200x630 nas páginas públicas. A URL definitiva ainda não existe: usar `https://docinhos-site.vercel.app` por enquanto, num ponto só fácil de trocar. |
+
+### 2.2 Médios e Baixos que entram (mesmo código da v4)
+
+| ID | Quem | O que fazer |
+|---|---|---|
+| A-02 | A2 | INSERT do pedido e reservas (pontos, prêmio do Clube, cupom) na mesma transação. Pedido nunca fica gravado sem a reserva. |
+| A-07 | A2 | Locks com duas chaves: `pg_advisory_xact_lock(<classe>, id)`, classe 1 = pontos/clube do cliente, 2 = cupom. |
+| A-01 | A2 | `scripts/schema.sql` precisa subir em banco vazio (ALTER de `customers` depois do CREATE). |
+| A-09 | A2 | Índice para relatórios: `orders(created_at)` parcial `where payment_status = 'approved'`. |
+| A-10 | A2 | Cancelar no painel um pedido `approved` grava `reversal` dos pontos ganhos e devolve prêmio/cupom. |
+| S-04 | A2 | Toda exportação CSV e consulta de relatório grava em `admin_audit` (usuário, filtros, quantidade de linhas). |
+| S-06 | A2 | Exigir `pay.currency_id === 'BRL'`. |
+| U-08, U-09 | A4 | Junto do U-01: quando o pagamento não for gerado, botão "Tentar pagar de novo"/WhatsApp com o código do pedido; `pedido.html` pendente mostra o Pix. |
+| U-10 | A4 | "Meus pedidos" com link para acompanhar o pedido. |
+| X-01 | A4 | Modais de produto e carrinho com nome acessível (`aria-labelledby`). |
+
+Pendências que só o Renan resolve (não travam os agentes): trocar a senha do admin (S-01), cadastrar o monitor externo (O-01), escolher o canal de aviso fora do painel (U-06), textos de "Quem somos" e prazo médio (U-05), URL definitiva do site (P-02, N9).
 
 ## 3. Desenho técnico das demandas
 
