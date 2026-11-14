@@ -6,11 +6,11 @@
   const STATUS = { new: 'Novo', accepted: 'Aceito', preparing: 'Em preparo', ready: 'Pronto', awaiting_delivery: 'Aguardando entrega', completed: 'Concluído', delivered: 'Concluído', cancelled: 'Cancelado' };
   const PAY = { approved: 'Pago', pending: 'Aguardando pagamento', in_process: 'Em análise', rejected: 'Recusado', cancelled: 'Cancelado', refunded: 'Reembolsado', expired: 'Expirado' };
   const METHOD = { pix: 'Pix', mercadopago: 'Mercado Pago', mercadopago_card: 'Cartão' };
-  const FILTERS = [['', 'Todos'], ['completed', 'Concluídos'], ['cancelled', 'Cancelados'], ['paid', 'Pagos'], ['new', 'Novos'], ['accepted', 'Aceitos'], ['preparing', 'Em preparo'], ['ready', 'Prontos'], ['awaiting_delivery', 'Aguardando entrega']];
+  const FILTERS = [['', 'Todos'], ['completed', 'Concluídos'], ['cancelled', 'Cancelados'], ['paid', 'Pagos'], ['new', 'Novos'], ['accepted', 'Aceitos'], ['preparing', 'Em preparo'], ['ready', 'Prontos'], ['awaiting_delivery', 'Aguardando entrega'], ['scheduled', 'Agendados']];
   const st = { from: '', to: '', f: '', s: '', page: 1 };
 
-  const payClass = s => (s === 'approved' ? 'ok' : (s === 'pending' || s === 'in_process') ? 'warn' : 'off');
-  const statusText = o => o.fulfillment_label || STATUS[o.fulfillment_status] || o.fulfillment_status;
+  // v4 N1: o rótulo vem pronto da API (status_label).
+  const statusText = o => o.status_label || o.fulfillment_label || STATUS[o.fulfillment_status] || o.fulfillment_status;
   const fullDate = iso => (iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
 
   function card(o) {
@@ -18,14 +18,13 @@
       el('div', { class: 'row between' }, el('strong', { text: o.public_code || o.code }), el('span', { class: 'muted small', text: fullDate(o.created_at) })),
       el('div', { class: 'row between' }, el('span', { class: 'ellipsis grow', text: o.customer_name }), el('strong', { text: DG.money(o.total_cents) })),
       el('div', { class: 'row wrap-row' },
-        el('span', { class: 'pill ' + payClass(o.payment_status), text: PAY[o.payment_status] || o.payment_status }),
-        el('span', { class: 'pill off', text: statusText(o) }),
-        el('span', { class: 'muted small', text: (o.delivery_method === 'pickup' ? 'Retirada' : 'Entrega') + (o.payment_method ? ' - ' + (METHOD[o.payment_method] || o.payment_method) : '') })));
+        DG.statusPill(o),
+        el('span', { class: 'muted small', text: (o.delivery_method === 'pickup' ? 'Retirada' : 'Entrega') + (o.payment_method ? ' - ' + (METHOD[o.payment_method] || o.payment_method) : '') }),
+        ...DG.orderFlags(o)));
   }
 
   function detail(o) {
     DG.sheet('Pedido ' + (o.public_code || o.code), (body, close) => {
-      const items = Array.isArray(o.items) ? o.items : [];
       const rows = [['Cliente', o.customer_name], ['Telefone', o.customer_phone], ['Recebe', o.delivery_method === 'pickup' ? 'Retirada' : 'Entrega'], ['Endereço', o.address || '-'],
         ['Pagamento', (PAY[o.payment_status] || o.payment_status) + (o.payment_method ? ' (' + (METHOD[o.payment_method] || o.payment_method) + ')' : '')],
         ['Situação', statusText(o)], ['Feito em', fullDate(o.created_at)]];
@@ -35,17 +34,12 @@
       if (o.distance_km) rows.push(['Distância', o.distance_km + ' km']);
       body.append(
         el('div', { class: 'card' }, el('dl', { class: 'kv' }, ...rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: String(v) })]))),
+        DG.orderFlags(o).length ? el('div', { class: 'row wrap-row' }, ...DG.orderFlags(o)) : null,
+        o.gift ? DG.giftBox(o) : null,
         el('h3', { class: 'section-title', text: 'Itens' }),
-        ...items.map(i => el('div', { class: 'card' },
-          el('div', { class: 'row between' }, el('strong', { class: 'wrap', text: (i.qty || 1) + 'x ' + (i.name || '') }), el('span', { text: DG.money((i.unit_total_cents || 0) * (i.qty || 1)) })),
-          i.size ? el('p', { class: 'muted small wrap', text: 'Tamanho: ' + i.size }) : null,
-          Array.isArray(i.extras) && i.extras.length ? el('p', { class: 'muted small wrap', text: 'Extras: ' + i.extras.map(x => (x && x.name) || x).join(', ') }) : null)),
+        ...DG.orderItems(o.items),
         o.notes ? el('div', { class: 'card' }, el('strong', { text: 'Observações' }), el('p', { class: 'wrap', text: o.notes })) : null,
-        el('div', { class: 'card' },
-          el('div', { class: 'row between' }, el('span', { text: 'Subtotal' }), el('span', { text: DG.money(o.subtotal_cents) })),
-          el('div', { class: 'row between' }, el('span', { text: 'Entrega' }), el('span', { text: DG.money(o.delivery_fee_cents) })),
-          o.discount_cents ? el('div', { class: 'row between' }, el('span', { text: 'Desconto' + (o.points_redeemed ? ' (' + o.points_redeemed + ' pontos)' : '') }), el('span', { text: '- ' + DG.money(o.discount_cents) })) : null,
-          el('div', { class: 'row between' }, el('strong', { text: 'Total' }), el('strong', { text: DG.money(o.total_cents) }))),
+        DG.orderTotals(o),
         el('button', { class: 'btn block', type: 'button', text: 'Fechar', on: { click: close } }));
     });
   }

@@ -131,8 +131,9 @@
     return box;
   }
 
-  // Comando rápido. Ingrediente simples usa a prévia por ingrediente (com sinônimos do servidor); "voltou X" abre a prévia de
-  // lote quando existe; o resto segue o fluxo antigo (command / command_apply).
+  // Comando rápido. Ingrediente simples usa a prévia por ingrediente (v4 N4: busca do servidor sem sinônimos, ignora acento e
+  // plural e acha o termo dentro do nome); "voltou X" abre a prévia de lote quando existe; o resto segue o fluxo antigo
+  // (command / command_apply).
   function commandBox(after) {
     const input = el('input', { class: 'search', type: 'text', maxlength: 200, placeholder: 'Ex.: morango, voltou oreo, acabou o kitkat', autocapitalize: 'none', enterkeyhint: 'send', 'aria-label': 'Comando' });
     const out = el('div', { class: 'stack' });
@@ -175,7 +176,7 @@
     const form = el('form', { class: 'stack', novalidate: true, on: { submit: e => { e.preventDefault(); run(); } } },
       el('div', { class: 'row' }, input, el('button', { class: 'btn primary', type: 'submit', text: 'Ver' })), out);
     return el('div', { class: 'card stack' }, el('strong', { text: 'Comando rápido' }),
-      el('p', { class: 'muted small', text: 'Escreva o ingrediente ("morango", "oreo") para pausar, ou "voltou morango" para reativar.' }), form);
+      el('p', { class: 'muted small wrap', text: 'Escreva o ingrediente ("morango", "oreo") para pausar, ou "voltou morango" para reativar. A busca ignora acento e plural e acha o nome dentro do produto: "oreo" acha "Biscoito Oreo". Você confere a prévia antes de confirmar.' }), form);
   }
 
   // ---- M1: loja (Fechar loja com prazo / Reabrir agora) ----

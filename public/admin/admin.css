@@ -315,7 +315,7 @@ p.error:not(:empty) { padding: 10px 12px; border-radius: var(--radius-sm); backg
 .ord-act-row .row { margin-bottom: 2px; }
 @media (min-width: 900px) {
   .ord-seg { display: none; }
-  .ord-board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: start; }
+  .ord-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; align-items: start; }
   .ord-col, .ord-col.is-active { display: block; min-height: 120px; }
   .ord-col-h { display: flex; }
   .ord-activity { column-gap: 12px; }
@@ -366,3 +366,66 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 .audit.warn strong::before { content: "⚠ "; }
 .audit.warn .muted { color: var(--warn); }
 /* fim A9 */
+
+/* v4 A3: painel v4 (N1 colunas, Clube, cupons, relatórios, avisos, PWA) */
+.ord-seg-btn.ord-pay[aria-selected="true"] { background: var(--cacau-2); border-color: var(--cacau); }
+.ord-col.ord-pay { background: #f6efec; border-top: 4px solid var(--cacau-2); }
+.ord-seg-btn { font-size: 12.5px; }
+.pill.st-refunded, .pill.st-payment_failed { background: var(--danger-soft); color: var(--danger); }
+/* aba Mais e cabeçalho das telas internas */
+.sub-head { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; }
+.sub-title { font-size: 19px; font-weight: 800; color: var(--cacau); }
+.more-item { display: flex !important; align-items: center; gap: 12px; }
+.more-ico { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: var(--brand-soft); color: var(--brand-deep); font-weight: 800; font-size: 20px; }
+.more-t { display: block; font-size: 16px; }
+.more-s { display: block; }
+.more-go { flex: none; font-size: 26px; color: var(--soft); }
+.view:has(.rep-table) { max-width: 1100px; }
+/* Clube */
+.club-cost { background: var(--manteiga); color: var(--cacau); }
+.club-card .btn.small { justify-self: start; }
+.club-help { margin: -4px 2px 10px; }
+/* Relatórios */
+.rep-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 900px) { .rep-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.rep-tile { display: grid; gap: 2px; padding: 12px; border: 1.5px solid var(--line); border-radius: var(--radius-sm); background: #fff; min-width: 0; }
+.rep-tile-l { font-size: 12.5px; font-weight: 700; color: var(--soft); }
+.rep-tile-v { font-size: 19px; color: var(--cacau); overflow-wrap: anywhere; }
+.rep-box { overflow-x: auto; padding: 10px 12px; }
+.rep-box:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+.rep-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.rep-table caption { text-align: left; font-weight: 800; color: var(--cacau); padding: 0 0 8px; }
+.rep-table th, .rep-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.rep-table thead th { font-size: 12.5px; color: var(--soft); }
+.rep-table tbody th { font-weight: 700; white-space: normal; }
+.rep-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.rep-cust-list { display: grid; gap: 10px; }
+@media (min-width: 900px) { .rep-cust-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.rep-cust .btn.small { justify-self: start; }
+.rep-pager { gap: 8px; margin: 6px 0; }
+.rep-pager .muted { text-align: center; }
+/* Cupons e WhatsApp */
+.cp-list { display: grid; gap: 10px; }
+@media (min-width: 900px) { .cp-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.cp-code { font-size: 19px; letter-spacing: .04em; color: var(--cacau); overflow-wrap: anywhere; }
+.cp-msg { margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--brand-soft); font-size: 14px; white-space: pre-wrap; }
+.cp-preview { margin: 0; padding-left: 20px; display: grid; gap: 2px; }
+.cp-camp { display: grid; gap: 2px; text-align: left; width: 100%; }
+.cp-target a.btn { text-decoration: none; }
+/* Mimo, agendamento e prêmio no pedido */
+.pill.sched { background: #e8f0fb; color: #1d4f91; }
+.pill.gift { background: var(--manteiga); color: var(--cacau); }
+.pill.gift::before { content: "🎁 "; }
+.gift-box { border-left: 5px solid var(--manteiga); }
+.gift-box .btn.small { justify-self: start; }
+.item-reward { background: #fffaf0; }
+.rv-link { color: var(--brand-deep); font-weight: 700; }
+/* Agendados (N10) */
+.ord-sched-list { display: grid; gap: 10px; }
+@media (min-width: 900px) { .ord-sched-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* Avisos (U-06) e webhook (O-01) */
+.ord-tools { gap: 8px; align-items: center; margin-bottom: 10px; }
+.ord-tools .search { flex: 1; min-width: 0; margin: 0; }
+.snd-btn { flex: none; white-space: nowrap; }
+.snd-btn.snd-off { border-color: var(--brand); color: var(--brand-deep); }
+.wh-warn { margin: 10px auto 0; max-width: min(1100px, calc(100% - 24px)); }
