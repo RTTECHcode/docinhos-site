@@ -6,7 +6,7 @@
   const STATUS = { new: 'Novo', accepted: 'Aceito', preparing: 'Em preparo', ready: 'Pronto', awaiting_delivery: 'Aguardando entrega', completed: 'Concluído', delivered: 'Concluído', cancelled: 'Cancelado' };
   const PAY = { approved: 'Pago', pending: 'Aguardando pagamento', in_process: 'Em análise', rejected: 'Recusado', cancelled: 'Cancelado', refunded: 'Reembolsado', expired: 'Expirado' };
   const METHOD = { pix: 'Pix', mercadopago: 'Mercado Pago', mercadopago_card: 'Cartão' };
-  const FILTERS = [['', 'Todos'], ['completed', 'Concluídos'], ['cancelled', 'Cancelados'], ['paid', 'Pagos'], ['new', 'Novos'], ['accepted', 'Aceitos'], ['preparing', 'Em preparo'], ['ready', 'Prontos'], ['awaiting_delivery', 'Aguardando entrega']];
+  const FILTERS = [['', 'Todos'], ['completed', 'Concluídos'], ['cancelled', 'Cancelados'], ['paid', 'Pagos'], ['new', 'Novos'], ['accepted', 'Aceitos'], ['preparing', 'Em preparo'], ['ready', 'Prontos'], ['awaiting_delivery', 'Aguardando entrega'], ['scheduled', 'Agendados']];
   const st = { from: '', to: '', f: '', s: '', page: 1 };
 
   // v4 N1: o rótulo vem pronto da API (status_label).

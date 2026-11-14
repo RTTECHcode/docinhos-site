@@ -14,7 +14,8 @@
     { key: 'wait', title: 'Aguardando entrega', short: 'Entrega', keys: ['ready', 'awaiting_delivery'] }
   ];
   const LS_ACT = 'dg_orders_activity_open';
-  const st = { search: '', timer: null, seen: null, orders: [], box: null, busy: new Set(), version: 0, reqSeq: 0, col: 'new', actOpen: lsGet() };
+  // filter: '' = quadro normal; 'scheduled' = só encomendas com data marcada, na ordem da data (a mais próxima primeiro), vinda do servidor.
+  const st = { search: '', filter: '', timer: null, seen: null, orders: [], box: null, busy: new Set(), version: 0, reqSeq: 0, col: 'new', actOpen: lsGet() };
 
   function lsGet() { try { return localStorage.getItem(LS_ACT) !== '0'; } catch { return true; } }
   function lsSet(v) { try { localStorage.setItem(LS_ACT, v ? '1' : '0'); } catch { /* sem storage */ } }
@@ -39,14 +40,17 @@
   async function fetchOrders() {
     const seq = ++st.reqSeq;
     const ver = st.version;
-    const r = await DG.api('orders', { query: { s: st.search } });
+    const query = { s: st.search };
+    if (st.filter) query.f = st.filter;
+    const r = await DG.api('orders', { query });
     // resposta velha (outra busca depois, ou ação concluída no meio): descarta para não sobrescrever o estado mais novo
     if (seq !== st.reqSeq || ver !== st.version) return null;
     const prev = st.seen;
     st.orders = r.orders;
     const ids = new Set(r.orders.map(o => o.id));
     const fresh = prev ? new Set(r.orders.filter(o => !prev.has(o.id)).map(o => o.id)) : new Set();
-    if (!st.search || !prev) st.seen = ids;
+    // lista filtrada (Agendados) é parcial: não vira a referência de "já vistos", senão os outros pareceriam novos depois
+    if (!st.filter && (!st.search || !prev)) st.seen = ids;
     const dot = $('#orders-dot');
     if (dot) dot.hidden = !(fresh.size && DG.state.tab !== 'orders');
     return fresh;
@@ -185,8 +189,25 @@
         el('span', { class: 'muted small', text: (isPickup(o) ? 'Retirada' : 'Entrega') + (o.payment_method ? ' - ' + (METHOD[o.payment_method] || o.payment_method) : '') })));
   }
 
+  // v4 N10: "Todos" (quadro) ou "Agendados" (lista pela data marcada).
+  function filterChips() {
+    const chip = (k, t) => el('button', { class: 'chip', type: 'button', 'aria-pressed': String(st.filter === k), text: t, on: { click: async () => {
+      if (st.filter === k) return;
+      st.filter = k; st.version++;
+      st.box.replaceChildren(DG.loading('Carregando pedidos...'));
+      try { await refresh(false); } catch (e) { DG.toast(e.message, true); }
+    } } });
+    return el('div', { class: 'chips', role: 'group', 'aria-label': 'Mostrar' }, chip('', 'Todos'), chip('scheduled', 'Agendados'));
+  }
+
   function renderAll(fresh) {
     if (!st.box) return;
+    if (st.filter === 'scheduled') {
+      st.box.replaceChildren(filterChips(),
+        el('p', { class: 'muted small wrap', text: 'Encomendas com data marcada, a mais próxima primeiro.' }),
+        el('div', { class: 'ord-sched-list' }, ...(st.orders.length ? st.orders.map(o => kanbanCard(o, fresh && fresh.has(o.id))) : [DG.empty('Nenhuma encomenda agendada.')])));
+      return;
+    }
     const groups = COLS.map(c => ({ c, list: st.orders.filter(o => c.keys.includes(o.status_key)) }));
     const seg = el('div', { class: 'ord-seg', role: 'tablist', 'aria-label': 'Etapas do pedido' },
       ...groups.map(g => el('button', { class: 'ord-seg-btn ord-' + g.c.key, type: 'button', role: 'tab', 'aria-selected': String(st.col === g.c.key),
@@ -202,7 +223,7 @@
       el('span', { class: 'muted small', text: st.orders.length + (st.orders.length === 1 ? ' pedido ' : ' pedidos ') + (st.actOpen ? '▲' : '▼') }));
     const act = el('div', { class: 'ord-activity' }, actHead,
       ...(st.actOpen ? (st.orders.length ? st.orders.map(activityRow) : [DG.empty('Nenhum pedido nas últimas 24 horas.')]) : []));
-    st.box.replaceChildren(seg, board, act);
+    st.box.replaceChildren(filterChips(), seg, board, act);
   }
 
   function openOrder(o) {

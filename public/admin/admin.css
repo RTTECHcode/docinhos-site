@@ -420,3 +420,6 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 .gift-box .btn.small { justify-self: start; }
 .item-reward { background: #fffaf0; }
 .rv-link { color: var(--brand-deep); font-weight: 700; }
+/* Agendados (N10) */
+.ord-sched-list { display: grid; gap: 10px; }
+@media (min-width: 900px) { .ord-sched-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
