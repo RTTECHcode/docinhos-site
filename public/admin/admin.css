@@ -415,7 +415,7 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 /* Mimo, agendamento e prêmio no pedido */
 .pill.sched { background: #e8f0fb; color: #1d4f91; }
 .pill.gift { background: var(--manteiga); color: var(--cacau); }
-.pill.gift::before { content: "🎁 "; }
+.pill.gift::before { content: "🎁 " / ""; } /* A5 F4: emoji só decorativo (o leitor de tela lê só "Mimo: ...") */
 .gift-box { border-left: 5px solid var(--manteiga); }
 .gift-box .btn.small { justify-self: start; }
 .item-reward { background: #fffaf0; }
@@ -429,3 +429,9 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 .snd-btn { flex: none; white-space: nowrap; }
 .snd-btn.snd-off { border-color: var(--brand); color: var(--brand-deep); }
 .wh-warn { margin: 10px auto 0; max-width: min(1100px, calc(100% - 24px)); }
+
+/* v4 A5 / F4: revisão visual e de acessibilidade das telas do A3 */
+/* Cupons: o botão "+ Novo cupom" encostava no primeiro cartão. */
+.cp-list { margin-top: 12px; }
+/* Relatórios: o campo de data recebe o foco nas partes internas (dia/mês/ano); o anel de foco aparece no campo inteiro. */
+.field input[type="date"]:focus-within { outline: none; border-color: var(--brand); box-shadow: var(--ring); }

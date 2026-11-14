@@ -172,3 +172,9 @@ footer.conta-foot { margin-top: 28px; padding: 26px 16px calc(26px + env(safe-ar
 .reward-cta { list-style: none; }
 .reward-cta .button { width: 100%; }
 .order-sched { font-size: .88rem; font-weight: 700; color: var(--brand-deep); }
+
+/* v4 A5 / F4: barra de progresso do prêmio com trilho visível (o trilho padrão quase sumia sobre o creme; contraste do trecho cheio sobre o trilho > 3:1). */
+.reward-progress { -webkit-appearance: none; appearance: none; height: 10px; border: 0; border-radius: 999px; background: #eadbd4; overflow: hidden; }
+.reward-progress::-webkit-progress-bar { background: #eadbd4; border-radius: 999px; }
+.reward-progress::-webkit-progress-value { background: var(--brand); border-radius: 999px; }
+.reward-progress::-moz-progress-bar { background: var(--brand); border-radius: 999px; }
