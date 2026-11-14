@@ -973,12 +973,12 @@ const itemsPayload = () => cart.map(i => ({ product_id: i.productId, qty: i.qty,
 const cartSig = () => JSON.stringify(itemsPayload());
 function setServerSubtotal(key, cents) { if (Number.isInteger(cents) && cents >= 0) serverSubtotal = { key, cents }; }
 function currentSubtotal() { return serverSubtotal && serverSubtotal.key === cartSig() ? serverSubtotal.cents : cartTotal(); }
-function currentDiscount() { return 0; }
+function currentDiscount() { return couponValid() ? coupon.discount_cents : 0; }
 function renderSummary() {
   const sub = currentSubtotal();
   const fee = currentFee();
   const discount = currentDiscount();
-  fillSummary(document.querySelector('#payment-summary'), { subtotal: sub, fee, pickup: isPickup(), discount, total: sub + (fee || 0) - discount, rewards: chosenRewardList() });
+  fillSummary(document.querySelector('#payment-summary'), { subtotal: sub, fee, pickup: isPickup(), discount, total: sub + (fee || 0) - discount, couponCode: discount > 0 ? coupon.code : null, rewards: chosenRewardList() });
 }
 
 /* v4 N3: Clube da Gigi. Os pontos viram prêmios (doces) escolhidos no checkout; o desconto em reais (use_points) acabou.
@@ -1157,6 +1157,119 @@ pointsBoxEl.addEventListener('change', e => {
   onRewardsChanged();
 });
 
+/* v4 N6: cupom de desconto. O servidor confere o código e calcula o desconto (POST /api/customer?a=coupon_check); aqui só se
+   mostra o valor que ele devolveu. O link /?cupom=CODIGO guarda o código neste aparelho e ele é conferido ao abrir o checkout. */
+const COUPON_KEY = 'dg-coupon';
+const COUPON_RE = /^[A-Z0-9-]{3,20}$/;
+const COUPON_DROP = new Set(['invalid_coupon', 'coupon_exhausted']); // códigos que não adianta guardar
+const COUPON_ERRORS = new Set(['invalid_coupon', 'coupon_min_order', 'coupon_not_stackable', 'coupon_no_discount', 'coupon_exhausted', 'coupon_customer_limit']);
+const couponInputEl = document.querySelector('#coupon-code');
+const couponBtnEl = document.querySelector('#coupon-apply');
+const couponRemoveEl = document.querySelector('#coupon-remove');
+const couponStatusEl = document.querySelector('#coupon-status');
+let coupon = null; // { code, key, discount_cents }
+let couponSeq = 0, couponTimer = null;
+const normCoupon = v => String(v || '').trim().toUpperCase();
+const couponKeyNow = () => JSON.stringify([cartSig(), rewardsPayload()]);
+const couponValid = () => !!coupon && coupon.key === couponKeyNow();
+function savedCoupon() { const c = readStore(COUPON_KEY); const code = normCoupon(c && c.code); return COUPON_RE.test(code) ? code : ''; }
+function showCouponStatus(msg, kind) {
+  couponStatusEl.textContent = msg;
+  couponStatusEl.className = 'coupon-status' + (kind ? ' ' + kind : '');
+  couponStatusEl.hidden = !msg;
+}
+function syncCouponUi() { couponRemoveEl.hidden = !(coupon || couponInputEl.value.trim()); }
+async function checkCoupon(raw) {
+  const code = normCoupon(raw);
+  clearTimeout(couponTimer);
+  if (!code) { coupon = null; showCouponStatus('', ''); syncCouponUi(); renderSummary(); return false; }
+  if (!COUPON_RE.test(code)) { coupon = null; showCouponStatus('Código inválido: use de 3 a 20 letras, números ou hífen.', 'warn'); syncCouponUi(); renderSummary(); return false; }
+  if (!cart.length) return false;
+  const key = couponKeyNow();
+  const mine = ++couponSeq;
+  couponBtnEl.disabled = true;
+  showCouponStatus('Conferindo o cupom...', '');
+  try {
+    const body = { code, items: itemsPayload() };
+    const rw = rewardsPayload();
+    if (rw.length) body.rewards = rw;
+    const ph = digitsOf(field('phone').value);
+    if (!account && ph.length >= 10) body.phone = ph; // limite por cliente (logado usa o telefone da conta)
+    const r = await fetch('/api/customer?a=coupon_check', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let d = {};
+    try { d = await r.json(); } catch { /* corpo não-JSON */ }
+    if (mine !== couponSeq) return false;
+    if (r.ok && d && d.ok && d.coupon && Number.isInteger(d.discount_cents)) {
+      coupon = { code: normCoupon(d.coupon.code) || code, key, discount_cents: d.discount_cents };
+      setServerSubtotal(JSON.parse(key)[0], d.subtotal_cents);
+      writeStore(COUPON_KEY, { code: coupon.code });
+      couponInputEl.value = coupon.code;
+      showCouponStatus(`Cupom ${coupon.code} aplicado: − ${brl(d.discount_cents)} nos produtos.`, 'ok');
+      syncCouponUi();
+      renderSummary();
+      return true;
+    }
+    coupon = null;
+    if (COUPON_DROP.has(d && d.code)) removeStore(COUPON_KEY);
+    showCouponStatus((d && typeof d.error === 'string' && d.error) || 'Não foi possível conferir o cupom agora. Tente de novo.', 'warn');
+    syncCouponUi();
+    renderSummary();
+    return false;
+  } catch {
+    if (mine === couponSeq) showCouponStatus('Sem conexão para conferir o cupom. Tente de novo.', 'warn');
+    return false;
+  } finally {
+    if (mine === couponSeq) couponBtnEl.disabled = false;
+  }
+}
+// Carrinho ou prêmio mudou: o desconto precisa ser conferido de novo (o servidor recalcula).
+function recheckCoupon(delay = 600) {
+  clearTimeout(couponTimer);
+  const code = coupon ? coupon.code : '';
+  if (!code || couponValid() || !cart.length) return;
+  showCouponStatus('Conferindo o cupom de novo...', '');
+  couponTimer = setTimeout(() => checkCoupon(code), delay);
+}
+onRewardsChanged = () => recheckCoupon();
+couponBtnEl.addEventListener('click', () => checkCoupon(couponInputEl.value));
+couponInputEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); checkCoupon(couponInputEl.value); } });
+couponInputEl.addEventListener('input', () => {
+  if (coupon && normCoupon(couponInputEl.value) !== coupon.code) { coupon = null; showCouponStatus('', ''); renderSummary(); }
+  syncCouponUi();
+});
+couponRemoveEl.addEventListener('click', () => {
+  clearTimeout(couponTimer);
+  couponSeq++;
+  coupon = null;
+  removeStore(COUPON_KEY);
+  couponInputEl.value = '';
+  couponBtnEl.disabled = false;
+  showCouponStatus('Cupom removido.', '');
+  syncCouponUi();
+  renderSummary();
+  couponInputEl.focus();
+});
+// Ao abrir o checkout: aplica o cupom guardado (link /?cupom=) ou confere de novo o que já estava aplicado.
+function couponOnOpen() {
+  if (coupon) { recheckCoupon(0); return; }
+  const saved = savedCoupon();
+  if (saved && !couponInputEl.value.trim()) couponInputEl.value = saved;
+  syncCouponUi();
+  if (saved && couponInputEl.value.trim() === saved) checkCoupon(saved);
+}
+// Link de campanha: /?cupom=CODIGO. Guarda no aparelho, tira da barra de endereço e avisa.
+(function takeCouponFromUrl() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has('cupom')) return;
+  const code = normCoupon(params.get('cupom'));
+  params.delete('cupom');
+  const qs = params.toString();
+  history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+  if (!COUPON_RE.test(code)) { toast('Este link de cupom não é válido.', 4000); return; }
+  writeStore(COUPON_KEY, { code });
+  toast(`Cupom ${code} guardado! Ele é conferido quando você finalizar o pedido.`, 5000);
+})();
+
 /* ---------- Etapa pós-pedido: cartão (link), Pix (QR no site) ou sem pagamento. O botão do WhatsApp só vem depois de aprovado (C6). ---------- */
 const payEls = {
   codeRow: document.querySelector('#payment-code-row'),
@@ -1225,7 +1338,7 @@ async function loadPrefill() {
     }
   } catch { /* sem pré-preenchimento: segue à mão */ }
 }
-modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); }, close: stopPayWatch };
+modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); couponOnOpen(); }, close: stopPayWatch };
 
 function normalizePayment(p) {
   if (!p || typeof p !== 'object') return null;
@@ -1458,6 +1571,15 @@ function handleOrderError(status, d) {
     toast((d && d.error) || 'Confira os prêmios do Clube e tente de novo.', 7000);
     return;
   }
+  // v4 N6: cupom recusado na hora do pedido (esgotou, mudou o carrinho...): tira o desconto e mostra o motivo.
+  if (COUPON_ERRORS.has(code)) {
+    coupon = null;
+    if (COUPON_DROP.has(code)) removeStore(COUPON_KEY);
+    showCouponStatus((d && d.error) || 'O cupom não pôde ser usado.', 'warn');
+    syncCouponUi(); renderSummary();
+    toast(((d && d.error) || 'O cupom não pôde ser usado.') + ' Remova o cupom para seguir sem desconto.', 7000);
+    return;
+  }
   // F5 (A1-05): origem/tipo barrados pelo servidor. O site manda os dois certos; isso só acontece com página antiga, extensão ou proxy.
   if (code === 'forbidden_origin' || status === 403 && !code) { toast('Não conseguimos confirmar de onde veio o pedido. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
   if (code === 'unsupported_type' || status === 415) { toast('O pedido chegou num formato que não reconhecemos. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
@@ -1509,6 +1631,14 @@ checkoutFormEl.addEventListener('submit', async e => {
     }
     const rw = rewardsPayload();
     if (rw.length) order.rewards = rw;
+    // v4 N6: código digitado e ainda não conferido para este carrinho: confere antes e deixa a pessoa ver o novo total.
+    const typedCoupon = normCoupon(couponInputEl.value);
+    if (typedCoupon && !(couponValid() && coupon.code === typedCoupon)) {
+      const ok = await checkCoupon(typedCoupon);
+      toast(ok ? 'Cupom aplicado! Confira o total e toque em Enviar pedido de novo.' : 'Confira o cupom acima: corrija o código ou remova para seguir sem desconto.', 6000);
+      return;
+    }
+    if (couponValid()) order.coupon_code = coupon.code;
     const res = await fetch('/api/order', {
       method: 'POST',
       credentials: 'same-origin',
@@ -1529,6 +1659,7 @@ checkoutFormEl.addEventListener('submit', async e => {
     save();
     chosenRewards.clear();
     quote = null;
+    if (srv.coupon_code) { removeStore(COUPON_KEY); coupon = null; couponInputEl.value = ''; showCouponStatus('', ''); syncCouponUi(); }
     addRecent({ public_code: data.public_code, code: data.code, token: data.tracking_token });
     const card = payment && payment.type === 'card';
     saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice,

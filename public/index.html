@@ -147,6 +147,15 @@
         </label>
       </fieldset>
       <div id="points-box" class="points-box" hidden></div>
+      <div id="coupon-box" class="coupon-box">
+        <label for="coupon-code" class="coupon-label">Cupom de desconto</label>
+        <div class="coupon-row">
+          <input id="coupon-code" name="coupon_ui" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Ex.: GIGI10" aria-describedby="coupon-status">
+          <button type="button" id="coupon-apply" class="button secondary">Aplicar</button>
+        </div>
+        <p id="coupon-status" class="coupon-status" role="status" aria-live="polite" hidden></p>
+        <button type="button" id="coupon-remove" class="link-btn coupon-remove" hidden>Remover cupom</button>
+      </div>
       <div id="payment-summary" class="order-summary"></div>
       <p id="store-closed-note" class="store-closed-note" role="alert" hidden></p>
       <button type="submit" class="button primary full">Enviar pedido</button>
