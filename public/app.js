@@ -153,6 +153,7 @@ function hideModal(id) {
 
 function requestClose(id, after) {
   if (!modalStack.includes(id) || closing.has(id)) return;
+  if (id === '#checkout-modal' && pixPending() && !confirmPixClose()) return; // v4 U-01
   if (after) modalEl(id)._after = after;
   const seq = modalEl(id)._seq;
   if (history.state && history.state.dgModal === id && history.state.dgSeq === seq) {
@@ -173,6 +174,12 @@ window.addEventListener('popstate', () => {
     // volta uma entrada para o estado dele, em vez de fechá-lo.
     abandoned.delete(wantSeq);
     if (modalStack.length) history.forward(); else history.replaceState(null, '');
+    return;
+  }
+  // v4 U-01: botão voltar com o Pix ainda em aberto pergunta antes; se a pessoa ficar, devolve a entrada do modal ao histórico.
+  const topId = modalStack[modalStack.length - 1];
+  if (topId === '#checkout-modal' && !closing.has(topId) && (modalEl(topId)._seq || 0) > wantSeq && pixPending() && !confirmPixClose()) {
+    history.pushState({ dgModal: topId, dgSeq: modalEl(topId)._seq }, '');
     return;
   }
   while (modalStack.length && (modalEl(modalStack[modalStack.length - 1])._seq || 0) > wantSeq) hideModal(modalStack[modalStack.length - 1]);
@@ -207,7 +214,10 @@ fetch('/api/menu').then(r => { if (!r.ok) throw 0; return r.json(); }).then(data
   statusEl.remove();
   menu = data.categories;
   setStoreState(data.store);
-  setPointsRules(data.points);
+  setClubInfo(data.club);
+  setEta(data.delivery_eta_min, data.delivery_eta_max);
+  setScheduling(data.scheduling);
+  setShipping(data.shipping);
   renderCats();
   renderMenu();
   observeCats();
@@ -291,13 +301,15 @@ document.addEventListener('click', e => {
 });
 
 function renderMenu() {
+  let imgN = 0; // P-06: as primeiras fotos (acima da dobra) carregam já; as outras, sob demanda
   menuEl.innerHTML = menu.map(c => `
     <section class="category" id="cat-${c.id}">
       <h2>${brigIcon(c)}${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
-        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
-          ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
+        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable && !p.paused ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
+          ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="104" height="104" ${imgN++ < 4 ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
           <span class="body">
+            ${p.best_seller === true ? '<span class="best-tag">Mais pedido</span>' : ''}
             <span class="name">${esc(p.name)}</span>
             ${p.description ? `<span class="desc">${esc(p.description)}</span>` : ''}
             ${p.unavailable && !p.paused ? '<span class="unavail-tag">Indisponível no momento</span>' : ''}
@@ -306,7 +318,7 @@ function renderMenu() {
             </span>
           </span>
           ${p.unavailable ? '' : '<span class="add-hint" aria-hidden="true">+</span>'}
-          ${p.paused ? '<span class="pause-clip"><span class="pause-band">Volto logo</span></span>' : ''}
+          ${p.paused ? '<span class="pause-clip"><span class="pause-band">Volto logo</span></span><span class="sr-only">Volto logo: indisponível agora. Toque para ver os detalhes.</span>' : ''}
         </button>`).join('')}</div>
     </section>`).join('');
 }
@@ -321,7 +333,9 @@ document.addEventListener('click', e => {
 function openProduct(id, opener) {
   activeProduct = findProduct(id);
   if (!activeProduct) return;
-  if (activeProduct.unavailable) { activeProduct = null; toast('Este produto está indisponível no momento.'); return; }
+  // v4 N2: "Volto logo" (paused) abre para ver detalhes e complementos, mas não entra no carrinho (o servidor também recusa).
+  const paused = !!activeProduct.paused;
+  if (activeProduct.unavailable && !paused) { activeProduct = null; toast('Este produto está indisponível no momento.'); return; }
   const comps = activeProduct.complements || [];
   const sizes = comps.filter(c => c.kind === 'size');
   const extras = comps.filter(c => c.kind !== 'size');
@@ -338,8 +352,9 @@ function openProduct(id, opener) {
   const loose = extras.filter(c => !grouped.has(c.id));
 
   document.querySelector('#product-modal-body').innerHTML = `
-    <div class="pm-photo">${activeProduct.imagePath ? `<img src="${esc(encodeURI(activeProduct.imagePath))}" alt="${esc(activeProduct.name)}">` : ''}</div>
-    <h3 class="pm-name">${esc(activeProduct.name)}</h3>
+    <div class="pm-photo">${activeProduct.imagePath ? `<img src="${esc(encodeURI(activeProduct.imagePath))}" alt="${esc(activeProduct.name)}" width="200" height="200" decoding="async">` : ''}</div>
+    <h3 class="pm-name" id="pm-name">${esc(activeProduct.name)}</h3>
+    ${activeProduct.best_seller === true ? '<p class="best-tag pm-best">Mais pedido</p>' : ''}
     ${activeProduct.description ? `<p class="pm-desc">${esc(activeProduct.description)}</p>` : ''}
     <div class="pm-price">${activeProduct.priceCents != null ? brl(activeProduct.priceCents) : ''}</div>
     ${sizes.length ? `
@@ -381,7 +396,8 @@ function openProduct(id, opener) {
           </div>`).join('')}
       </div>` : ''}
     <div class="pm-total-row"><span>Total</span><span id="pm-total"></span></div>
-    <button type="button" class="button primary full" id="pm-add" ${sizes.length && !firstSize ? 'disabled' : ''}>Adicionar ao carrinho</button>`;
+    ${paused ? '<p class="pm-paused-note" id="pm-paused-note">Volto logo! Este doce está pausado agora e não pode ser pedido. Dá uma olhada nos outros do cardápio.</p>' : ''}
+    <button type="button" class="button primary full" id="pm-add" ${paused ? 'disabled aria-describedby="pm-paused-note"' : sizes.length && !firstSize ? 'disabled' : ''}>${paused ? 'Indisponível no momento' : 'Adicionar ao carrinho'}</button>`;
   updatePmTotal();
   openModal('#product-modal', { opener });
 }
@@ -458,7 +474,7 @@ document.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('#pm-add')) {
-    if (closing.has('#product-modal')) return; // toque duplo durante o fechamento não adiciona duas vezes
+    if (closing.has('#product-modal') || activeProduct.paused) return; // toque duplo durante o fechamento não adiciona duas vezes
     const missing = pmGroups.find(g => groupCount(g) < g.min);
     if (missing) { // minChoices não atendido: não adiciona
       const root = groupRoot(missing);
@@ -544,6 +560,7 @@ function renderCart() {
     itemsEl.innerHTML = '<div class="cart-empty">Seu carrinho está vazio. Escolha um docinho no cardápio!</div>';
     document.querySelector('#checkout-btn').hidden = true;
     document.querySelector('#cart-total').innerHTML = '';
+    renderInfo();
     return;
   }
   document.querySelector('#checkout-btn').hidden = false;
@@ -564,6 +581,7 @@ function renderCart() {
     </div>`;
   }).join('');
   document.querySelector('#cart-total').innerHTML = `<span>Total</span><span>${brl(cartTotal())}</span>`;
+  renderInfo();
 }
 
 document.addEventListener('click', e => {
@@ -666,9 +684,10 @@ function setStoreState(st) {
     storeBadgeEl.title = store.open ? '' : closedMessage(store);
   }
   const closed = !!store && !store.open;
-  closedNoteEl.hidden = !closed;
-  closedNoteEl.textContent = closed ? closedMessage(store) + ' Você pode montar o carrinho, mas só conseguimos receber o pedido com a loja aberta.' : '';
+  if (store && Array.isArray(store.hours)) storeHours = store.hours;
   syncSubmitState();
+  renderWhen();
+  renderInfo();
 }
 async function refreshStore() {
   try {
@@ -719,20 +738,21 @@ async function loadAccount() {
   renderPoints();
   renderSummary();
   refreshTrack();
+  loadClub();
 }
 
 /* ---------- V5: botão flutuante "Acompanhe" ----------
    Aparece quando há pedido não concluído: dos recentes no aparelho (dg-recent-orders, status consultado em /api/order-status)
    ou do cliente logado (/api/customer?a=orders). Um pedido: abre direto o acompanhamento. Mais de um: lista. */
-const TRACK_DONE = new Set(['completed', 'delivered', 'cancelled']);
-const TRACK_PAY_DEAD = new Set(['rejected', 'cancelled', 'refunded', 'charged_back']);
+// v4 N1: situação do pedido pelo status_key do servidor; estes não aparecem mais no "Acompanhe".
+const TRACK_ENDED = new Set(['completed', 'cancelled', 'payment_failed', 'refunded']);
 const TRACK_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const TRACK_CHECKS = 5;      // no máximo 5 consultas de status por rodada (limite do servidor: 300 em 10 min por IP)
 const TRACK_EVERY_MS = 60000;
 let trackItems = [];
 let trackSeq = 0;
 let trackLastAt = 0;
-const trackActive = o => !!o && !TRACK_DONE.has(o.fulfillment_status) && !TRACK_PAY_DEAD.has(o.payment_status);
+const trackActive = o => !!o && typeof o.status_key === 'string' && !TRACK_ENDED.has(o.status_key);
 const trackFresh = iso => { const t = Date.parse(iso); return !isNaN(t) && Date.now() - t < TRACK_MAX_AGE_MS; };
 async function trackStatusOf(r) {
   try {
@@ -764,11 +784,11 @@ async function refreshTrack() {
     if (s === null || (!s.unknown && !trackActive(s))) return;
     const code = (s && s.public_code) || r.public_code || '';
     if (code) seen.add(code);
-    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.fulfillment_label || ''), date: r.date });
+    items.push({ code, href: '/pedido.html?t=' + encodeURIComponent(r.token), label: s.unknown ? '' : String(s.status_label || ''), sched: s.unknown ? '' : String(s.scheduled_label || ''), date: r.date });
   });
   for (const o of mine) {
     if (!trackActive(o) || !trackFresh(o.created_at) || (o.public_code && seen.has(o.public_code))) continue;
-    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.fulfillment_label || ''), date: o.created_at });
+    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.status_label || ''), sched: String(o.scheduled_label || ''), date: o.created_at });
   }
   items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
   trackItems = items;
@@ -793,7 +813,7 @@ trackFab.addEventListener('click', () => {
     code.textContent = it.code || 'Pedido';
     const info = document.createElement('span');
     const d = new Date(it.date);
-    info.textContent = [it.label, isNaN(d) ? '' : dateTimeFmt.format(d).replace(',', ' às')].filter(Boolean).join(' · ');
+    info.textContent = [it.label, it.sched, isNaN(d) ? '' : dateTimeFmt.format(d).replace(',', ' às')].filter(Boolean).join(' · ');
     a.append(code, info);
     li.append(a);
     list.append(li);
@@ -819,7 +839,8 @@ const isPickup = () => field('delivery').value === 'pickup';
 document.querySelector('#store-address').textContent = STORE_ADDRESS;
 
 let submitting = false;
-function syncSubmitState() { submitBtnEl.disabled = submitting || (!!store && !store.open); }
+// Loja fechada: só dá para enviar pedido agendado (v4 N10).
+function syncSubmitState() { submitBtnEl.disabled = submitting || (!!store && !store.open && !wantsSchedule()); }
 
 // Retirada: some o endereço do cliente (sem required nem envio) e mostra o endereço da loja.
 function syncDelivery() {
@@ -829,6 +850,7 @@ function syncDelivery() {
   pickupInfoEl.hidden = !pickup;
   renderPoints();
   renderSummary();
+  renderInfo();
 }
 checkoutFormEl.addEventListener('change', e => { if (e.target.name === 'delivery') syncDelivery(); });
 
@@ -957,39 +979,79 @@ function fillSummary(el, v) {
   };
   row('Subtotal', brl(v.subtotal));
   row('Frete', v.fee == null ? 'calcule acima' : v.pickup ? 'R$ 0,00 (retirada)' : brl(v.fee));
-  if (v.discount > 0) row('Desconto com pontos', '− ' + brl(v.discount), 'sum-discount');
+  for (const r of v.rewards || []) row(`Prêmio do Clube: ${r.qty}x ${rewardName(r)}`, `grátis (${ptsText(r.points)})`, 'sum-reward');
+  if (v.discount > 0) row(v.couponCode ? `Cupom ${v.couponCode}` : 'Desconto', '− ' + brl(v.discount), 'sum-discount');
   row(v.fee == null ? 'Total (sem frete)' : 'Total', brl(v.total), 'sum-total');
 }
-let usePoints = 0;
 function currentFee() { return isPickup() ? 0 : (quote && quote.key === quoteKey() ? quote.fee_cents : null); }
+/* Subtotal: o calculado pelo servidor para este carrinho (prévia de pontos ou do cupom) assim que chega; antes disso, a soma dos
+   preços do cardápio (que também vêm do servidor). O pedido é sempre recalculado no servidor. */
+let serverSubtotal = null; // { key, cents }
+const itemsPayload = () => cart.map(i => ({ product_id: i.productId, qty: i.qty, size_id: i.size ? i.size.id : null, extras: i.extras.map(x => ({ id: x.id, qty: x.qty })) }));
+const cartSig = () => JSON.stringify(itemsPayload());
+function setServerSubtotal(key, cents) { if (Number.isInteger(cents) && cents >= 0) serverSubtotal = { key, cents }; }
+function currentSubtotal() { return serverSubtotal && serverSubtotal.key === cartSig() ? serverSubtotal.cents : cartTotal(); }
+function currentDiscount() { return couponValid() ? coupon.discount_cents : 0; }
 function renderSummary() {
-  const sub = cartTotal();
+  const sub = currentSubtotal();
   const fee = currentFee();
-  const discount = usePoints / pointsRules.blockPoints * pointsRules.blockValueCents;
-  fillSummary(document.querySelector('#payment-summary'), { subtotal: sub, fee, pickup: isPickup(), discount, total: sub + (fee || 0) - discount });
+  const discount = currentDiscount();
+  fillSummary(document.querySelector('#payment-summary'), { subtotal: sub, fee, pickup: isPickup(), discount, total: sub + (fee || 0) - discount, couponCode: discount > 0 ? coupon.code : null, rewards: chosenRewardList() });
 }
 
-/* Pontos (C8/U5): só logado, em blocos (padrão 100 pontos = R$ 10), limitado pelo subtotal; o servidor confere tudo.
-   A regra vem de /api/menu (Ajustes do painel); aqui só serve para montar a lista e o resumo. */
-let pointsRules = { enabled: true, pointsPerReal: 1, blockPoints: 100, blockValueCents: 1000 };
-function setPointsRules(r) {
-  const ok = n => Number.isInteger(n) && n > 0;
-  if (!r || typeof r.enabled !== 'boolean' || !ok(r.pointsPerReal) || !ok(r.blockPoints) || !ok(r.blockValueCents)) return;
-  pointsRules = { enabled: r.enabled, pointsPerReal: r.pointsPerReal, blockPoints: r.blockPoints, blockValueCents: r.blockValueCents };
+/* v4 N3: Clube da Gigi. Os pontos viram prêmios (doces) escolhidos no checkout; o desconto em reais (use_points) acabou.
+   Vitrine pública em /api/menu (club); saldo, bloqueio e quanto falta em /api/customer?a=club (só logado).
+   Aqui só se monta a escolha: o servidor confere login, saldo, bloqueio e disponibilidade no pedido. */
+let clubInfo = null;  // /api/menu club: { enabled, points_per_real, rewards[] }
+let clubMine = null;  // ?a=club: { balance, reserved, locked_until, enabled, rewards[ + missing_points, can_redeem ] }
+const chosenRewards = new Map(); // reward_id -> qty
+function setClubInfo(c) {
+  clubInfo = c && typeof c === 'object' && typeof c.enabled === 'boolean' && Array.isArray(c.rewards) ? c : null;
   renderPoints();
   renderSummary();
 }
-// Recarrega a regra (ex.: o pedido foi recusado porque a regra mudou depois que a página abriu).
-function refreshPointsRules() {
-  fetch('/api/menu', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => { if (d) setPointsRules(d.points); }).catch(() => {});
+// Recarrega a vitrine (ex.: o pedido foi recusado porque um prêmio saiu do ar depois que a página abriu).
+function refreshClubInfo() {
+  fetch('/api/menu', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => { if (d) setClubInfo(d.club); }).catch(() => {});
 }
-function maxPointBlocks() {
-  if (!account) return 0;
-  const bal = Number(account.points && account.points.balance) || 0;
-  const fee = currentFee() || 0;
-  const maxDiscount = Math.min(cartTotal(), cartTotal() + fee - 100); // não passa do subtotal; sobra pelo menos R$ 1,00
-  return Math.max(0, Math.min(Math.floor(bal / pointsRules.blockPoints), Math.floor(maxDiscount / pointsRules.blockValueCents)));
+async function loadClub() {
+  if (!account) { clubMine = null; chosenRewards.clear(); renderPoints(); renderSummary(); return; }
+  try {
+    const r = await fetch('/api/customer?a=club', { credentials: 'same-origin', cache: 'no-store' });
+    const d = r.ok ? await r.json() : null;
+    clubMine = d && d.club && typeof d.club === 'object' && Array.isArray(d.club.rewards) ? d.club : null;
+  } catch { clubMine = null; }
+  pruneRewards();
+  renderPoints();
+  renderSummary();
+  onRewardsChanged();
 }
+const clubLocked = () => !!(clubMine && clubMine.locked_until && Date.parse(clubMine.locked_until) > Date.now());
+const rewardById = id => (clubMine && clubMine.rewards.find(r => r.id === id)) || null;
+const rewardName = r => String(r.name || '') + (r.size_name ? ` (${r.size_name})` : '');
+// Escolhas que não valem mais (prêmio saiu do ar, saldo não cobre, Clube pausado ou bloqueado) saem sozinhas.
+function pruneRewards() {
+  if (!account || !clubMine || !clubMine.enabled || clubLocked()) { chosenRewards.clear(); return; }
+  let left = Math.max(0, Number(clubMine.balance) || 0);
+  for (const [id, qty] of [...chosenRewards]) {
+    const r = rewardById(id);
+    const q = r && r.can_redeem ? Math.min(qty, r.max_per_order, Math.floor(left / r.points_cost)) : 0;
+    if (q < 1) { chosenRewards.delete(id); continue; }
+    chosenRewards.set(id, q);
+    left -= q * r.points_cost;
+  }
+}
+function chosenRewardList() {
+  return [...chosenRewards].map(([id, qty]) => {
+    const r = rewardById(id);
+    return r ? { id, qty, name: r.name, size_name: r.size_name, points: r.points_cost * qty } : null;
+  }).filter(Boolean);
+}
+const chosenPoints = () => chosenRewardList().reduce((s, r) => s + r.points, 0);
+const rewardsPayload = () => [...chosenRewards].map(([reward_id, qty]) => ({ reward_id, qty }));
+// Hook para quem depende dos prêmios escolhidos (o cupom confere de novo; v4 N6).
+function onRewardsChanged() {}
+
 /* L6: quantos pontos este pedido rende (POST /api/customer?a=points_preview). Só exibição: o servidor decide na hora do pedido. */
 let pointsPreview = { points: 0, enabled: true };
 let previewKey = '', previewSeq = 0, previewTimer = null;
@@ -998,111 +1060,430 @@ function loadPointsPreview() {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(async () => {
     if (!cart.length) { pointsPreview = { points: 0, enabled: true }; previewKey = ''; renderPoints(); return; }
-    const items = cart.map(i => ({ product_id: i.productId, qty: i.qty, size_id: i.size ? i.size.id : undefined, extras: i.extras.map(x => ({ id: x.id, qty: x.qty })) }));
-    const body = { items };
-    if (usePoints > 0) body.use_points = usePoints;
-    const key = JSON.stringify(body);
+    const key = cartSig();
     if (key === previewKey) return;
     const mine = ++previewSeq;
     try {
-      const r = await fetch('/api/customer?a=points_preview', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: key });
+      const r = await fetch('/api/customer?a=points_preview', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: itemsPayload() }) });
       if (mine !== previewSeq) return;
       if (!r.ok) { pointsPreview = { points: 0, enabled: true }; previewKey = ''; renderPoints(); return; }
       const d = await r.json();
       previewKey = key;
       pointsPreview = { points: Number.isInteger(d.points) && d.points > 0 ? d.points : 0, enabled: d.enabled !== false };
+      setServerSubtotal(key, d.subtotal_cents);
     } catch { if (mine !== previewSeq) return; pointsPreview = { points: 0, enabled: true }; previewKey = ''; }
     renderPoints();
+    renderSummary();
   }, 150);
 }
-// Visitante: convite para entrar (volta ao checkout, o carrinho fica no aparelho). Logado: aviso de quantos pontos o pedido gera.
+
+// Caixa do Clube no checkout. Visitante: convite para entrar e a vitrine. Logado: prêmios que dá para trocar, o que falta e avisos.
 function renderPoints() {
-  const earn = pointsRules.enabled && pointsPreview.enabled ? pointsPreview.points : 0;
-  if (!account && pointsRules.enabled) {
-    usePoints = 0;
-    pointsBoxEl.replaceChildren();
-    pointsBoxEl.hidden = !(earn > 0);
-    if (earn > 0) {
-      const note = document.createElement('p');
-      note.className = 'points-note points-earn';
-      note.textContent = `Entre na sua conta e ganhe ${ptsText(earn)} com este pedido.`;
-      const a = document.createElement('a');
-      a.className = 'button secondary points-login';
-      a.href = '/conta/?voltar=checkout#entrar';
-      a.textContent = 'Entrar na minha conta';
-      pointsBoxEl.append(note, a);
-    }
-    return;
-  }
-  renderPointsInner();
-  if (account && earn > 0 && !pointsBoxEl.hidden) {
-    const e = document.createElement('p');
-    e.className = 'points-note points-earn';
-    e.textContent = `Este pedido vai gerar ${ptsText(earn)}.`;
-    pointsBoxEl.append(e);
-  }
-}
-function renderPointsInner() {
-  pointsBoxEl.replaceChildren();
+  const box = pointsBoxEl;
+  const focusId = box.contains(document.activeElement) ? document.activeElement.id : '';
+  box.replaceChildren();
   const p = (text, cls) => { const e = document.createElement('p'); e.className = 'points-note' + (cls ? ' ' + cls : ''); e.textContent = text; return e; };
-  const BP = pointsRules.blockPoints, BV = brl(pointsRules.blockValueCents);
-  if (!pointsRules.enabled) {
-    usePoints = 0;
-    pointsBoxEl.hidden = !account;
-    if (account) pointsBoxEl.append(p('O programa de pontos está pausado no momento. Você pode comprar normalmente; seu saldo continua guardado.'));
-    return;
-  }
+  const title = () => { const h = document.createElement('h3'); h.className = 'club-title'; h.textContent = 'Clube da Gigi'; return h; };
+  const enabled = clubMine ? !!clubMine.enabled : !!(clubInfo && clubInfo.enabled);
+  const earn = enabled && pointsPreview.enabled ? pointsPreview.points : 0;
+  const earnNote = () => { if (earn > 0) box.append(p(account ? `Este pedido vai gerar ${ptsText(earn)}.` : `Entre na sua conta e ganhe ${ptsText(earn)} com este pedido.`, 'points-earn')); };
   if (!account) {
-    usePoints = 0;
-    const note = p(`Tem conta? Entre para usar seus pontos (${BP} pontos = ${BV}). `);
-    const a = document.createElement('a'); a.href = '/conta/'; a.textContent = 'Entrar';
-    note.append(a);
-    pointsBoxEl.append(note);
-    pointsBoxEl.hidden = false;
+    chosenRewards.clear();
+    const shown = clubInfo && clubInfo.enabled ? clubInfo.rewards.filter(r => r.available) : [];
+    box.hidden = !enabled || (!earn && !shown.length);
+    if (box.hidden) return;
+    box.append(title());
+    earnNote();
+    if (shown.length) {
+      const names = shown.slice(0, 3).map(r => `${rewardName(r)} por ${ptsText(r.points_cost)}`).join('; ');
+      box.append(p(`No Clube, seus pontos viram doces: ${names}${shown.length > 3 ? ' e mais' : ''}.`));
+    }
+    const a = document.createElement('a');
+    a.className = 'button secondary points-login';
+    a.href = '/conta/?voltar=checkout#entrar';
+    a.textContent = 'Entrar para juntar e trocar pontos';
+    box.append(a);
     return;
   }
-  const bal = Number(account.points && account.points.balance) || 0;
-  const lockedUntil = account.points && account.points.locked_until;
-  pointsBoxEl.hidden = false;
-  if (lockedUntil && Date.parse(lockedUntil) > Date.now()) {
-    usePoints = 0;
-    pointsBoxEl.append(p(`Seus pontos estão bloqueados por segurança até ${fmtWhen(lockedUntil)} (depois da recuperação da conta). Você pode comprar normalmente, sem usar pontos.`, 'warn'));
+  if (!clubMine) { box.hidden = !enabled || !earn; if (!box.hidden) { box.append(title()); earnNote(); } return; }
+  box.hidden = false;
+  box.append(title());
+  if (!clubMine.enabled) { box.append(p('O Clube está pausado no momento. Você pode comprar normalmente; seu saldo continua guardado.')); return; }
+  const bal = Math.max(0, Number(clubMine.balance) || 0);
+  if (clubLocked()) {
+    box.append(p(`A troca de pontos está bloqueada por segurança até ${fmtWhen(clubMine.locked_until)} (depois da recuperação da conta). Você pode comprar normalmente, sem prêmio.`, 'warn'));
+    earnNote();
     return;
   }
-  if (bal < BP) {
-    usePoints = 0;
-    pointsBoxEl.append(p(`Você tem ${bal} pontos. A partir de ${BP} pontos você troca por ${BV} de desconto.`));
-    return;
+  if (!clubMine.rewards.length) { box.append(p(`Você tem ${ptsText(bal)}. Ainda não há prêmios para trocar.`)); earnNote(); return; }
+  const fs = document.createElement('fieldset');
+  fs.className = 'club-rewards';
+  const lg = document.createElement('legend');
+  lg.textContent = `Trocar pontos por um prêmio (você tem ${ptsText(bal)})`;
+  fs.append(lg);
+  const used = chosenPoints();
+  for (const r of clubMine.rewards) {
+    const qty = chosenRewards.get(r.id) || 0;
+    const left = bal - used + qty * r.points_cost; // saldo livre para este prêmio
+    const max = r.can_redeem ? Math.min(r.max_per_order, Math.floor(left / r.points_cost)) : 0;
+    const row = document.createElement('div');
+    row.className = 'club-reward';
+    const nm = document.createElement('span'); nm.className = 'cr-name'; nm.textContent = rewardName(r);
+    const cost = document.createElement('span'); cost.className = 'cr-cost'; cost.textContent = ptsText(r.points_cost) + (r.max_per_order > 1 ? ' cada' : '');
+    const id = 'rw-' + r.id;
+    if (max >= 1 || qty > 0) {
+      if (r.max_per_order === 1) {
+        const lb = document.createElement('label'); lb.className = 'cr-pick';
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = id; cb.checked = qty > 0; cb.dataset.reward = String(r.id);
+        lb.append(cb, nm, cost);
+        row.append(lb);
+      } else {
+        const lb = document.createElement('label'); lb.className = 'cr-label'; lb.htmlFor = id;
+        lb.append(nm, cost);
+        const sl = document.createElement('select'); sl.id = id; sl.dataset.reward = String(r.id);
+        for (let n = 0; n <= Math.max(max, qty); n++) {
+          const o = document.createElement('option');
+          o.value = String(n);
+          o.textContent = n === 0 ? 'Não trocar' : `${n} (${ptsText(n * r.points_cost)})`;
+          sl.append(o);
+        }
+        sl.value = String(qty);
+        row.append(lb, sl);
+      }
+    } else {
+      row.classList.add('is-off');
+      const miss = document.createElement('span'); miss.className = 'cr-miss';
+      miss.textContent = !r.available ? 'Indisponível agora' : r.missing_points > 0 ? `Faltam ${ptsText(r.missing_points)}` : 'Seu saldo já está no outro prêmio';
+      row.append(nm, cost, miss);
+    }
+    fs.append(row);
   }
-  const max = maxPointBlocks();
-  if (max < 1) {
-    usePoints = 0;
-    pointsBoxEl.append(p(`Você tem ${bal} pontos, mas este pedido é pequeno para usar um bloco de ${BP} pontos (o desconto não pode passar do valor dos itens e o total mínimo é R$ 1,00).`));
-    return;
-  }
-  if (usePoints % BP !== 0) usePoints = 0; // a regra mudou: escolhe de novo
-  if (usePoints / BP > max) usePoints = max * BP;
-  const label = document.createElement('label');
-  label.textContent = `Usar pontos (você tem ${bal})`;
-  const sel = document.createElement('select');
-  sel.id = 'use-points';
-  sel.name = 'use_points_ui';
-  for (let b = 0; b <= max; b++) {
-    const o = document.createElement('option');
-    o.value = String(b * BP);
-    o.textContent = b === 0 ? 'Não usar pontos' : `${b * BP} pontos (− ${brl(b * pointsRules.blockValueCents)})`;
-    sel.append(o);
-  }
-  sel.value = String(usePoints);
-  sel.addEventListener('change', () => { usePoints = Number(sel.value) || 0; renderSummary(); loadPointsPreview(); });
-  label.append(sel);
-  pointsBoxEl.append(label);
+  box.append(fs);
+  box.append(p('O prêmio sai de graça. O pedido precisa ter pelo menos R$ 1,00 em outros produtos.', 'club-rule'));
+  earnNote();
+  if (focusId) { const el = document.getElementById(focusId); if (el) el.focus({ preventScroll: true }); }
 }
+pointsBoxEl.addEventListener('change', e => {
+  const t = e.target;
+  const id = Number(t && t.dataset.reward);
+  if (!id) return;
+  const n = t.type === 'checkbox' ? (t.checked ? 1 : 0) : Number(t.value) || 0;
+  if (n > 0) chosenRewards.set(id, n); else chosenRewards.delete(id);
+  pruneRewards();
+  renderPoints();
+  renderSummary();
+  onRewardsChanged();
+});
+
+/* v4 N10: "Quando?" O quanto antes ou agendado (dia + janela de 30 min de /api/store?a=slots). O servidor confere janela,
+   antecedência e vaga no pedido; com a loja fechada só dá para agendar. */
+let scheduling = null;  // /api/menu scheduling: { enabled, min_lead_min, max_days, slot_minutes } (só quando ligado)
+let deliveryEta = null; // { min, max } em minutos (/api/menu delivery_eta_min/max)
+const whenFieldEl = document.querySelector('#when-field');
+const whenSchedEl = document.querySelector('#when-schedule');
+const whenDayEl = document.querySelector('#when-day');
+const whenSlotEl = document.querySelector('#when-slot');
+const whenStatusEl = document.querySelector('#when-status');
+const whenAsapEl = document.querySelector('#when-asap');
+const whenAsapTextEl = document.querySelector('#when-asap-text');
+const SCHEDULE_ERRORS = new Set(['invalid_schedule', 'schedule_too_soon', 'schedule_too_far', 'schedule_closed', 'slot_full']);
+const SLOT_CACHE_MS = 60000;
+const slotCache = new Map(); // "AAAA-MM-DD|mode" -> { at, slots }
+let slotSeq = 0;
+const etaText = () => (deliveryEta ? `${deliveryEta.min} a ${deliveryEta.max} min` : '');
+function setEta(min, max) {
+  deliveryEta = Number.isInteger(min) && Number.isInteger(max) && min > 0 && max >= min ? { min, max } : null;
+}
+function setScheduling(s) {
+  scheduling = s && typeof s === 'object' && s.enabled === true && Number.isInteger(s.max_days) ? s : null;
+  renderWhen();
+}
+const wantsSchedule = () => !!scheduling && field('when').value === 'schedule';
+const scheduledFor = () => (wantsSchedule() && whenSlotEl.value ? whenSlotEl.value : null);
+function showWhenStatus(msg, kind) {
+  whenStatusEl.textContent = msg;
+  whenStatusEl.className = 'when-status' + (kind ? ' ' + kind : '');
+  whenStatusEl.hidden = !msg;
+}
+const option = (value, text) => { const o = document.createElement('option'); o.value = value; o.textContent = text; return o; };
+// Dias de hoje até max_days (horário de São Paulo).
+function fillDays() {
+  const prev = whenDayEl.value;
+  whenDayEl.replaceChildren();
+  const fmt = new Intl.DateTimeFormat('pt-BR', { timeZone: SP_TZ, weekday: 'long', day: '2-digit', month: '2-digit' });
+  const now = Date.now();
+  for (let i = 0; i <= scheduling.max_days; i++) {
+    const d = new Date(now + i * 864e5);
+    const key = dayKey(d);
+    const parts = Object.fromEntries(fmt.formatToParts(d).map(p => [p.type, p.value]));
+    const dm = `${parts.day}/${parts.month}`;
+    whenDayEl.append(option(key, i === 0 ? `Hoje (${dm})` : i === 1 ? `Amanhã (${dm})` : `${parts.weekday} (${dm})`));
+  }
+  if (prev && [...whenDayEl.options].some(o => o.value === prev)) whenDayEl.value = prev;
+}
+function renderWhen() {
+  whenFieldEl.hidden = !scheduling;
+  const closed = !!store && !store.open;
+  whenAsapEl.disabled = closed && !!scheduling;
+  const sub = document.createElement('small');
+  sub.className = 'when-eta';
+  sub.textContent = closed ? 'loja fechada agora' : etaText() ? `${isPickup() ? 'pronto em' : 'chega em'} ${etaText()}` : '';
+  whenAsapTextEl.replaceChildren('O quanto antes', ...(sub.textContent ? [sub] : []));
+  if (!scheduling) { field('when').value = 'asap'; whenSchedEl.hidden = true; syncSubmitState(); return; }
+  if (closed && field('when').value !== 'schedule') field('when').value = 'schedule';
+  const sched = field('when').value === 'schedule';
+  whenSchedEl.hidden = !sched;
+  if (sched && !whenDayEl.options.length) fillDays();
+  syncSubmitState();
+}
+async function loadSlots(force) {
+  if (!wantsSchedule()) return;
+  if (!whenDayEl.options.length) fillDays();
+  const date = whenDayEl.value;
+  const mode = isPickup() ? 'pickup' : 'delivery';
+  const ck = date + '|' + mode;
+  const cached = slotCache.get(ck);
+  if (!force && cached && Date.now() - cached.at < SLOT_CACHE_MS) { fillSlots(cached.slots); return; }
+  const mine = ++slotSeq;
+  whenSlotEl.disabled = true;
+  whenSlotEl.replaceChildren(option('', 'Carregando horários...'));
+  showWhenStatus('', '');
+  try {
+    const r = await fetch(`/api/store?a=slots&date=${encodeURIComponent(date)}&mode=${mode}`, { cache: 'no-store' });
+    let d = {};
+    try { d = await r.json(); } catch { /* corpo não-JSON */ }
+    if (mine !== slotSeq) return;
+    if (!r.ok) { fillSlots([]); showWhenStatus((d && d.error) || 'Não foi possível carregar os horários agora. Tente de novo.', 'warn'); return; }
+    if (d.enabled === false) { setScheduling(null); toast('O agendamento foi desligado agora. Faça o pedido para o quanto antes.', 6000); return; }
+    const slots = Array.isArray(d.slots) ? d.slots.filter(s => s && typeof s.start === 'string' && typeof s.label === 'string') : [];
+    slotCache.set(ck, { at: Date.now(), slots });
+    fillSlots(slots);
+  } catch {
+    if (mine === slotSeq) { fillSlots([]); showWhenStatus('Sem conexão para carregar os horários. Tente de novo.', 'warn'); }
+  }
+}
+// Mostra as janelas livres; as lotadas aparecem desativadas (as que já passaram ou estão em cima da hora ficam de fora).
+function fillSlots(slots) {
+  const prev = whenSlotEl.value;
+  whenSlotEl.replaceChildren();
+  const free = slots.filter(s => s.available);
+  if (!free.length) {
+    whenSlotEl.append(option('', 'Sem horários livres'));
+    whenSlotEl.disabled = true;
+    showWhenStatus(slots.some(s => s.reason === 'full') ? 'Todos os horários deste dia lotaram. Escolha outro dia.' : 'Não há horários livres neste dia. Escolha outro dia.', 'warn');
+    return;
+  }
+  whenSlotEl.append(option('', 'Escolha o horário'));
+  for (const s of slots) {
+    if (!s.available && s.reason !== 'full') continue;
+    const o = option(s.start, s.available ? s.label : `${s.label} (lotado)`);
+    o.disabled = !s.available;
+    whenSlotEl.append(o);
+  }
+  whenSlotEl.disabled = false;
+  if (prev && free.some(s => s.start === prev)) whenSlotEl.value = prev;
+  showWhenStatus('', '');
+}
+// Texto curto do agendamento escolhido (antes da resposta do servidor), ex.: "Amanhã (15/11), 14:00-14:30".
+function chosenWhenText() {
+  if (!scheduledFor()) return '';
+  const day = whenDayEl.selectedOptions[0], slot = whenSlotEl.selectedOptions[0];
+  return day && slot ? `${day.textContent}, ${slot.textContent}` : '';
+}
+checkoutFormEl.addEventListener('change', e => {
+  const n = e.target && e.target.name;
+  if (n === 'when') { renderWhen(); loadSlots(); }
+  else if (n === 'when_day') loadSlots();
+  else if (n === 'delivery') { renderWhen(); loadSlots(); }
+});
+
+/* v4 N6: cupom de desconto. O servidor confere o código e calcula o desconto (POST /api/customer?a=coupon_check); aqui só se
+   mostra o valor que ele devolveu. O link /?cupom=CODIGO guarda o código neste aparelho e ele é conferido ao abrir o checkout. */
+const COUPON_KEY = 'dg-coupon';
+const COUPON_RE = /^[A-Z0-9-]{3,20}$/;
+const COUPON_DROP = new Set(['invalid_coupon', 'coupon_exhausted']); // códigos que não adianta guardar
+const COUPON_ERRORS = new Set(['invalid_coupon', 'coupon_min_order', 'coupon_not_stackable', 'coupon_no_discount', 'coupon_exhausted', 'coupon_customer_limit']);
+const couponInputEl = document.querySelector('#coupon-code');
+const couponBtnEl = document.querySelector('#coupon-apply');
+const couponRemoveEl = document.querySelector('#coupon-remove');
+const couponStatusEl = document.querySelector('#coupon-status');
+let coupon = null; // { code, key, discount_cents }
+let couponSeq = 0, couponTimer = null;
+const normCoupon = v => String(v || '').trim().toUpperCase();
+const couponKeyNow = () => JSON.stringify([cartSig(), rewardsPayload()]);
+const couponValid = () => !!coupon && coupon.key === couponKeyNow();
+function savedCoupon() { const c = readStore(COUPON_KEY); const code = normCoupon(c && c.code); return COUPON_RE.test(code) ? code : ''; }
+function showCouponStatus(msg, kind) {
+  couponStatusEl.textContent = msg;
+  couponStatusEl.className = 'coupon-status' + (kind ? ' ' + kind : '');
+  couponStatusEl.hidden = !msg;
+}
+function syncCouponUi() { couponRemoveEl.hidden = !(coupon || couponInputEl.value.trim()); }
+async function checkCoupon(raw) {
+  const code = normCoupon(raw);
+  clearTimeout(couponTimer);
+  if (!code) { coupon = null; showCouponStatus('', ''); syncCouponUi(); renderSummary(); return false; }
+  if (!COUPON_RE.test(code)) { coupon = null; showCouponStatus('Código inválido: use de 3 a 20 letras, números ou hífen.', 'warn'); syncCouponUi(); renderSummary(); return false; }
+  if (!cart.length) return false;
+  const key = couponKeyNow();
+  const mine = ++couponSeq;
+  couponBtnEl.disabled = true;
+  showCouponStatus('Conferindo o cupom...', '');
+  try {
+    const body = { code, items: itemsPayload() };
+    const rw = rewardsPayload();
+    if (rw.length) body.rewards = rw;
+    const ph = digitsOf(field('phone').value);
+    if (!account && ph.length >= 10) body.phone = ph; // limite por cliente (logado usa o telefone da conta)
+    const r = await fetch('/api/customer?a=coupon_check', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let d = {};
+    try { d = await r.json(); } catch { /* corpo não-JSON */ }
+    if (mine !== couponSeq) return false;
+    if (r.ok && d && d.ok && d.coupon && Number.isInteger(d.discount_cents)) {
+      coupon = { code: normCoupon(d.coupon.code) || code, key, discount_cents: d.discount_cents };
+      setServerSubtotal(JSON.parse(key)[0], d.subtotal_cents);
+      writeStore(COUPON_KEY, { code: coupon.code });
+      couponInputEl.value = coupon.code;
+      showCouponStatus(`Cupom ${coupon.code} aplicado: − ${brl(d.discount_cents)} nos produtos.`, 'ok');
+      syncCouponUi();
+      renderSummary();
+      return true;
+    }
+    coupon = null;
+    if (COUPON_DROP.has(d && d.code)) removeStore(COUPON_KEY);
+    showCouponStatus((d && typeof d.error === 'string' && d.error) || 'Não foi possível conferir o cupom agora. Tente de novo.', 'warn');
+    syncCouponUi();
+    renderSummary();
+    return false;
+  } catch {
+    if (mine === couponSeq) showCouponStatus('Sem conexão para conferir o cupom. Tente de novo.', 'warn');
+    return false;
+  } finally {
+    if (mine === couponSeq) couponBtnEl.disabled = false;
+  }
+}
+// Carrinho ou prêmio mudou: o desconto precisa ser conferido de novo (o servidor recalcula).
+function recheckCoupon(delay = 600) {
+  clearTimeout(couponTimer);
+  const code = coupon ? coupon.code : '';
+  if (!code || couponValid() || !cart.length) return;
+  showCouponStatus('Conferindo o cupom de novo...', '');
+  couponTimer = setTimeout(() => checkCoupon(code), delay);
+}
+onRewardsChanged = () => recheckCoupon();
+couponBtnEl.addEventListener('click', () => checkCoupon(couponInputEl.value));
+couponInputEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); checkCoupon(couponInputEl.value); } });
+couponInputEl.addEventListener('input', () => {
+  if (coupon && normCoupon(couponInputEl.value) !== coupon.code) { coupon = null; showCouponStatus('', ''); renderSummary(); }
+  syncCouponUi();
+});
+couponRemoveEl.addEventListener('click', () => {
+  clearTimeout(couponTimer);
+  couponSeq++;
+  coupon = null;
+  removeStore(COUPON_KEY);
+  couponInputEl.value = '';
+  couponBtnEl.disabled = false;
+  showCouponStatus('Cupom removido.', '');
+  syncCouponUi();
+  renderSummary();
+  couponInputEl.focus();
+});
+// Ao abrir o checkout: aplica o cupom guardado (link /?cupom=) ou confere de novo o que já estava aplicado.
+function couponOnOpen() {
+  if (coupon) { recheckCoupon(0); return; }
+  const saved = savedCoupon();
+  if (saved && !couponInputEl.value.trim()) couponInputEl.value = saved;
+  syncCouponUi();
+  if (saved && couponInputEl.value.trim() === saved) checkCoupon(saved);
+}
+// Link de campanha: /?cupom=CODIGO. Guarda no aparelho, tira da barra de endereço e avisa.
+(function takeCouponFromUrl() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has('cupom')) return;
+  const code = normCoupon(params.get('cupom'));
+  params.delete('cupom');
+  const qs = params.toString();
+  history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+  if (!COUPON_RE.test(code)) { toast('Este link de cupom não é válido.', 4000); return; }
+  writeStore(COUPON_KEY, { code });
+  toast(`Cupom ${code} guardado! Ele é conferido quando você finalizar o pedido.`, 5000);
+})();
+
+/* ---------- v4 U-03/X-06, U-04, U-05, N11: loja fechada no topo, faixa de confiança, prazo e frete ----------
+   Tudo vem do servidor (/api/menu e /api/store?a=state); aqui só se monta o texto. */
+let shipping = null;  // { bands: [{ max_km, fee_cents }], maxKm, pickupFeeCents }
+let storeHours = null; // [{ weekday, opens, closes }]
+const closedStripEl = document.querySelector('#closed-strip');
+const closedStripTextEl = document.querySelector('#closed-strip-text');
+const closedStripBtnEl = document.querySelector('#closed-strip-btn');
+const cartClosedEl = document.querySelector('#cart-closed');
+const cartInfoEl = document.querySelector('#cart-info');
+const checkoutEtaEl = document.querySelector('#checkout-eta');
+function setShipping(s) {
+  const ok = s && Array.isArray(s.bands) && s.bands.length && s.bands.every(b => b && Number.isFinite(Number(b.max_km)) && Number.isInteger(b.fee_cents));
+  shipping = ok ? s : null;
+  renderInfo();
+}
+const brlShort = c => (c % 100 ? brl(c) : 'R$ ' + c / 100);
+// "até 10 km: de R$ 6 a R$ 14"
+function shipText() {
+  if (!shipping) return '';
+  const fees = shipping.bands.map(b => b.fee_cents);
+  const min = Math.min(...fees), max = Math.max(...fees);
+  const km = kmText(Number(shipping.maxKm) || shipping.bands[shipping.bands.length - 1].max_km);
+  return `até ${km} km: ${min === max ? brlShort(min) : `de ${brlShort(min)} a ${brlShort(max)}`}`;
+}
+const pickupText = () => (shipping && shipping.pickupFeeCents > 0 ? `Retirada: ${brlShort(shipping.pickupFeeCents)}` : 'Retirada grátis');
+// Horário de hoje (São Paulo): "10:00 às 22:00" ou "fechado hoje".
+function todayHoursText() {
+  if (!Array.isArray(storeHours)) return '';
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(new Intl.DateTimeFormat('en-US', { timeZone: SP_TZ, weekday: 'short' }).format(new Date()));
+  const rows = storeHours.filter(h => h && h.weekday === wd && /^\d{2}:\d{2}$/.test(h.opens) && /^\d{2}:\d{2}$/.test(h.closes));
+  return rows.length ? rows.map(h => `${h.opens} às ${h.closes}`).join(' e ') : 'fechado hoje';
+}
+function closedText(where) {
+  const base = closedMessage(store || {});
+  if (scheduling) return base + (where === 'checkout' ? ' Você pode agendar o pedido em "Quando?", logo abaixo.' : ' Você já pode agendar o seu pedido.');
+  return base + ' Você pode montar o carrinho, mas só conseguimos receber o pedido com a loja aberta.';
+}
+function renderInfo() {
+  const closed = !!store && !store.open;
+  // faixa de loja fechada (topo), no carrinho e no checkout
+  closedStripEl.hidden = !closed;
+  closedStripTextEl.textContent = closed ? closedText('top') : '';
+  closedStripBtnEl.hidden = !(closed && scheduling);
+  cartClosedEl.hidden = !closed;
+  cartClosedEl.textContent = closed ? closedText('cart') : '';
+  closedNoteEl.hidden = !closed;
+  closedNoteEl.textContent = closed ? closedText('checkout') : '';
+  // faixa de confiança
+  const hours = todayHoursText();
+  document.querySelector('#trust-hours').hidden = !hours;
+  document.querySelector('#trust-hours-text').textContent = hours;
+  document.querySelector('#trust-eta').hidden = !etaText();
+  document.querySelector('#trust-eta-text').textContent = etaText() ? `chega em ${etaText()}` : '';
+  document.querySelector('#trust-ship').hidden = !shipText();
+  document.querySelector('#trust-ship-text').textContent = shipText() ? `${shipText()} · ${pickupText().toLowerCase()}` : '';
+  // carrinho: prazo e frete
+  const parts = [etaText() && `Entrega em ${etaText()}`, shipText() && `frete ${shipText()}`, shipping && pickupText()].filter(Boolean);
+  cartInfoEl.hidden = !parts.length || !cart.length;
+  cartInfoEl.textContent = parts.length ? parts.join(' · ') + '. O frete exato aparece no checkout.' : '';
+  // checkout: prazo quando "Quando?" não aparece
+  checkoutEtaEl.hidden = !etaText() || !!scheduling;
+  checkoutEtaEl.textContent = etaText() ? `${isPickup() ? 'Pronto para retirar' : 'Entrega'} em ${etaText()}, depois da confirmação do pagamento.` : '';
+}
+closedStripBtnEl.addEventListener('click', () => {
+  if (cart.length) { confirmRmKey = null; renderCart(); openModal('#cart-modal', { opener: closedStripBtnEl }); return; }
+  scrollToEl(document.getElementById('cardapio'), '#cardapio');
+  toast('Escolha seus doces. No checkout, em "Quando?", escolha o dia e o horário.', 5000);
+});
 
 /* ---------- Etapa pós-pedido: cartão (link), Pix (QR no site) ou sem pagamento. O botão do WhatsApp só vem depois de aprovado (C6). ---------- */
 const payEls = {
   codeRow: document.querySelector('#payment-code-row'),
   code: document.querySelector('#payment-code'),
+  sched: document.querySelector('#pay-sched'),
   text: document.querySelector('#payment-text'),
   summary: document.querySelector('#pay-summary'),
   track: document.querySelector('#pay-track'),
@@ -1114,6 +1495,13 @@ const payEls = {
   copyBtn: document.querySelector('#pix-copy'),
   copyStatus: document.querySelector('#pix-copy-status'),
   timer: document.querySelector('#pix-timer'),
+  amountRow: document.querySelector('#pix-amount-row'),
+  amount: document.querySelector('#pix-amount'),
+  qrBox: document.querySelector('#pix-qr-box'),
+  thanks: document.querySelector('#pay-thanks'),
+  review: document.querySelector('#pay-review'),
+  insta: document.querySelector('#pay-insta'),
+  thanksClose: document.querySelector('#pay-thanks-close'),
   card: document.querySelector('#pay-mp'),
   support: document.querySelector('#pay-support'),
   retry: document.querySelector('#pay-retry'),
@@ -1167,7 +1555,7 @@ async function loadPrefill() {
     }
   } catch { /* sem pré-preenchimento: segue à mão */ }
 }
-modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); }, close: stopPayWatch };
+modalHooks['#checkout-modal'] = { open() { refreshStore(); loadAccount(); loadPrefill(); loadPointsPreview(); couponOnOpen(); if (scheduling) { fillDays(); renderWhen(); loadSlots(); } }, close() { stopPayWatch(); closeThanks(); } };
 
 function normalizePayment(p) {
   if (!p || typeof p !== 'object') return null;
@@ -1204,6 +1592,8 @@ function renderOrderStep(order, { title, text, watchNow } = {}) {
   payEls.codeRow.hidden = !(order.publicCode || order.code);
   payEls.track.hidden = !order.token;
   if (order.token) payEls.trackLink.href = trackUrl(order.token);
+  payEls.sched.hidden = !order.scheduledLabel;
+  payEls.sched.textContent = order.scheduledLabel || '';
   payEls.summary.hidden = !order.summary;
   if (order.summary) fillSummary(payEls.summary, order.summary);
   setPayStatus('', '');
@@ -1212,31 +1602,40 @@ function renderOrderStep(order, { title, text, watchNow } = {}) {
   payEls.retry.hidden = true;
   payEls.wa.hidden = true; // só depois do pagamento confirmado
   payEls.help.hidden = true;
+  payEls.thanks.hidden = true;
   payEls.copyStatus.textContent = '';
   payEls.timer.textContent = '';
+  const failed = !pay && !watchNow; // v4 U-08: pedido registrado, mas o pagamento não foi gerado
+  const canRetry = failed && !!(lastCartCopy && lastCartCopy.length);
   let msg = text;
   if (msg == null) {
-    msg = type === 'pix' ? 'Pedido registrado! Pague com o Pix abaixo. Esta tela confirma sozinha quando o pagamento cair.'
+    msg = type === 'pix' ? 'Pedido registrado! Esta tela confirma sozinha quando o Pix cair.'
       : type === 'card' ? 'Pedido registrado! Pague com cartão no botão abaixo. Esta tela confirma sozinha quando o pagamento for aprovado.'
-      : 'Pedido registrado! Não foi possível gerar o pagamento agora. Fale com a Gigi pelo WhatsApp para combinar o pagamento.';
+      : 'Pedido registrado, mas não foi possível gerar o pagamento agora.' + (canRetry ? ' Toque em "Tentar pagar de novo" para enviar outra vez' + (WHATSAPP_NUMBER ? ', ou fale com a Gigi pelo WhatsApp com o código do pedido.' : '.') : ' Fale com a Gigi pelo WhatsApp para combinar o pagamento.');
   }
   payEls.text.textContent = msg;
   if (type === 'card') payEls.card.href = pay.url;
   if (type === 'pix') {
     payEls.pixCode.value = pay.qr_code;
-    if (pay.qr_code_base64) { payEls.qr.src = 'data:image/png;base64,' + pay.qr_code_base64; payEls.qr.hidden = false; }
-    else { payEls.qr.removeAttribute('src'); payEls.qr.hidden = true; }
+    // v4 U-02: valor em destaque (total do servidor) e QR recolhido em "Pagar por outro aparelho".
+    const total = Number.isInteger(order.total) ? order.total : order.summary && Number.isInteger(order.summary.total) ? order.summary.total : null;
+    payEls.amountRow.hidden = total === null;
+    payEls.amount.textContent = total === null ? '' : brl(total);
+    payEls.qrBox.open = false;
+    if (pay.qr_code_base64) { payEls.qr.src = 'data:image/png;base64,' + pay.qr_code_base64; payEls.qrBox.hidden = false; }
+    else { payEls.qr.removeAttribute('src'); payEls.qrBox.hidden = true; }
   }
-  if (!pay && !watchNow && WHATSAPP_NUMBER) {
+  if (canRetry) { payEls.retry.textContent = 'Tentar pagar de novo'; payEls.retry.hidden = false; }
+  if (failed && WHATSAPP_NUMBER) {
     payEls.help.hidden = false;
     payEls.help.href = waLink(`Olá! Fiz o pedido ${order.publicCode || order.code} pelo site e o pagamento não foi gerado. Pode me ajudar?`);
   }
   checkoutFormEl.hidden = true;
   paymentStepEl.hidden = false;
-  checkoutTitleEl.textContent = title || (type === 'pix' ? 'Pague com Pix' : type === 'card' ? 'Pagamento' : 'Pedido registrado');
+  checkoutTitleEl.textContent = title || (type === 'pix' ? 'Falta só pagar o Pix' : type === 'card' ? 'Pagamento' : 'Pedido registrado');
   const panel = paymentStepEl.closest('.modal-panel');
   if (panel) panel.scrollTop = 0;
-  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : payEls.help.hidden ? payEls.trackLink : payEls.help).focus({ preventScroll: true });
+  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : !payEls.retry.hidden ? payEls.retry : payEls.help.hidden ? payEls.trackLink : payEls.help).focus({ preventScroll: true });
   if (type || watchNow) startPayWatch(order, pay, !!watchNow);
 }
 
@@ -1266,9 +1665,10 @@ function startPayWatch(order, pay, immediate) {
       if (!r.ok) return;
       const d = await r.json();
       if (token !== watch.token) return;
-      if (d.payment_status === 'approved') onPayApproved(order);
+      if (d.payment_status === 'approved') onPayApproved(order, d.post_payment);
       else if (d.payment_status === 'rejected') onPayEnded(order, 'O pagamento foi recusado. Você pode tentar de novo ou refazer o pedido.');
       else if (d.payment_status === 'cancelled') onPayEnded(order, 'O pagamento foi cancelado. Você pode refazer o pedido.');
+      else if (d.status_key === 'cancelled') onPayEnded(order, 'O pedido foi cancelado. Se tiver dúvida, fale com a Gigi pelo WhatsApp.');
     } catch { /* sem rede: tenta de novo no próximo ciclo */ } finally { busy = false; }
   };
   watch.pollNow = poll;
@@ -1276,8 +1676,9 @@ function startPayWatch(order, pay, immediate) {
   if (immediate) poll();
 }
 
-function onPayApproved(order) {
+function onPayApproved(order, postPayment) {
   stopPayWatch();
+  markLastOrder(order.token, { status: 'approved' });
   payEls.pixBox.hidden = true;
   payEls.card.hidden = payEls.support.hidden = true;
   payEls.retry.hidden = true;
@@ -1289,14 +1690,17 @@ function onPayApproved(order) {
     : `Olá! Fiz o pedido ${order.publicCode || order.code || ''} pelo site e o pagamento foi confirmado ✓` + (order.token ? `\nAcompanhar: ${location.origin}${trackUrl(order.token)}` : ''));
   (payEls.wa.hidden ? payEls.trackLink : payEls.wa).focus({ preventScroll: true });
   toast('Pagamento confirmado! ✓', 3000);
+  showThanks(order.publicCode || order.code, postPayment);
 }
 
 function onPayEnded(order, msg) {
   stopPayWatch();
+  markLastOrder(order.token, { status: 'ended' });
   payEls.pixBox.hidden = true;
   setPayStatus(msg, 'warn');
   payEls.text.textContent = 'Se já pagou, fale com a Gigi pelo WhatsApp informando o número do pedido.';
   checkoutTitleEl.textContent = 'Pagamento não concluído';
+  payEls.retry.textContent = 'Refazer pedido';
   payEls.retry.hidden = !(lastCartCopy && lastCartCopy.length);
   if (WHATSAPP_NUMBER) {
     payEls.help.hidden = false;
@@ -1315,6 +1719,67 @@ payEls.retry.addEventListener('click', () => {
   renderPoints();
   renderSummary();
 });
+
+/* v4 U-01: Pix em aberto. Ao recarregar a loja, o último pedido com Pix pendente reabre a tela de pagamento (o código vem
+   de /api/order-status, só enquanto pendente e não vencido). Fechar com o Pix em aberto pede confirmação. */
+const PIX_CLOSE_MSG = 'O Pix ainda não foi pago. Se fechar agora, você volta a ele pelo botão "Acompanhe" ou pelo link do pedido. Fechar mesmo assim?';
+const pixPending = () => modalStack.includes('#checkout-modal') && !paymentStepEl.hidden && !payEls.pixBox.hidden && watch.tick !== null;
+function markLastOrder(token, patch) {
+  const last = readLastOrder();
+  if (last && token && last.token === token) writeStore(LAST_ORDER_KEY, { ...last, ...patch });
+}
+function confirmPixClose() {
+  if (!window.confirm(PIX_CLOSE_MSG)) return false;
+  const last = readLastOrder();
+  if (last) markLastOrder(last.token, { pix_dismissed: true }); // não reabre sozinho de novo; segue no "Acompanhe"
+  return true;
+}
+async function resumePix() {
+  const last = readLastOrder();
+  if (!last || last.status !== 'awaiting_payment' || last.payment_choice !== 'pix' || last.pix_dismissed) return;
+  if (!(Date.parse(last.pix_expires_at) > Date.now())) return;
+  try {
+    const r = await fetch('/api/order-status?t=' + encodeURIComponent(last.token), { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const pay = d && d.pix && typeof d.pix === 'object' ? normalizePayment({ type: 'pix', ...d.pix }) : null;
+    if (!pay) { markLastOrder(last.token, { status: d && d.payment_status === 'approved' ? 'approved' : 'ended' }); return; }
+    if (modalStack.length) return; // a pessoa já abriu outra coisa
+    openModal('#checkout-modal', { opener: document.body });
+    renderOrderStep({ publicCode: d.public_code || last.public_code, token: last.token, payment: pay, summary: last.summary,
+      total: Number.isInteger(d.total_cents) ? d.total_cents : undefined, scheduledLabel: d.scheduled_label || last.scheduled_label || null });
+    toast('Seu Pix ainda está esperando o pagamento.', 4000);
+  } catch { /* sem rede: o "Acompanhe" continua levando ao pedido */ }
+}
+
+/* v4 N8: depois do pagamento aprovado, convite para avaliar no Google e seguir no Instagram. Só aparece se o servidor
+   mandar post_payment e uma vez por pedido (marcado no aparelho ao fechar ou ao tocar num dos links). */
+const POST_SEEN_KEY = 'dg-post-payment-seen';
+const httpsUrl = u => { if (typeof u !== 'string' || u.length > 500) return ''; try { const x = new URL(u); return x.protocol === 'https:' ? x.href : ''; } catch { return ''; } };
+const postSeen = () => { const v = readStore(POST_SEEN_KEY); return Array.isArray(v) ? v.filter(c => typeof c === 'string') : []; };
+function markPostSeen(code) {
+  if (!code) return;
+  writeStore(POST_SEEN_KEY, [code, ...postSeen().filter(c => c !== code)].slice(0, 30));
+}
+function showThanks(code, pp) {
+  if (!pp || typeof pp !== 'object' || !code || postSeen().includes(code)) return;
+  const review = httpsUrl(pp.review_url), insta = httpsUrl(pp.instagram_url);
+  if (!review && !insta) return;
+  payEls.review.hidden = !review;
+  payEls.insta.hidden = !insta;
+  if (review) payEls.review.href = review;
+  if (insta) payEls.insta.href = insta;
+  payEls.thanks.dataset.code = code;
+  payEls.thanks.hidden = false;
+}
+function closeThanks() {
+  if (payEls.thanks.hidden) return;
+  markPostSeen(payEls.thanks.dataset.code);
+  payEls.thanks.hidden = true;
+}
+payEls.thanksClose.addEventListener('click', () => { closeThanks(); (payEls.wa.hidden ? payEls.trackLink : payEls.wa).focus({ preventScroll: true }); });
+payEls.review.addEventListener('click', () => markPostSeen(payEls.thanks.dataset.code));
+payEls.insta.addEventListener('click', () => markPostSeen(payEls.thanks.dataset.code));
 
 // Ao voltar para a aba, confere o pagamento na hora (o navegador atrasa timers em segundo plano)
 document.addEventListener('visibilitychange', () => { if (!document.hidden && watch.pollNow) watch.pollNow(); });
@@ -1367,16 +1832,19 @@ function buildWhatsAppMessage(srv, cust) {
     let line = `• ${i.qty}x ${i.name}`;
     if (i.size) line += ` (${i.size})`;
     if (Array.isArray(i.extras) && i.extras.length) line += `\n   ${i.extras.join(', ')}`;
-    if (Number.isInteger(i.unit_total_cents)) line += `\n   ${brl(i.unit_total_cents * i.qty)}`;
+    if (i.reward) line += '\n   prêmio do Clube (grátis)';
+    else if (Number.isInteger(i.unit_total_cents)) line += `\n   ${brl(i.unit_total_cents * i.qty)}`;
     lines.push(line);
   }
   lines.push('');
   if (Number.isInteger(srv.subtotal_cents)) lines.push(`Subtotal: ${brl(srv.subtotal_cents)}`);
   if (Number.isInteger(srv.delivery_fee_cents)) lines.push(`Frete: ${brl(srv.delivery_fee_cents)}`);
-  if (srv.discount_cents > 0) lines.push(`Desconto (pontos): − ${brl(srv.discount_cents)}`);
+  if (srv.discount_cents > 0) lines.push(`${srv.coupon_code ? `Cupom ${srv.coupon_code}` : 'Desconto'}: − ${brl(srv.discount_cents)}`);
+  if (srv.club_points > 0) lines.push(`Prêmio do Clube: ${srv.club_points} pontos`);
   lines.push(`*Total: ${brl(srv.total_cents)}*`);
   lines.push('', `Nome: ${cust.customer_name}`);
   lines.push(`WhatsApp: ${cust.customer_phone}`);
+  if (srv.scheduled_label) lines.push(srv.scheduled_label);
   if (srv.delivery_method === 'pickup') lines.push(`Retirada em: ${STORE_ADDRESS}`);
   else lines.push(`Entrega: ${srv.address || cust.address || 'a combinar'}`);
   lines.push(`Pagamento: ${cust.payment_choice === 'card' ? 'Cartão de crédito ou débito' : 'Pix'}`);
@@ -1386,21 +1854,40 @@ function buildWhatsAppMessage(srv, cust) {
 }
 
 // Erros do POST /api/order, em português claro (contrato seção 3)
+const CLUB_ERRORS = new Set(['login_required', 'insufficient_points', 'points_locked', 'points_disabled', 'reward_unavailable', 'reward_max_per_order', 'reward_min_subtotal', 'invalid_rewards', 'points_discount_ended']);
 function handleOrderError(status, d) {
   const code = d && d.code;
-  if (code === 'store_closed') { setStoreState(d.store || { open: false, reason: null, message: d.error }); toast('A loja está fechada agora. ' + closedMessage(store || {}), 7000); return; }
-  if (code === 'login_required') { account = null; usePoints = 0; renderAccount(); renderPoints(); renderSummary(); toast('Sua sessão acabou. Entre na sua conta para usar pontos, ou faça o pedido sem pontos.', 6000); return; }
-  if (code === 'insufficient_points') { usePoints = 0; loadAccount(); toast('Você não tem pontos suficientes. Atualizamos seu saldo; confira e tente de novo.', 6000); return; }
-  if (code === 'points_locked') { usePoints = 0; loadAccount(); toast('Seus pontos estão bloqueados por segurança após a recuperação da conta. Faça o pedido sem usar pontos.', 6000); return; }
+  if (code === 'store_closed') { setStoreState(d.store || { open: false, reason: null, message: d.error }); toast('A loja está fechada agora. ' + closedMessage(store || {}) + (scheduling ? ' Você pode agendar o pedido em "Quando?".' : ''), 7000); return; }
+  // v4 N10: janela recusada (lotou, ficou em cima da hora...): recarrega os horários e mostra o motivo.
+  if (SCHEDULE_ERRORS.has(code)) {
+    slotCache.clear();
+    loadSlots(true).then(() => { showWhenStatus((d && d.error) || 'Escolha outro horário.', 'warn'); });
+    toast((d && d.error) || 'Esse horário não está mais disponível. Escolha outro.', 7000);
+    whenSlotEl.focus({ preventScroll: false });
+    return;
+  }
+  if (code === 'scheduling_disabled') { setScheduling(null); toast((d && d.error) || 'O agendamento está desligado. Faça o pedido para o quanto antes.', 7000); return; }
+  // v4 N3: prêmios do Clube. Mostra a mensagem do servidor e atualiza saldo e vitrine.
+  if (CLUB_ERRORS.has(code)) {
+    if (code === 'login_required') { account = null; clubMine = null; chosenRewards.clear(); renderAccount(); }
+    else if (code !== 'reward_min_subtotal') { loadClub(); refreshClubInfo(); }
+    renderPoints(); renderSummary();
+    toast((d && d.error) || 'Confira os prêmios do Clube e tente de novo.', 7000);
+    return;
+  }
+  // v4 N6: cupom recusado na hora do pedido (esgotou, mudou o carrinho...): tira o desconto e mostra o motivo.
+  if (COUPON_ERRORS.has(code)) {
+    coupon = null;
+    if (COUPON_DROP.has(code)) removeStore(COUPON_KEY);
+    showCouponStatus((d && d.error) || 'O cupom não pôde ser usado.', 'warn');
+    syncCouponUi(); renderSummary();
+    toast(((d && d.error) || 'O cupom não pôde ser usado.') + ' Remova o cupom para seguir sem desconto.', 7000);
+    return;
+  }
   // F5 (A1-05): origem/tipo barrados pelo servidor. O site manda os dois certos; isso só acontece com página antiga, extensão ou proxy.
   if (code === 'forbidden_origin' || status === 403 && !code) { toast('Não conseguimos confirmar de onde veio o pedido. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
   if (code === 'unsupported_type' || status === 415) { toast('O pedido chegou num formato que não reconhecemos. Atualize a página e tente de novo. Seu carrinho foi mantido.', 7000); return; }
   if (status === 429) { toast('Recebemos muitos pedidos seguidos desta conexão ou deste telefone. Aguarde uns 10 minutos e tente de novo, ou chame a gente no WhatsApp.', 8000); return; }
-  // Regra de pontos pode ter mudado depois que a página abriu: recarrega a regra e mostra a mensagem do servidor.
-  if (code === 'points_disabled') { usePoints = 0; refreshPointsRules(); toast('O programa de pontos está pausado no momento. Faça o pedido sem usar pontos.', 6000); return; }
-  if (code === 'invalid_block') { usePoints = 0; refreshPointsRules(); toast((d && d.error) || 'Quantidade de pontos fora da regra. Escolha de novo.', 6000); return; }
-  if (code === 'invalid_points') { toast('Quantidade de pontos inválida. Escolha de novo.', 5000); return; }
-  if (code === 'discount_too_big') { refreshPointsRules(); toast('O desconto não pode ser maior que o valor dos itens. Use menos pontos.', 5000); return; }
   if (['out_of_area', 'cep_not_found', 'address_not_found', 'origin_unavailable', 'invalid_cep', 'invalid_address'].includes(code)) {
     quote = null;
     const msg = quoteErrorText(status, d);
@@ -1415,7 +1902,8 @@ function handleOrderError(status, d) {
 checkoutFormEl.addEventListener('submit', async e => {
   e.preventDefault();
   if (submitting) return;
-  if (store && !store.open) { toast(closedMessage(store), 6000); return; }
+  if (store && !store.open && !wantsSchedule()) { toast(closedMessage(store) + (scheduling ? ' Você pode agendar o pedido em "Quando?".' : ''), 6000); return; }
+  if (wantsSchedule() && !scheduledFor()) { toast('Escolha o dia e o horário do agendamento.', 5000); (whenSlotEl.disabled ? whenDayEl : whenSlotEl).focus(); return; }
   const removed = pruneCart();
   if (removed.length) { renderSummary(); toast('Um item ficou indisponível e saiu do carrinho. Confira o resumo.', 5000); return; }
   if (!cart.length) { toast('Seu carrinho está vazio.'); return; }
@@ -1446,7 +1934,17 @@ checkoutFormEl.addEventListener('submit', async e => {
     } else {
       order.address = '';
     }
-    if (usePoints > 0) order.use_points = usePoints;
+    const rw = rewardsPayload();
+    if (rw.length) order.rewards = rw;
+    // v4 N6: código digitado e ainda não conferido para este carrinho: confere antes e deixa a pessoa ver o novo total.
+    const typedCoupon = normCoupon(couponInputEl.value);
+    if (typedCoupon && !(couponValid() && coupon.code === typedCoupon)) {
+      const ok = await checkCoupon(typedCoupon);
+      toast(ok ? 'Cupom aplicado! Confira o total e toque em Enviar pedido de novo.' : 'Confira o cupom acima: corrija o código ou remova para seguir sem desconto.', 6000);
+      return;
+    }
+    if (couponValid()) order.coupon_code = coupon.code;
+    if (scheduledFor()) order.scheduled_for = scheduledFor();
     const res = await fetch('/api/order', {
       method: 'POST',
       credentials: 'same-origin',
@@ -1459,18 +1957,23 @@ checkoutFormEl.addEventListener('submit', async e => {
     const srv = { ...data, items: Array.isArray(data.items) ? data.items : [] };
     const whatsappText = buildWhatsAppMessage(srv, order);
     const payment = normalizePayment(data.payment);
-    const summary = { subtotal: srv.subtotal_cents, fee: srv.delivery_fee_cents, pickup: srv.delivery_method === 'pickup', discount: srv.discount_cents || 0, total: srv.total_cents };
+    const rewardsDone = srv.items.filter(i => i && i.reward).map(i => ({ qty: i.qty, name: i.name, size_name: i.size, points: (Number(i.points_cost) || 0) * i.qty }));
+    const summary = { subtotal: srv.subtotal_cents, fee: srv.delivery_fee_cents, pickup: srv.delivery_method === 'pickup', discount: srv.discount_cents || 0, couponCode: srv.coupon_code || null, total: srv.total_cents, rewards: rewardsDone };
     // pedido criado com sucesso: só agora o carrinho é limpo (cópia guardada para "refazer")
     lastCartCopy = cart.map(i => ({ ...i }));
     cart = [];
     save();
-    usePoints = 0;
+    chosenRewards.clear();
     quote = null;
+    if (srv.coupon_code) { removeStore(COUPON_KEY); coupon = null; couponInputEl.value = ''; showCouponStatus('', ''); syncCouponUi(); }
     addRecent({ public_code: data.public_code, code: data.code, token: data.tracking_token });
     const card = payment && payment.type === 'card';
-    saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice,
-      ...(card ? { paymentUrl: payment.url, whatsappText } : {}) });
-    renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary });
+    // v4 U-01: com Pix, guarda só o prazo; o código volta do servidor (/api/order-status pix) ao reabrir.
+    const pixUntil = payment && payment.type === 'pix' ? (Number.isFinite(Date.parse(payment.expires_at)) ? new Date(Date.parse(payment.expires_at)).toISOString() : new Date(Date.now() + PIX_DEFAULT_MS).toISOString()) : null;
+    saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice, scheduled_label: srv.scheduled_label || null,
+      ...(card ? { paymentUrl: payment.url, whatsappText } : {}), ...(pixUntil ? { pix_expires_at: pixUntil } : {}) });
+    slotCache.clear();
+    renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary, scheduledLabel: srv.scheduled_label || null });
     toast(payment ? 'Pedido registrado! Agora é só pagar.' : 'Pedido registrado!');
     if (account) loadAccount(); // saldo mudou (pontos reservados)
   } catch {
@@ -1512,11 +2015,14 @@ function handlePaymentReturn() {
 
 payEls.wa.addEventListener('click', forgetWhatsAppText); // texto enviado: não fica mais guardado no aparelho
 readLastOrder(); // apaga o último pedido vencido (24 h) ou no formato antigo
+const resumeOnLoad = !new URLSearchParams(location.search).has('pagamento');
 syncDelivery();
 renderCartFab();
 renderAccount();
 loadAccount();
+refreshStore(); // horário de hoje (a=state traz hours)
 handlePaymentReturn();
+if (resumeOnLoad) resumePix();
 
 /* L6: voltar da página de entrar/criar conta (/?checkout=1) reabre o checkout com o carrinho que ficou no aparelho. */
 (function reopenCheckout() {

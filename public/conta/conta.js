@@ -8,7 +8,7 @@
   const API = '/api/customer';
   const PUBLIC_ROUTES = ['entrar', 'cadastro', 'recuperar'];
   const PRIVATE_ROUTES = ['pedidos', 'pontos', 'dados'];
-  const TITLES = { entrar: 'Entrar', cadastro: 'Criar conta', recuperar: 'Recuperar acesso', pedidos: 'Meus pedidos', pontos: 'Meus pontos', dados: 'Meus dados' };
+  const TITLES = { entrar: 'Entrar', cadastro: 'Criar conta', recuperar: 'Recuperar acesso', pedidos: 'Meus pedidos', pontos: 'Clube da Gigi', dados: 'Meus dados' };
 
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -330,22 +330,38 @@
   });
 
   // ---------- U4: pedidos ----------
-  const STATUS_TONE = { new: 'tone-info', accepted: 'tone-info', preparing: 'tone-warn', ready: 'tone-ok', awaiting_delivery: 'tone-ok', completed: 'tone-done', cancelled: 'tone-bad' };
-  const PAY_TONE = { pago: 'tone-ok', recusado: 'tone-bad', cancelado: 'tone-bad', estornado: 'tone-bad' };
+  // v4 N1: o rótulo vem pronto do servidor (status_label); status_key só escolhe a cor.
+  const STATUS_TONE = { awaiting_payment: 'tone-warn', payment_failed: 'tone-bad', refunded: 'tone-bad', received: 'tone-info', accepted: 'tone-info', preparing: 'tone-warn', ready: 'tone-ok', awaiting_delivery: 'tone-ok', completed: 'tone-done', cancelled: 'tone-bad' };
+  // v4 U-10: código público -> token de acompanhamento, dos pedidos feitos neste aparelho.
+  function recentTokens() {
+    const m = new Map();
+    try {
+      const list = JSON.parse(localStorage.getItem('dg-recent-orders') || '[]');
+      if (Array.isArray(list)) for (const r of list) if (r && typeof r.public_code === 'string' && typeof r.token === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(r.token) && !m.has(r.public_code)) m.set(r.public_code, r.token);
+    } catch { /* sem lista */ }
+    return m;
+  }
   function orderCard(o) {
-    const tone = STATUS_TONE[o.fulfillment_status] || 'tone-info';
+    const tone = STATUS_TONE[o.status_key] || 'tone-info';
     const head = el('div', { class: 'order-head' },
       el('strong', { class: 'order-code', text: o.public_code || 'Pedido' }),
-      el('span', { class: 'badge ' + tone, text: o.fulfillment_label || '' }));
+      el('span', { class: 'badge ' + tone, text: o.status_label || '' }));
     const meta = el('p', { class: 'order-meta' }, el('span', { text: fmtDate(o.created_at) }), el('span', { text: o.delivery_method === 'pickup' ? 'Retirada' : 'Entrega' }));
+    // v4 N10: encomenda com data marcada (rótulo pronto do servidor).
+    const sched = o.scheduled_label ? el('p', { class: 'order-sched', text: o.scheduled_label }) : null;
     const items = el('ul', { class: 'order-items' }, ...(o.items_summary || []).map(t => el('li', { text: t })));
-    const pay = el('span', { class: 'badge ' + (PAY_TONE[o.payment_label] || 'tone-warn'), text: 'Pagamento: ' + o.payment_label });
     const rows = [el('div', { class: 'order-row' }, el('span', { text: 'Total' }), el('strong', { text: money(o.total_cents) }))];
-    if (o.discount_cents > 0) rows.unshift(el('div', { class: 'order-row sub' }, el('span', { text: `Desconto de pontos (${fmtPoints(o.points_redeemed)} pts)` }), el('span', { text: '- ' + money(o.discount_cents) })));
-    const foot = el('div', { class: 'order-foot' }, pay);
-    // Link de acompanhamento só existe quando o servidor entrega a URL (hoje os pedidos guardam só o hash do token).
-    if (o.tracking_url && /^\/pedido\.html\?t=[0-9a-f]{32}$/.test(o.tracking_url)) foot.append(el('a', { class: 'order-link', href: o.tracking_url, text: 'Acompanhar pedido' }));
-    return el('li', { class: 'order' }, head, meta, items, ...rows, foot);
+    // v4 N6/N3: desconto é do cupom; prêmio do Clube sai de graça (só os pontos). Pedido antigo pode ter desconto de pontos.
+    if (o.coupon_discount_cents > 0) rows.unshift(el('div', { class: 'order-row sub' }, el('span', { text: o.coupon_code ? `Cupom ${o.coupon_code}` : 'Cupom' }), el('span', { text: '- ' + money(o.coupon_discount_cents) })));
+    else if (o.discount_cents > 0 && o.points_redeemed > 0) rows.unshift(el('div', { class: 'order-row sub' }, el('span', { text: `Desconto de pontos (${fmtPoints(o.points_redeemed)} pts)` }), el('span', { text: '- ' + money(o.discount_cents) })));
+    if (o.club_points > 0) rows.unshift(el('div', { class: 'order-row sub' }, el('span', { text: 'Prêmio do Clube' }), el('span', { text: `${fmtPoints(o.club_points)} pontos` })));
+    const foot = el('div', { class: 'order-foot' });
+    // Link de acompanhamento: a URL do servidor quando vier; senão o token guardado neste aparelho (dg-recent-orders) pelo código
+    // do pedido (v4 U-10). O banco guarda só o hash do token, então pedido feito em outro aparelho fica sem link.
+    const recentToken = o.public_code ? recentTokens().get(o.public_code) : null;
+    const trackHref = o.tracking_url && /^\/pedido\.html\?t=[A-Za-z0-9_-]{16,64}$/.test(o.tracking_url) ? o.tracking_url : recentToken ? '/pedido.html?t=' + encodeURIComponent(recentToken) : '';
+    if (trackHref) foot.append(el('a', { class: 'order-link', href: trackHref, text: 'Acompanhar pedido', 'aria-label': `Acompanhar o pedido ${o.public_code || ''}`.trim() }));
+    return el('li', { class: 'order' }, head, meta, sched, items, ...rows, foot);
   }
   async function loadOrders() {
     const status = $('#pedidos-status'), list = $('#pedidos-lista');
@@ -361,24 +377,47 @@
     } catch (e) { status.textContent = e.message; }
   }
 
-  // ---------- U5: pontos ----------
+  // ---------- U5: pontos / v4 N3: Clube ----------
+  const rewardLabel = r => String(r.name || '') + (r.size_name ? ` (${r.size_name})` : '');
+  function renderRewards(cl, p) {
+    const ul = $('#clube-premios');
+    const list = cl && Array.isArray(cl.rewards) ? cl.rewards : [];
+    $('#clube-erro').hidden = !!cl;
+    $('#clube-vazio').hidden = !cl || list.length > 0;
+    const can = list.filter(r => r.can_redeem);
+    const next = list.filter(r => r.available && r.missing_points > 0).sort((a, b) => a.missing_points - b.missing_points)[0];
+    $('#pontos-valor').textContent = can.length ? `Dá para trocar por ${can.length === 1 ? '1 prêmio' : `${can.length} prêmios`} do Clube`
+      : next ? `Faltam ${fmtPoints(next.missing_points)} pontos para ${rewardLabel(next)}` : '';
+    ul.replaceChildren(...list.map(r => {
+      const img = r.image_path && /^\/[A-Za-z0-9/_.%-]+$/.test(r.image_path) ? el('img', { src: r.image_path, alt: '', width: 56, height: 56, loading: 'lazy', decoding: 'async' }) : el('span', { class: 'reward-ph', 'aria-hidden': 'true' });
+      const info = el('div', { class: 'reward-info' }, el('strong', { class: 'reward-name', text: rewardLabel(r) }), el('span', { class: 'reward-cost', text: `${fmtPoints(r.points_cost)} pontos` }));
+      let state;
+      if (r.can_redeem) state = el('span', { class: 'badge tone-ok', text: 'Dá para trocar' });
+      else if (!r.available) state = el('span', { class: 'badge tone-bad', text: 'Indisponível agora' });
+      else if (r.missing_points > 0) {
+        state = el('span', { class: 'reward-miss', text: `Faltam ${fmtPoints(r.missing_points)} pontos` });
+        info.append(el('progress', { class: 'reward-progress', max: r.points_cost, value: Math.max(0, r.points_cost - r.missing_points), 'aria-label': `Progresso para ${rewardLabel(r)}` }));
+      } else state = el('span', { class: 'badge tone-warn', text: p && p.locked_until ? 'Troca bloqueada por 48 h' : 'Troca pausada' });
+      return el('li', { class: 'reward' + (r.can_redeem ? ' is-ready' : '') }, img, info, state);
+    }));
+    if (can.length) ul.append(el('li', { class: 'reward-cta' }, el('a', { class: 'button', href: '/', text: 'Escolher o prêmio no cardápio' })));
+  }
   async function loadPoints() {
     const status = $('#pontos-status'), body = $('#pontos-corpo');
     status.hidden = false; status.textContent = 'Carregando...'; body.hidden = true;
     try {
-      const p = await api('points');
+      // v4 N3: saldo e extrato em ?a=points; prêmios (com o que falta e se dá para trocar) em ?a=club.
+      const [p, cl] = await Promise.all([api('points'), api('club').then(d => d.club).catch(() => null)]);
       $('#pontos-saldo').textContent = fmtPoints(p.balance);
-      const blocks = Math.floor(p.balance / p.block_points);
-      $('#pontos-valor').textContent = blocks > 0 ? `Dá para trocar por ${money(blocks * p.block_value_cents)} de desconto` : `Faltam ${fmtPoints(p.block_points - p.balance)} pontos para o primeiro desconto de ${money(p.block_value_cents)}`;
+      renderRewards(cl, p);
       // Regra em vigor (definida no painel da loja); o servidor confere tudo na hora do pedido.
       const perReal = p.points_per_real === 1 ? '1 ponto' : `${fmtPoints(p.points_per_real)} pontos`;
       $('#pontos-regra-ganho').textContent = `Você ganha ${perReal} a cada R$ 1 em produtos.`;
-      $('#pontos-regra-resgate').textContent = `Cada ${fmtPoints(p.block_points)} pontos valem ${money(p.block_value_cents)} de desconto no pedido.`;
       $('#pontos-pausado').hidden = p.points_enabled !== false;
-      if (p.points_enabled === false) $('#pontos-valor').textContent = 'Uso de pontos pausado no momento';
+      if (p.points_enabled === false) $('#pontos-valor').textContent = 'Clube pausado no momento';
       const lock = $('#pontos-bloqueio');
       lock.hidden = !p.locked_until;
-      if (p.locked_until) lock.textContent = `Por segurança, seus pontos estão bloqueados para uso até ${fmtDate(p.locked_until)}, porque você recuperou o acesso da conta há pouco. Você continua juntando pontos.`;
+      if (p.locked_until) lock.textContent = `Por segurança, a troca de pontos está bloqueada até ${fmtDate(p.locked_until)}, porque você recuperou o acesso da conta há pouco. Você continua juntando pontos.`;
       const res = $('#pontos-reservados');
       res.hidden = !(p.reserved > 0);
       if (p.reserved > 0) res.textContent = `${fmtPoints(p.reserved)} pontos estão reservados em um pedido aguardando pagamento. Se o pedido não for pago, eles voltam sozinhos.`;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Docinhos da Gigi — Feito para adoçar seu dia</title>
+<title>Docinhos da Gigi — Doces artesanais em Osasco, peça online</title>
 <meta name="description" content="Doces artesanais em Osasco/SP: copos da felicidade, geladinhos gourmet, açaí, brigadeiros e sobremesas. Peça pelo site, pague com Pix ou cartão e receba em casa ou retire na loja.">
 <!-- URL provisória: trocar quando houver domínio (canonical, og:url e og:image abaixo) -->
 <link rel="canonical" href="https://docinhos-site.vercel.app/">
@@ -35,6 +35,10 @@
     <span id="account-area" class="account-area"></span>
   </div>
 </div>
+<div id="closed-strip" class="closed-strip" hidden>
+  <p id="closed-strip-text" class="closed-strip-text" role="status"></p>
+  <button type="button" id="closed-strip-btn" class="button secondary closed-strip-btn" hidden>Agendar meu pedido</button>
+</div>
 <header class="hero">
   <a class="hero-link" href="/quem-somos.html">Quem somos</a>
   <div class="hero-badge"><img src="/images/branding/logo.webp" alt="Docinhos da Gigi" class="hero-logo" width="110" height="110"></div>
@@ -45,6 +49,14 @@
     <a class="button wa" data-wa href="https://wa.me/5511987882303?text=Ol%C3%A1!%20Gostaria%20de%20ver%20o%20card%C3%A1pio%20e%20fazer%20um%20pedido." target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12.04 2a9.9 9.9 0 0 0-8.5 14.9L2 22l5.27-1.38A9.9 9.9 0 1 0 12.04 2Zm0 18.1a8.2 8.2 0 0 1-4.18-1.14l-.3-.18-3.13.82.84-3.05-.2-.31A8.2 8.2 0 1 1 12.04 20.1Zm4.5-6.14c-.25-.12-1.46-.72-1.69-.8-.23-.09-.39-.12-.56.12-.16.25-.64.8-.78.97-.14.16-.29.18-.54.06-.25-.12-1.04-.38-1.98-1.22-.73-.65-1.23-1.46-1.37-1.7-.14-.25-.02-.38.1-.5.11-.11.25-.29.37-.43.12-.14.16-.25.25-.41.08-.17.04-.31-.02-.43-.06-.12-.56-1.34-.76-1.84-.2-.48-.4-.42-.56-.42h-.47c-.16 0-.43.06-.65.31-.23.25-.86.84-.86 2.05 0 1.2.88 2.37 1 2.54.12.16 1.72 2.64 4.17 3.7.58.25 1.04.4 1.4.52.58.18 1.12.16 1.54.1.47-.07 1.46-.6 1.66-1.17.21-.58.21-1.07.14-1.17-.06-.1-.23-.16-.48-.29Z"/></svg>Pedir pelo WhatsApp</a>
   </div>
 </header>
+<ul class="trust" id="trust" aria-label="Sobre a loja">
+  <li><strong>Osasco/SP</strong><span>doces artesanais</span></li>
+  <li id="trust-hours" hidden><strong>Hoje</strong><span id="trust-hours-text"></span></li>
+  <li><strong>Pix ou cartão</strong><span>pague aqui no site</span></li>
+  <li id="trust-eta" hidden><strong>Entrega</strong><span id="trust-eta-text"></span></li>
+  <li id="trust-ship" hidden><strong>Frete</strong><span id="trust-ship-text"></span></li>
+  <li data-instagram-item hidden><a data-instagram class="trust-ig" href="#" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".8" fill="currentColor"/></svg><span>Siga no Instagram</span></a></li>
+</ul>
 <nav id="categorias" class="categorias" aria-label="Categorias"></nav>
 <main id="cardapio">
   <div id="status">Carregando cardápio...</div>
@@ -55,6 +67,7 @@
   <span class="footer-note">Peça fácil, receba feliz</span>
   <a class="footer-link" href="/quem-somos.html">Quem somos</a>
   <a class="footer-link" href="/privacidade.html">Privacidade</a>
+  <a class="footer-link footer-ig" data-instagram href="#" target="_blank" rel="noopener noreferrer" hidden><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".8" fill="currentColor"/></svg>Instagram</a>
 </footer>
 
 <button id="cat-fab" class="cat-fab" hidden aria-haspopup="dialog" aria-expanded="false" aria-controls="cat-sheet">
@@ -87,7 +100,7 @@
 
 <div id="product-modal" class="modal" hidden>
   <div class="modal-backdrop" data-close></div>
-  <div class="modal-panel" role="dialog" aria-modal="true">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="pm-name">
     <button class="modal-close" data-close aria-label="Fechar">&times;</button>
     <div id="product-modal-body"></div>
   </div>
@@ -95,12 +108,14 @@
 
 <div id="cart-modal" class="modal" hidden>
   <div class="modal-backdrop" data-close></div>
-  <div class="modal-panel" role="dialog" aria-modal="true">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="cart-title">
     <button class="modal-close" data-close aria-label="Fechar">&times;</button>
-    <h2>Seu carrinho</h2>
+    <h2 id="cart-title">Seu carrinho</h2>
+    <p id="cart-closed" class="store-closed-note" hidden></p>
     <div id="cart-notice" class="cart-notice" role="alert" hidden></div>
     <div id="cart-items"></div>
     <div id="cart-total" class="cart-total"></div>
+    <p id="cart-info" class="cart-info" hidden></p>
     <button id="checkout-btn" class="button primary full">Finalizar pedido</button>
   </div>
 </div>
@@ -111,12 +126,25 @@
     <button class="modal-close" data-close aria-label="Fechar">&times;</button>
     <h2 id="checkout-title">Finalizar pedido</h2>
     <form method="post" id="checkout-form">
+      <p id="store-closed-note" class="store-closed-note" role="alert" hidden></p>
       <label>Seu nome<input name="name" required autocomplete="name" placeholder="Ex.: Maria Souza"></label>
       <label>WhatsApp<input name="phone" required inputmode="tel" placeholder="(11) 90000-0000" autocomplete="tel"></label>
       <fieldset>
         <legend>Entrega ou retirada?</legend>
         <label class="radio"><input type="radio" name="delivery" value="delivery" checked> Entrega</label>
         <label class="radio"><input type="radio" name="delivery" value="pickup"> Retirada</label>
+      </fieldset>
+      <fieldset id="when-field" class="when-field" hidden>
+        <legend>Quando?</legend>
+        <label class="radio"><input type="radio" name="when" value="asap" id="when-asap" checked> <span id="when-asap-text">O quanto antes</span></label>
+        <label class="radio"><input type="radio" name="when" value="schedule" id="when-sched"> Agendar</label>
+        <div id="when-schedule" class="when-schedule" hidden>
+          <div class="field-row">
+            <label>Dia<select id="when-day" name="when_day"></select></label>
+            <label>Horário<select id="when-slot" name="when_slot" aria-describedby="when-status"></select></label>
+          </div>
+          <p id="when-status" class="when-status" role="status" aria-live="polite" hidden></p>
+        </div>
       </fieldset>
       <div id="address-field" class="address-field">
         <label>CEP<input name="cep" required inputmode="numeric" maxlength="9" autocomplete="postal-code" placeholder="00000-000"></label>
@@ -147,32 +175,54 @@
         </label>
       </fieldset>
       <div id="points-box" class="points-box" hidden></div>
+      <div id="coupon-box" class="coupon-box">
+        <label for="coupon-code" class="coupon-label">Cupom de desconto</label>
+        <div class="coupon-row">
+          <input id="coupon-code" name="coupon_ui" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Ex.: GIGI10" aria-describedby="coupon-status">
+          <button type="button" id="coupon-apply" class="button secondary">Aplicar</button>
+        </div>
+        <p id="coupon-status" class="coupon-status" role="status" aria-live="polite" hidden></p>
+        <button type="button" id="coupon-remove" class="link-btn coupon-remove" hidden>Remover cupom</button>
+      </div>
+      <p id="checkout-eta" class="checkout-eta" hidden></p>
       <div id="payment-summary" class="order-summary"></div>
-      <p id="store-closed-note" class="store-closed-note" role="alert" hidden></p>
       <button type="submit" class="button primary full">Enviar pedido</button>
       <p class="checkout-note">Você paga aqui no site, com Pix ou cartão de crédito ou débito. Depois do pagamento, você também pode enviar o pedido para a Gigi pelo WhatsApp.</p>
     </form>
     <div id="payment-step" class="payment-step" hidden>
       <p class="payment-code" id="payment-code-row" hidden>Pedido <strong id="payment-code"></strong></p>
+      <p id="pay-status" class="pay-status" role="status" aria-live="polite" hidden></p>
+      <!-- v4 U-02: valor e botão de copiar no topo; QR recolhido (quem paga no mesmo celular não precisa dele) -->
+      <section id="pix-box" class="pix-box" aria-label="Pagamento por Pix" hidden>
+        <p class="pix-amount" id="pix-amount-row" hidden><span>Valor do Pix</span> <strong id="pix-amount"></strong></p>
+        <button type="button" id="pix-copy" class="button primary full">Copiar código Pix</button>
+        <p id="pix-copy-status" class="pix-copy-status" role="status" aria-live="polite"></p>
+        <p class="pix-instr">Abra o app do seu banco &gt; Pix &gt; Pix Copia e Cola e cole o código.</p>
+        <p id="pix-timer" class="pix-timer"></p>
+        <label class="pix-label" for="pix-code">Código Pix Copia e Cola</label>
+        <textarea id="pix-code" class="pix-code" readonly rows="3" spellcheck="false"></textarea>
+        <details id="pix-qr-box" class="pix-qr-box">
+          <summary>Pagar por outro aparelho (QR Code)</summary>
+          <img id="pix-qr" class="pix-qr" alt="QR Code do Pix" width="220" height="220">
+        </details>
+      </section>
+      <p class="payment-sched" id="pay-sched" hidden></p>
       <p class="payment-text" id="payment-text"></p>
       <div id="pay-summary" class="order-summary" hidden></div>
       <p class="payment-track" id="pay-track" hidden><a id="pay-track-link" href="#">Acompanhar meu pedido</a></p>
-      <p id="pay-status" class="pay-status" role="status" aria-live="polite" hidden></p>
-      <section id="pix-box" class="pix-box" aria-label="Pagamento por Pix" hidden>
-        <p class="pix-instr">Abra o app do seu banco &gt; Pix &gt; Pix Copia e Cola</p>
-        <img id="pix-qr" class="pix-qr" alt="QR Code do Pix" width="220" height="220" hidden>
-        <label class="pix-label" for="pix-code">Código Pix Copia e Cola</label>
-        <textarea id="pix-code" class="pix-code" readonly rows="4" spellcheck="false"></textarea>
-        <button type="button" id="pix-copy" class="button primary full">Copiar código Pix</button>
-        <p id="pix-copy-status" class="pix-copy-status" role="status" aria-live="polite"></p>
-        <p id="pix-timer" class="pix-timer"></p>
-        <p class="pix-wait">Aguardando o pagamento. Esta tela confirma sozinha quando o Pix cair.</p>
-      </section>
       <a id="pay-mp" class="button primary full" href="#" hidden>Pagar com cartão (crédito ou débito)</a>
       <p class="payment-support" id="pay-support" hidden>Você paga com segurança no Mercado Pago</p>
       <button type="button" id="pay-retry" class="button secondary full" hidden>Refazer pedido</button>
       <a id="pay-wa" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Enviar pedido no WhatsApp</a>
       <a id="pay-help" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Falar com a Gigi no WhatsApp</a>
+      <!-- v4 N8: avaliação no Google e Instagram, só quando /api/order-status manda post_payment (pagamento aprovado) -->
+      <section id="pay-thanks" class="post-pay" aria-labelledby="pay-thanks-title" hidden>
+        <h3 id="pay-thanks-title">Obrigada pela preferência!</h3>
+        <p>Sua opinião ajuda muito a Docinhos da Gigi a crescer.</p>
+        <a id="pay-review" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Avaliar no Google</a>
+        <a id="pay-insta" class="button secondary full" href="#" target="_blank" rel="noopener noreferrer" hidden>Seguir no Instagram</a>
+        <button type="button" id="pay-thanks-close" class="link-btn">Agora não</button>
+      </section>
     </div>
   </div>
 </div>

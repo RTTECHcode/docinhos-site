@@ -8,3 +8,15 @@
     a.href = 'https://wa.me/' + number + '?text=' + encodeURIComponent(a.getAttribute('data-wa-text') || DEFAULT);
   });
 })();
+
+// v4 N7: links [data-instagram] recebem o endereço de config.js (window.INSTAGRAM_URL). Sem endereço válido, ficam escondidos
+// (o elemento [data-instagram-item] em volta, se houver, também).
+(function () {
+  var url = String(window.INSTAGRAM_URL || '').trim();
+  var ok = /^https:\/\/(www\.)?instagram\.com\/[A-Za-z0-9_.\/-]+$/.test(url);
+  document.querySelectorAll('[data-instagram]').forEach(function (a) {
+    var box = a.closest('[data-instagram-item]') || a;
+    if (ok) a.href = url;
+    box.hidden = !ok;
+  });
+})();
