@@ -62,7 +62,7 @@ Corpo:
 }
 ```
 
-(Os nomes exatos dos campos de cliente seguem `validateCustomer` em `api/order.js`, inalterado.) `payment_choice`: `"card"` (padrão) ou `"pix"`. `use_points`: inteiro, múltiplo de 100, opcional.
+(Os nomes exatos dos campos de cliente seguem `validateCustomer` em `api/order.js`, inalterado.) `payment_choice`: `"card"` (padrão) ou `"pix"`. `use_points`: inteiro, múltiplo de 100, opcional. **v4: `use_points` foi removido (400 `points_discount_ended`); ver seção 10.**
 
 Sucesso 201:
 
@@ -167,7 +167,7 @@ Objeto de pedido (admin): `id, code, public_code, customer_name, customer_phone,
 - `order_history` GET `?from=AAAA-MM-DD&to=AAAA-MM-DD&f=&s=&page=1&page_size=20` retorna `{ orders, page, page_size, total, total_pages }`: só pedidos com MAIS de 24 h; datas no fuso de São Paulo; `page_size` máximo 100. 400 data inválida.
 - `order_status` POST `{ id, status, reason? }` retorna `{ ok, order: { id, code, public_code, fulfillment_status, fulfillment_label } }`. Só avança (pode pular etapas), nunca volta (409 com mensagem em português); cancelar vale até concluir; pedido concluído ou cancelado não muda mais (409). `delivered` é aceito como `completed`. Cancelar devolve os pontos reservados se o pedido não foi pago. Repetir o mesmo status é aceito sem efeito. 404 pedido inexistente.
 
-#### Sinônimos (O8)
+#### Sinônimos (O8) — REMOVIDO na v4 (ver 10.0 e 10.8)
 
 - `synonyms` GET retorna `{ synonyms: [{ id, canonical, synonym }] }` (sementes: oreo = biscoito oreo, morango = morangos).
 - `synonym_save` POST `{ id?, canonical, synonym }` retorna `{ ok, synonym }`. Sem `id` cria; com `id` edita. 400 curto demais, iguais, duplicado.
@@ -324,3 +324,158 @@ Objeto `address` (entrada e saída): `{ cep, street, number, complement, distric
 - `points_preview` POST (D4): prévia de pontos do carrinho, para visitante e logado. Corpo `{ items: [{ product_id, qty, size_id?, extras?: [{ id, qty }] }], use_points?: inteiro }` (mesmo formato do pedido; preço e adicionais vêm do servidor, valores do cliente são ignorados). Retorna `{ points, enabled, rules: { enabled, points_per_real, block_points, block_value_cents }, subtotal_cents }`. `points` = o que o pedido pago renderia (mesma regra do pedido: `earnPoints(subtotal, desconto)`; frete não conta). `use_points` (múltiplo do bloco) só abate o desconto do resgate no cálculo; não confere saldo; valor inválido é ignorado. Programa de pontos desligado: `{ points: 0, enabled: false, rules, subtotal_cents: null }`. 400 `invalid_items` (carrinho vazio: `O carrinho está vazio.`; mais de 30 itens: `O carrinho tem itens demais (máximo 30).`; produto/tamanho/adicional inexistente ou pausado, quantidade inválida; a mensagem diz o que corrigir). 429 `rate_limited` `Muitas consultas de pontos. Aguarde alguns minutos.`: mais de 120 prévias do mesmo IP em 10 min (escopo próprio `points_preview` em `rate_hits`, vale para todas as instâncias).
 
 Resumo das ações novas de outros endpoints: `GET /api/store?a=cep` (seção 2); no admin, `hours_warning` em `store_hours`, `store_hours_save` e `store_state` (seção 5.1); `pause_default_label` obsoleta.
+
+## 10. v4 (A2, F2)
+
+Vale tudo das seções 0 a 9, com as mudanças abaixo. Esta seção é a fonte para A3 (painel) e A4 (loja). Valores em centavos, datas ISO 8601 UTC, erros `{ error, code }`. Preço, frete, desconto, cupom, pontos e total são SEMPRE do servidor: a tela só mostra.
+
+### 10.0 O que saiu (não usar mais)
+
+- `use_points` em `POST /api/order`: qualquer valor diferente de ausente, `null`, `0` ou `false` = **400 `points_discount_ended`** (`O desconto com pontos foi substituído pelo Clube: troque seus pontos por um prêmio.`). O saldo continua e vale para os prêmios do Clube (10.2).
+- `use_points` em `points_preview` (seção 9): ignorado. A prévia calcula sem desconto e sem cupom.
+- Sinônimos (seção 5.1, "Sinônimos (O8)"): `synonyms`, `synonym_save` e `synonym_delete` foram REMOVIDOS (agora 404 `Ação não encontrada.`). A busca da pausa em lote mudou (10.8).
+- `blockPoints`/`blockValueCents` do bloco `points` do `/api/menu` ficam só por compatibilidade. Não mostrar "desconto por pontos".
+
+### 10.1 Status único do pedido (N1)
+
+Todo objeto de pedido (acompanhamento, "Meus pedidos", painel) ganha `status_key` e `status_label`. A tela mostra `status_label` e usa `status_key` para cor/ícone. Nenhum valor gravado mudou (`payment_status` e `fulfillment_status` continuam).
+
+| `status_key` | `status_label` | Quando |
+|---|---|---|
+| `awaiting_payment` | Aguardando pagamento | preparo `new` e pagamento pendente/sem pagamento |
+| `payment_failed` | Pagamento não concluído | preparo `new` e pagamento `rejected`, `cancelled` ou `expired` |
+| `refunded` | Pagamento estornado | preparo `new` e pagamento `refunded` ou `charged_back` |
+| `received` | Pedido recebido | preparo `new` e pagamento `approved` |
+| `accepted` | Pedido aceito | preparo `accepted` |
+| `preparing` | Em preparo | preparo `preparing` |
+| `ready` | Pronto | preparo `ready` |
+| `awaiting_delivery` | Saiu para entrega (retirada: `Pronto para retirada`) | preparo `awaiting_delivery` |
+| `completed` | Concluído | preparo `completed` (ou `delivered` antigo) |
+| `cancelled` | Cancelado | preparo `cancelled` (vence tudo) |
+
+### 10.2 Clube por prêmios (N3)
+
+**Vitrine pública:** `GET /api/menu` ganha `club`:
+
+```json
+"club": { "enabled": true, "points_per_real": 1,
+  "rewards": [{ "id": 3, "product_id": 80, "name": "Brigadeiro", "size_name": null, "image_path": "/images/...", "points_cost": 60, "max_per_order": 1, "available": true }] }
+```
+
+Só prêmios ligados, dentro da vigência e com produto/categoria ativos. `available: false` = aparece, mas não pode ser trocado agora (produto pausado, tamanho fora, etc.). `enabled: false` = Clube pausado (mostrar aviso, não deixar trocar).
+
+**Conta:** `GET /api/customer?a=club` (logado; 401 `login_required`):
+
+```json
+{ "club": { "balance": 120, "reserved": 0, "locked_until": null, "enabled": true, "points_per_real": 1,
+  "rewards": [{ "...": "mesmos campos da vitrine", "missing_points": 0, "can_redeem": true }] } }
+```
+
+`missing_points` = quanto falta. `can_redeem` = disponível + Clube ligado + sem bloqueio de 48 h + saldo suficiente. `locked_until` (ISO) = troca bloqueada até essa hora (recuperação de conta).
+
+**Pedido:** `POST /api/order` aceita `rewards: [{ "reward_id": 3, "qty": 1 }]` (até 10 linhas, sem repetir `reward_id`, `qty` de 1 a `max_per_order`). O prêmio entra em `items` com `reward: true, reward_id, points_cost, unit_total_cents: 0`. Regras e erros (nessa ordem):
+
+- 400 `invalid_rewards` (formato), `reward_unavailable` (prêmio desligado, fora da vigência, pausado), `reward_max_per_order`.
+- 400 `reward_min_subtotal`: precisa de pelo menos R$ 1,00 em itens PAGOS (só prêmio, ou carrinho vazio com prêmio, é recusado). Mensagem: `Para trocar pontos por um prêmio, o pedido precisa ter pelo menos R$ 1,00 em outros produtos.`
+- 401 `login_required` (prêmio sem sessão).
+- 409 `points_disabled` (Clube pausado).
+- 423 `points_locked` com `locked_until`.
+- 409 `insufficient_points` (saldo menor que a soma dos prêmios). Também quando dois pedidos simultâneos disputam o mesmo saldo: só um passa.
+- Resposta 201 ganha `club_points` (pontos gastos no pedido), `coupon_code`, `coupon_discount_cents`; `points_redeemed` é sempre 0. `items` inclui os prêmios.
+- Ciclo dos pontos: reserva ao criar o pedido (sai do saldo na hora), confirma no pagamento aprovado, devolve se o pagamento falhar/expirar ou se o pedido for cancelado. Cancelar pedido PAGO no painel também devolve (10.7).
+
+**Extrato** (`GET /api/customer?a=points`): novos `kind`: `reward_reserve` (`Prêmio do Clube no pedido DG-1234`), `reward_release` (`Pontos do prêmio devolvidos (pedido DG-1234 não foi pago)`), `reward_commit` (`Prêmio confirmado no pedido DG-1234 (pagamento aprovado)`, 0 pontos). Mostrar `description`.
+
+**Painel (Clube):**
+
+- `club_rewards` GET (qualquer usuário): `{ rewards: [...], rules: { enabled, points_per_real, block_points, block_value_cents } }`. Prêmio do painel: `{ id, product_id, product_name, category_name, size_complement_id, size_name, points_cost, max_per_order, active, starts_at, ends_at, sort_order, state, available, product_paused, product_active, created_at, updated_at }`. `state`: `on`, `off`, `scheduled` (começa depois), `ended` (vigência acabou).
+- `club_reward_save` POST (só admin) `{ id?, product_id, size_complement_id?, points_cost, max_per_order?, active?, starts_at?, ends_at?, sort_order? }` retorna `{ ok, reward }`. Sem `id` cria. `points_cost` 1 a 100000; `max_per_order` 1 a 10 (padrão 1); `sort_order` 0 a 9999; datas ISO ou `AAAA-MM-DD` (dia de São Paulo; fim = 23:59:59); `active` padrão true. Erros 400: `invalid_product`, `invalid_cost`, `invalid_max`, `invalid_date`, `invalid_window`, `required_group` (produto com escolha obrigatória não pode ser prêmio), `size_required` (produto com tamanhos: escolha um), `invalid_size`. 404 `not_found`. Sem apagar: desligue.
+- `club_reward_toggle` POST (só admin) `{ id, active? }` (omitido = inverte) retorna `{ ok, reward }`.
+- Ligar/desligar o Clube e `points_per_real` continuam em `points_get`/`points_save`.
+- No dev há 3 prêmios de exemplo DESLIGADOS.
+
+### 10.3 Cupons (N6)
+
+**Loja:** `POST /api/customer?a=coupon_check` (visitante ou logado) `{ code, items: [...mesmo formato do pedido], rewards?: [...], phone? }` retorna
+
+```json
+{ "ok": true, "coupon": { "code": "GIGI10", "kind": "percent", "value": 10, "stacks_with_club": false, "expires_at": null },
+  "subtotal_cents": 5000, "discount_cents": 500 }
+```
+
+- É só prévia: o pedido valida e reserva de novo. Subtotal recalculado no servidor (itens pagos; prêmio vale R$ 0).
+- Limite por cliente usa o telefone da conta (logado) ou `phone` (visitante, opcional).
+- `kind`: `percent` (`value` = %) ou `fixed` (`value` = centavos). Desconto só nos produtos, nunca no frete; os produtos ficam com pelo menos R$ 1,00.
+- Erros: 400 `invalid_coupon` (`Cupom inválido ou indisponível.`: não existe, desligado, fora da validade), `coupon_min_order`, `coupon_not_stackable` (não acumula com prêmio), `coupon_no_discount`, `invalid_items`; 409 `coupon_exhausted`, `coupon_customer_limit`; 429 `rate_limited` (mais de 20 consultas do mesmo IP em 10 min).
+
+**Pedido:** `POST /api/order` aceita `coupon_code`. Mesmos erros acima (status iguais). A contagem de usos e a reserva acontecem na mesma transação do pedido: com `max_uses` = N, nunca passam N pedidos, mesmo simultâneos. `discount_cents` = desconto do cupom; `coupon_discount_cents` igual; `coupon_code` normalizado (maiúsculas). Uso volta a ficar livre se o pagamento falhar, expirar, 24 h sem pagar ou pedido cancelado.
+
+**Painel (tudo só admin; staff recebe 403):**
+
+- `coupons` GET: `{ coupons: [{ id, code, kind, value, min_order_cents, starts_at, expires_at, max_uses, max_uses_per_customer, active, stacks_with_club, note, created_by, created_at, uses_reserved, uses_committed, discount_committed_cents, state }] }`. `state`: `on`, `off`, `scheduled`, `expired`.
+- `coupon_save` POST `{ id?, code (só ao criar), kind, value, min_order_cents?, starts_at?, expires_at?, max_uses?, max_uses_per_customer?, active?, stacks_with_club?, note? }` retorna `{ ok, coupon }`. `code`: 3 a 20 letras, números ou hífen (vira maiúscula); não muda depois (400 `code_locked`). `value`: percent 1 a 100, fixed 1 a 1.000.000 centavos. Limites vazios = sem limite. Erros 400 `invalid_kind`, `invalid_value`, `invalid_code`, `invalid_field`, `invalid_date`, `invalid_window`; 409 `code_taken`; 404 `not_found`.
+- `coupon_toggle` POST `{ id, active? }` retorna `{ ok, coupon }`.
+- `coupon_audience` POST `{ coupon_id, audience }` retorna `{ ok, audience, count, capped, preview: [{ customer_id, name }] }` (até 10 nomes). `audience`: `{ type: "all" }`, `{ type: "bought_within", days }`, `{ type: "inactive_for", days }` (`days` 1 a 3650), `{ type: "spent_over", cents }`. Só contas com consentimento de WhatsApp ativo. Compras = pagas e não canceladas. 400 `invalid_audience`.
+- `coupon_campaign_create` POST `{ coupon_id, audience }` grava a lista e retorna `{ ok, campaign_id, count, audience, created_at }`. Máximo 5000 clientes.
+- `coupon_campaign` GET `?id=<campanha>` retorna `{ ok, campaign: { id, coupon_id, coupon_code, audience, created_by, created_at }, targets: [{ customer_id, name, phone, message, sent_at, sent_by }] }`. `?coupon_id=<cupom>` (sem `id`) lista: `{ ok, campaigns: [{ id, audience, created_by, created_at, total, sent }] }`. `message` vem pronta; a tela monta o link `https://wa.me/<phone só dígitos>?text=<encodeURIComponent(message)>` e abre num toque (nada é enviado automaticamente).
+- `coupon_target_sent` POST `{ campaign_id, customer_id, sent?: true|false }` retorna `{ ok, sent_at }` (`null` ao desmarcar).
+- Tudo grava `admin_audit`.
+
+### 10.4 Avaliação no Google e mimo (N8)
+
+**Loja:** `GET /api/order-status?t=` ganha `post_payment`: `{ review_url, instagram_url }` só com pagamento aprovado e pedido não cancelado; senão `null`. `review_url` `null` = bloco de avaliação desligado. `instagram_url` `null` = sem botão. **O cliente nunca vê o mimo**: nenhum campo de mimo vai para a loja.
+
+**Painel:**
+
+- Objeto de pedido em `orders` e `order_history` ganha `gift`: `{ id, label }` quando o telefone tem mimo pendente concedido ANTES deste pedido (e não pelo próprio pedido); senão `null`. Mostrar destaque "Mimo: 1 brigadeirinho" no pedido. Ao concluir o pedido (`order_status` -> `completed`, ou conclusão automática), o mimo vira entregue sozinho.
+- `gift_grant` POST `{ order_id }` (qualquer usuário: botão "Cliente avaliou" no pedido) ou `{ phone }` (só admin, tela de clientes). Retorna `{ ok, gift: { id, label, granted_at } }`. Erros: 400 `invalid_order`, `invalid_phone`; 404 `not_found`; 409 `order_cancelled`, `gift_pending` (já tem um pendente: 1 por telefone); 403 staff com `phone`.
+- `gift_cancel` POST `{ id }` (qualquer usuário) retorna `{ ok, gift: { id } }`. 404 `not_found` (não existe ou já entregue/cancelado).
+- `review_gifts` GET (só admin): `{ gifts: [{ id, phone_key, label, granted_by, granted_at, granted_order_id, granted_order_code }] }` (pendentes, até 500).
+- `review_settings` GET (qualquer usuário): `{ review: { google_review_url, review_url_is_default, default_review_url, instagram_url } }`.
+- `review_settings_save` POST (só admin) `{ google_review_url?, instagram_url?, reset_review_url?: true }` retorna `{ ok, review }`. `""` desliga; só `https://` (até 300 caracteres); `reset_review_url: true` volta ao link padrão. Erros 400 `invalid_review_url`, `invalid_instagram_url`, `nothing_to_change`. O link padrão é uma busca da loja no Google Maps (CONFIRMAR com o Renan o link direto "Pedir avaliações").
+- `customers` em `report_customers` traz `gift_status` (`pending`, `delivered`, `cancelled` ou `null`) e `gift_pending_id`.
+
+### 10.5 Relatórios e CSV (N5, S-04) — só admin
+
+- `report_sales` GET `?from=AAAA-MM-DD&to=AAAA-MM-DD` (dias de São Paulo, `to` incluso; padrão: últimos 30 dias; máximo 366). Venda = pagamento `approved` e pedido não cancelado. Retorna `{ report: { from, to, timezone, paid_orders, gross_cents, delivery_fee_cents, discount_cents, coupon_discount_cents, club_points_spent, net_cents, avg_ticket_cents, total_orders, unpaid_orders, unpaid_rate, by_payment: { pix: { orders, net_cents }, card: {...} }, by_delivery: { delivery: {...}, pickup: {...} }, top_products: [{ name, qty, revenue_cents, reward_qty }], by_weekday: [{ weekday (0 = domingo), orders, net_cents }] (7), by_hour: [{ hour, orders, net_cents }] (24), by_day: [{ day, paid_orders, gross_cents, delivery_fee_cents, discount_cents, net_cents }] } }`. `gross` = produtos + frete; `net` = total cobrado; `unpaid_rate` de 0 a 1 (4 casas). `total_orders`/`unpaid_orders` contam todos os pedidos do período. Erros 400 `invalid_date`, `invalid_range`, `range_too_long`.
+- `report_customers` GET `?s=&sort=name|paid_orders|spent|last_order|points&dir=asc|desc&page=1` (padrão `spent desc`, 50 por página). Retorna `{ report: { search, sort, dir, page, page_size, total, total_pages, customers: [{ phone_key, name, phone, customer_id, has_account, paid_orders, spent_cents, last_order_at, last_paid_at, points_balance, whatsapp_consent, gift_status, gift_pending_id }] } }`. Cliente = telefone normalizado (junta visitante e conta). `s` busca nome ou telefone (3+ dígitos).
+- `report_sales_csv` GET `?from=&to=` e `report_customers_csv` GET `?s=&sort=&dir=&pii=1`: resposta NÃO é JSON. `Content-Type: text/csv; charset=utf-8`, `Content-Disposition: attachment; filename="vendas-AAAA-MM-DD-a-AAAA-MM-DD.csv"` / `clientes-AAAA-MM-DD.csv`. Separador `;`, BOM UTF-8, CRLF, toda célula entre aspas, célula que começa com `= + - @` ou tab ganha `'` na frente (contra fórmula no Excel). Clientes: telefone mascarado (`*******8888`) a não ser com `pii=1`; até 10000 linhas. Baixar com `fetch` + `blob()` (o cookie vai junto) ou link direto. Erro vem em JSON normal.
+- Toda consulta grava `admin_audit` `relatorio_consulta`; todo CSV grava `relatorio_csv` (filtros, número de linhas, telefone completo ou mascarado; o termo buscado NÃO é gravado).
+
+### 10.6 Pix reabre e moeda (U-01, S-06)
+
+- `GET /api/order-status?t=` ganha `pix`: `{ qr_code, qr_code_base64, expires_at }` só enquanto o pagamento estiver pendente (`pending`, `in_process`, `authorized`), não vencido e o pedido não cancelado; senão `null`. Usar para reabrir a tela "Falta só pagar o Pix" e o botão "Copiar código Pix". Quando o pagamento sai de pendente, o servidor apaga o código.
+- Pagamento com moeda diferente de BRL (ou sem moeda) nunca confirma o pedido.
+
+### 10.7 Painel: pedidos, login e saúde (A-10, S-01, O-01)
+
+- Objeto de pedido do painel ganha `status_key`, `status_label`, `club_points`, `coupon_code`, `coupon_discount_cents`, `gift`. Prêmio aparece em `items` com `reward: true` (mostrar "Prêmio do Clube").
+- `order_status` cancelar pedido JÁ PAGO: pontos ganhos estornados (`reversal`), pontos do prêmio devolvidos, uso do cupom liberado, Pix apagado. O dinheiro continua sendo estornado à mão no Mercado Pago (a tela deve lembrar disso). Auditoria `pedido_status` com `(pontos estornados)`.
+- Login em produção: senha certa com menos de 8 caracteres = 403 `weak_password_blocked` (`Sua senha é curta demais para entrar. Use "Esqueci minha senha" para criar uma nova com 8 caracteres ou mais.`), sem sessão. A tela deve mostrar a mensagem e o link de recuperação. Dev não bloqueia.
+- Teto diário: 50 senhas erradas de um usuário em 24 h (somando todos os IPs, inclusive o conhecido) travam o login desse usuário: 429 `Muitas tentativas. Tente mais tarde.`. Aviso em `admin_audit` `login_teto_diario` (1 por usuário a cada 24 h).
+- `GET /api/health` (público, sem login): 200 ou 503, `{ ok, checks: { database, mercadopago_token, mercadopago_webhook_secret, webhook_no_401_24h } }` (só sim/não, nunca valor). `no-store`. Serve para o UptimeRobot.
+- `health_detail` GET (qualquer usuário): `{ health: { ok, checks, last_accepted_at, last_unauthorized_at, unauthorized_24h, accepted_24h } }`. A3: mostrar aviso no painel quando `unauthorized_24h > 0` ("O Mercado Pago tentou avisar pagamentos e foi recusado: confira a chave do webhook").
+
+### 10.8 Busca da pausa em lote (N4)
+
+`pause_preview` e `pause_apply`: sem sinônimos. Ignora acento e maiúsculas, tolera plural e procura o termo DENTRO do nome/descrição, a partir do começo de uma palavra: `oreo` acha "Biscoito Oreo", `morangos` acha "Morango", `choco` acha "Chocolate"; `ovo` não acha "novo". Formato de entrada e saída inalterado. A tela de sinônimos sai.
+
+### 10.9 Web Push de pedido pago (U-06) — PWA do painel
+
+Desligado sem as variáveis `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (sem erro). O Renan gera com `node scripts/gerar-vapid.js` e cadastra na Vercel.
+
+- `push_config` GET (qualquer usuário): `{ push: { enabled, public_key, devices } }`. `public_key` (base64url) vai em `pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: <public_key convertida para Uint8Array> })`. `enabled: false` = esconder o botão "Ativar avisos".
+- `push_subscribe` POST `{ subscription: <PushSubscription.toJSON()> }` (`{ endpoint, keys: { p256dh, auth } }`) retorna `{ ok, device: { id, created_at }, devices }`. Erros: 409 `push_disabled`, 409 `push_limit` (10 aparelhos por usuário), 400 `invalid_subscription`, 400 `unsupported_push_service` (só serviços de push do Chrome/Edge/Firefox/Safari). Repetir é seguro (atualiza).
+- `push_unsubscribe` POST `{ endpoint }` retorna `{ ok, removed, devices }` (só o próprio aparelho; admin pode remover qualquer um). Chamar também ao desligar no aparelho.
+- `push_test` POST `{}` manda "Teste de notificação" para os aparelhos do próprio usuário: `{ ok, sent, failed, removed }`. 409 `push_disabled`, 409 `no_subscription`.
+- Envio automático: quando o pagamento é confirmado (webhook ou conferência), UMA vez por pedido, para todos os aparelhos inscritos. Só pedidos criados nas últimas 24 h e não cancelados.
+- Conteúdo (JSON cifrado, lido no `push` do service worker com `event.data.json()`): `{ title: "Pedido DG-1234 pago", body: "R$ 45,90", tag: "pedido-DG-1234", url: "/admin/#pedidos" }`. Nenhum dado pessoal. O service worker mostra `showNotification(title, { body, tag, data: { url } })` e no `notificationclick` abre/foca `url`.
+- Aparelho que o navegador derrubou (404/410) ou que falhou 5 vezes seguidas é apagado sozinho.
+
+### 10.10 Endereço do site (A-05)
+
+Variável `SITE_URL` (só `https://`; `http://localhost` no dev). Sem ela: `https://docinhos-site.vercel.app`. Usada nos links de volta do Mercado Pago, no webhook e na mensagem do cupom.
+
+### 10.11 Banco (v4)
+
+Migração `scripts/migrate-2026-11-12-v4-schema.js` (aditiva, idempotente; `schema.sql` espelhado e sobe em banco vazio): `club_rewards`, `coupons`, `coupon_redemptions`, `coupon_campaigns`, `coupon_campaign_targets`, `review_gifts`, `webhook_events`, `admin_push_subscriptions`; em `orders`: `club_points`, `coupon_id`, `coupon_code`, `coupon_discount_cents`, `pix_qr_code`, `pix_qr_base64`, `pix_expires_at`, `push_notified_at`; índice parcial `orders_paid_created_idx`; CHECK do ledger com `reward_*`. Prêmios de exemplo (só dev): `scripts/migrate-2026-11-12-v4-club-seed.js`. `ingredient_synonyms` fica no banco, sem uso.
