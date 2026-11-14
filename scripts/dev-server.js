@@ -9,11 +9,17 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.argv[2] || process.env.PORT || 3000);
 
+// F3: + .webmanifest e .wav (PWA e som do painel), .avif (fotos do cardápio), .txt e .xml (robots e sitemap), .woff, .gif, .mp3.
+// scripts/test-dev-server-mime.js confere que toda extensão de public/ tem tipo aqui.
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
-  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2'
+  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json', '.wav': 'audio/wav', '.avif': 'image/avif',
+  '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8',
+  '.woff': 'font/woff', '.gif': 'image/gif', '.mp3': 'audio/mpeg'
 };
+const mimeOf = file => MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
 
 const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 function applyHeaders(res, urlPath) {
@@ -84,11 +90,14 @@ function handleStatic(req, res, url) {
   if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
   else if (!fs.existsSync(file) && fs.existsSync(file + '.html')) file += '.html';
   if (!fs.existsSync(file)) { res.statusCode = 404; return res.end('Not found'); }
-  res.setHeader('Content-Type', MIME[path.extname(file).toLowerCase()] || 'application/octet-stream');
+  res.setHeader('Content-Type', mimeOf(file));
   res.setHeader('Cache-Control', 'no-store');
   fs.createReadStream(file).pipe(res);
 }
 
+module.exports = { MIME, mimeOf };
+// Importado (teste do MIME): não sobe o servidor nem lê o .env.dev.
+if (require.main === module) {
 const { loaded } = require('./dev-env');
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -98,3 +107,4 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
   console.log(`dev-server em http://localhost:${PORT} (variáveis de .env.dev: ${loaded.join(', ') || 'nenhuma'})`);
 });
+}

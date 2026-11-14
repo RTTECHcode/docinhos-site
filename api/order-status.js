@@ -1,15 +1,18 @@
-// GET /api/order-status?t=<token de rastreio>  ->  status público do pedido (sem telefone nem endereço).
+// GET /api/order-status?t=<token de rastreio>  ->  status público do pedido (sem telefone nem endereço completo).
 //   v4: + status_key/status_label (N1), pix (U-01, só pendente e não vencido) e post_payment (N8, só pago).
+//   F3: + items (nome, tamanho, quantidade) e address_summary (entrega: só bairro e cidade; retirada: endereço da loja).
+// GET /api/order-status?o=<id>  ->  o mesmo, para o link de "Meus pedidos" (só com a sessão do dono do pedido).
 // GET /api/order-status?code=DGxxxxxxxxxx      ->  formato antigo: { code, payment_status } (mantido).
 // O DG-#### (public_code) NÃO serve de chave de consulta: tem só 9000 combinações e seria adivinhável.
 // Conferência de reserva (W3): se o pagamento ainda está pendente, o pedido tem menos de 2 h e a última conferência
 // desse pedido foi há mais de ~30 s, consulta o Mercado Pago e aplica o resultado (mesmas regras do webhook).
 // Assim a tela do cliente muda sozinha mesmo quando o aviso do Mercado Pago não chega.
 const CODE_RE = /^DG[0-9A-F]{10}$/;
-const { TRACKING_RE, hashTrackingToken, trackingView, TRACKING_COLUMNS, sweepOrders } = require('./_lib/orders');
+const { TRACKING_RE, hashTrackingToken, trackingView, TRACKING_COLUMNS, sweepOrders, publicItems, addressSummary, storeAddress } = require('./_lib/orders');
 const { clientIp } = require('./_lib/auth');
 const { hitExceeded } = require('./_lib/rate-limit');
 const payments = require('./_lib/payments');
+const customerLib = require('./_lib/customer');
 const gifts = require('./_lib/gifts');
 
 // A1-12: limite por IP, guardado no banco (tabela rate_hits, vale para todas as instâncias da Vercel).
@@ -62,20 +65,35 @@ module.exports = async (req, res) => {
   const query = req.query || {};
   const token = typeof query.t === 'string' ? query.t : '';
   const code = typeof query.code === 'string' ? query.code : '';
+  const orderRef = typeof query.o === 'string' ? query.o : '';
   const notFound = () => res.status(404).json({ error: 'Pedido não encontrado' });
   try {
     const sql = require('./_lib/db');
     // Limite antes de qualquer consulta ao pedido. Toda chamada conta (até 404 e as já barradas).
     if (await throttled(sql, clientIp(req))) return res.status(429).json({ error: MSG_RATE_LIMITED, code: 'rate_limited' });
-    if (token) {
-      if (!TRACKING_RE.test(token)) return notFound();
-      const [found] = await sql.query('select id from orders where tracking_token_hash = $1', [hashTrackingToken(token)]);
+    if (token || orderRef) {
+      let found;
+      if (token) {
+        if (!TRACKING_RE.test(token)) return notFound();
+        [found] = await sql.query('select id from orders where tracking_token_hash = $1', [hashTrackingToken(token)]);
+      } else {
+        // F3: link de "Meus pedidos" (?o=<id>): só com a sessão do próprio cliente. Pedido de outro cliente = 404.
+        if (!/^[1-9]\d{0,9}$/.test(orderRef)) return notFound();
+        const session = await customerLib.getSession(sql, req);
+        if (!session) return res.status(401).json({ error: 'Entre na sua conta para ver este pedido.', code: 'login_required' });
+        [found] = await sql.query('select id from orders where id = $1 and customer_id = $2', [Number(orderRef), session.customer.id]);
+      }
       if (!found) return notFound();
       await backupCheck(sql, found.id);
       await sweepOrders(sql, { id: found.id }); // pronto há mais de 1 h vira concluído (sem cron)
-      const [row] = await sql.query(`select ${TRACKING_COLUMNS}, pix_qr_code, pix_qr_base64, pix_expires_at from orders where id = $1`, [found.id]);
+      const [row] = await sql.query(`select ${TRACKING_COLUMNS}, pix_qr_code, pix_qr_base64, pix_expires_at, items, address_district, address_city
+                                       from orders where id = $1`, [found.id]);
       // pix (U-01) e post_payment (N8: avaliação no Google e Instagram, só com pagamento aprovado) vêm sempre: null quando não valem.
-      return res.status(200).json({ ...trackingView(row), pix: pixView(row), post_payment: await gifts.postPayment(sql, row) });
+      return res.status(200).json({
+        ...trackingView(row), items: publicItems(row.items),
+        address_summary: addressSummary(row, row.delivery_method === 'pickup' ? await storeAddress(sql) : undefined),
+        pix: pixView(row), post_payment: await gifts.postPayment(sql, row)
+      });
     }
     if (!CODE_RE.test(code)) return notFound();
     const [found] = await sql.query('select id from orders where code = $1', [code]);

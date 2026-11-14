@@ -50,7 +50,9 @@ const moneyBR = cents => 'R$ ' + (cents / 100).toFixed(2).replace('.', ',');
 // Quanto do valor gasto volta em desconto (em %). Padrão: 1 ponto por R$ 1 e 100 pontos = R$ 10 -> 10%.
 const returnPct = r => (r.points_per_real * r.block_value_cents) / r.block_points;
 
-function validateRules(input) {
+// checkReturn: confere o teto de retorno do desconto antigo (block_*). getRules não confere (F3): o desconto em reais acabou
+// na v4 e um ganho alto (ex.: 10 pt/R$ 1) com o block_* antigo não pode derrubar a regra inteira para o padrão.
+function validateRules(input, { checkReturn = true } = {}) {
   const err = message => { throw new LoyaltyError(400, message, 'invalid_rules'); };
   if (!input || typeof input !== 'object' || Array.isArray(input)) err('Regra de pontos inválida.');
   if (typeof input.enabled !== 'boolean') err('Informe se o programa de pontos está ligado ou desligado.');
@@ -68,7 +70,7 @@ function validateRules(input) {
   if (!Number.isInteger(out.block_value_cents) || out.block_value_cents < vmin || out.block_value_cents > vmax) {
     err(`Desconto por resgate: informe um valor de ${moneyBR(vmin)} a ${moneyBR(vmax)}.`);
   }
-  if (returnPct(out) > RULE_LIMITS.max_return_pct) {
+  if (checkReturn && returnPct(out) > RULE_LIMITS.max_return_pct) {
     err(`Com essa regra o cliente receberia mais de ${RULE_LIMITS.max_return_pct}% do valor gasto de volta em desconto. Aumente os pontos por resgate ou diminua o desconto.`);
   }
   return out;
@@ -86,8 +88,27 @@ async function getRules(sql) {
       points_per_real: num(RULE_KEYS.points_per_real, DEFAULT_RULES.points_per_real),
       block_points: num(RULE_KEYS.block_points, DEFAULT_RULES.block_points),
       block_value_cents: num(RULE_KEYS.block_value_cents, DEFAULT_RULES.block_value_cents)
-    });
+    }, { checkReturn: false });
   } catch { return { ...DEFAULT_RULES }; }
+}
+
+// F3 (v4): o que vale agora no painel: Clube ligado/desligado e pontos ganhos por R$ 1,00. Os campos block_* (desconto em
+// reais, fim na v4 N3) não são aceitos nem gravados: as chaves antigas ficam como estão (servem só aos pedidos antigos).
+function validateEarnRules(input) {
+  const err = message => { throw new LoyaltyError(400, message, 'invalid_rules'); };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) err('Regra de pontos inválida.');
+  if (typeof input.enabled !== 'boolean') err('Informe se o Clube está ligado ou desligado.');
+  const [min, max] = RULE_LIMITS.points_per_real;
+  const v = input.points_per_real;
+  if (!Number.isInteger(v) || v < min || v > max) err(`Pontos por R$ 1,00 gasto: informe um número inteiro de ${min} a ${max}.`);
+  return { enabled: input.enabled, points_per_real: v };
+}
+async function saveEarnRules(sql, input) {
+  const r = validateEarnRules(input);
+  await sql.query(
+    `insert into settings (key, value) values ($1, $2), ($3, $4) on conflict (key) do update set value = excluded.value`,
+    [RULE_KEYS.enabled, r.enabled ? '1' : '0', RULE_KEYS.points_per_real, String(r.points_per_real)]);
+  return getRules(sql);
 }
 
 // Grava as 4 chaves numa instrução só (tudo ou nada). Lança LoyaltyError 400 se a regra for inválida.
@@ -297,7 +318,7 @@ async function adjust(sql, { customerId, points, note }) {
 
 module.exports = {
   BLOCK_POINTS, BLOCK_CENTS, MIN_CHARGE_CENTS, KINDS, LOCK_POINTS, LOCK_COUPON, LoyaltyError,
-  DEFAULT_RULES, RULE_KEYS, RULE_LIMITS, validateRules, getRules, saveRules,
+  DEFAULT_RULES, RULE_KEYS, RULE_LIMITS, validateRules, getRules, saveRules, validateEarnRules, saveEarnRules,
   earnPoints, discountForPoints, maxRedeemablePoints, validateRedemption,
   releaseStaleReserves, getBalance, listLedger, reserve, releaseReserve, reverseOrder, onPaymentStatus, adjust
 };

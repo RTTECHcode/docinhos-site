@@ -438,5 +438,10 @@ alter table orders add column if not exists push_notified_at timestamptz;
 -- Encomenda com data marcada (N10): null = o quanto antes. Índice parcial para contar as vagas de cada janela.
 alter table orders add column if not exists scheduled_for timestamptz;
 create index if not exists orders_scheduled_for_idx on orders (scheduled_for) where scheduled_for is not null;
+-- Novo pagamento do mesmo pedido (F3, retry_payment): quando foi gerado. Aviso não aprovado de pagamento mais antigo é ignorado.
+alter table orders add column if not exists payment_attempt_at timestamptz;
+-- Bairro e cidade do CEP (ViaCEP, no servidor) para o rastreio resumido (F3). Sem rua, número ou complemento.
+alter table orders add column if not exists address_district text;
+alter table orders add column if not exists address_city text;
 -- Chaves opcionais em settings: 'google_review_url' (ausente = link padrão, vazia = bloco de avaliação desligado, só https://)
 -- e 'instagram_url' (ausente ou vazia = sem botão do Instagram no pós-pagamento, só https://).

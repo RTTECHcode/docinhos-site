@@ -115,6 +115,29 @@ async function changeStatus(sql, { id, to, reason }) {
 const iso = v => (v ? new Date(v).toISOString() : null);
 const { scheduledLabel } = require('./scheduling');
 
+// Endereço da loja gravado nos pedidos de retirada ("pickup") e mostrado no rastreio. O painel pode trocar (settings.store_address).
+const STORE_ADDRESS = 'Manoel Hare Peralta, 101';
+async function storeAddress(sql) {
+  const [r] = await sql.query(`select value from settings where key = 'store_address'`);
+  return (r && r.value) || STORE_ADDRESS;
+}
+
+// F3: itens do pedido no rastreio público: só nome, tamanho e quantidade (sem preço, complemento ou id).
+function publicItems(items) {
+  const list = Array.isArray(items) ? items.slice(0, 30) : [];
+  return list.filter(i => i && typeof i === 'object').map(i => ({
+    name: String(i.name || 'Item').slice(0, 80), size: i.size ? String(i.size).slice(0, 40) : null,
+    qty: Number.isInteger(i.qty) && i.qty > 0 ? i.qty : 1, reward: !!i.reward
+  }));
+}
+// F3: endereço resumido do rastreio. Entrega: só bairro e cidade (do CEP, gravados no pedido; nunca rua, número ou
+// complemento; pedido antigo sem esses campos = null). Retirada: o endereço da loja.
+function addressSummary(row, storeAddr = STORE_ADDRESS) {
+  if (!row) return null;
+  if (row.delivery_method === 'pickup') return storeAddr;
+  return [row.address_district, row.address_city].filter(v => typeof v === 'string' && v.trim()).map(v => v.trim()).join(', ') || null;
+}
+
 // Visão pública (rastreio): nunca telefone nem endereço.
 function trackingView(row) {
   const status = normalizeStatus(row.fulfillment_status);
@@ -163,5 +186,5 @@ function adminView(row) {
 module.exports = {
   OrderError, PUBLIC_CODE_RE, PUBLIC_CODE_WINDOW, newPublicCode, TRACKING_RE, newTrackingToken, hashTrackingToken,
   FLOW, STATUSES, LABELS, TS_COLUMN, normalizeStatus, statusLabel, displayStatus, DISPLAY_LABELS, checkTransition, sweepOrders, changeStatus,
-  trackingView, TRACKING_COLUMNS, ADMIN_COLUMNS, adminView
+  trackingView, TRACKING_COLUMNS, ADMIN_COLUMNS, adminView, STORE_ADDRESS, storeAddress, publicItems, addressSummary
 };

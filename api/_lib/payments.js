@@ -53,6 +53,15 @@ function paymentMethodOf(pay) {
   return pay && pay.payment_method_id === 'pix' ? 'pix' : 'mercadopago_card';
 }
 
+// F3: pagamento criado antes do último retry_payment (folga de 2 s para o relógio do Mercado Pago). Sem data: não é ignorado.
+const SUPERSEDED_SKEW_MS = 2000;
+function isSuperseded(pay, order) {
+  if (!pay || pay.status === 'approved' || !order || !order.payment_attempt_at || !pay.date_created) return false;
+  const created = Date.parse(pay.date_created);
+  if (!Number.isFinite(created)) return false;
+  return created < new Date(order.payment_attempt_at).getTime() - SUPERSEDED_SKEW_MS;
+}
+
 // Grava no máximo um aviso por pedido + pagamento (o Mercado Pago reenvia a mesma notificação várias vezes).
 const CANCELLED_PAID_ACTION = 'pagamento_apos_cancelamento';
 async function noteCancelledPaid(sql, orderId, paymentId) {
@@ -86,7 +95,7 @@ async function clearPix(sql, orderId) {
 async function syncPayment(sql, pay, { source = 'webhook' } = {}) {
   const code = pay && pay.external_reference;
   if (!code || !pay.status || !pay.id) return { outcome: 'invalid' };
-  const [order] = await sql.query('select id, total_cents from orders where code = $1', [String(code)]);
+  const [order] = await sql.query('select id, total_cents, payment_attempt_at from orders where code = $1', [String(code)]);
   if (!order) return { outcome: 'no_order' };
 
   // Só confirma se moeda e valor pago batem com o total gravado no servidor.
@@ -99,6 +108,10 @@ async function syncPayment(sql, pay, { source = 'webhook' } = {}) {
     console.error(`[${source}] Valor do pagamento diferente do pedido`, code, pay.id);
     return { outcome: 'amount_mismatch', order_id: order.id };
   }
+
+  // F3 (retry_payment): depois de um novo pagamento, aviso não aprovado de pagamento criado antes dele é ignorado (o Pix antigo
+  // vencido não pode marcar como cancelado o pedido que tem um Pix novo em aberto). Aprovado vale sempre.
+  if (isSuperseded(pay, order)) return { outcome: 'stale', order_id: order.id, payment_id: String(pay.id) };
 
   // Idempotente: só grava se algo mudou; um pagamento recusado não sobrescreve um já aprovado.
   const changed = await sql.query(
@@ -144,5 +157,5 @@ async function checkOrderPayment(sql, order, { source = 'check', timeoutMs } = {
 
 module.exports = {
   PaymentLookupError, MP_API, mpGet, fetchPayment, searchPaymentsByReference, pickPayment, paymentMethodOf,
-  CANCELLED_PAID_ACTION, noteCancelledPaid, syncPayment, checkOrderPayment, PENDING_STATUSES, clearPix
+  CANCELLED_PAID_ACTION, noteCancelledPaid, isSuperseded, syncPayment, checkOrderPayment, PENDING_STATUSES, clearPix
 };

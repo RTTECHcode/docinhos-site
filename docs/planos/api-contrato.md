@@ -391,7 +391,7 @@ Só prêmios ligados, dentro da vigência e com produto/categoria ativos. `avail
 - `club_rewards` GET (qualquer usuário): `{ rewards: [...], rules: { enabled, points_per_real, block_points, block_value_cents } }`. Prêmio do painel: `{ id, product_id, product_name, category_name, size_complement_id, size_name, points_cost, max_per_order, active, starts_at, ends_at, sort_order, state, available, product_paused, product_active, created_at, updated_at }`. `state`: `on`, `off`, `scheduled` (começa depois), `ended` (vigência acabou).
 - `club_reward_save` POST (só admin) `{ id?, product_id, size_complement_id?, points_cost, max_per_order?, active?, starts_at?, ends_at?, sort_order? }` retorna `{ ok, reward }`. Sem `id` cria. `points_cost` 1 a 100000; `max_per_order` 1 a 10 (padrão 1); `sort_order` 0 a 9999; datas ISO ou `AAAA-MM-DD` (dia de São Paulo; fim = 23:59:59); `active` padrão true. Erros 400: `invalid_product`, `invalid_cost`, `invalid_max`, `invalid_date`, `invalid_window`, `required_group` (produto com escolha obrigatória não pode ser prêmio), `size_required` (produto com tamanhos: escolha um), `invalid_size`. 404 `not_found`. Sem apagar: desligue.
 - `club_reward_toggle` POST (só admin) `{ id, active? }` (omitido = inverte) retorna `{ ok, reward }`.
-- Ligar/desligar o Clube e `points_per_real` continuam em `points_get`/`points_save`.
+- Ligar/desligar o Clube e `points_per_real` continuam em `points_get`/`points_save` (F3: `points_save` aceita só esses dois campos; ver 10.14).
 - No dev há 3 prêmios de exemplo DESLIGADOS.
 
 ### 10.3 Cupons (N6)
@@ -478,7 +478,7 @@ Variável `SITE_URL` (só `https://`; `http://localhost` no dev). Sem ela: `http
 
 ### 10.11 Banco (v4)
 
-Migração `scripts/migrate-2026-11-12-v4-schema.js` (aditiva, idempotente; `schema.sql` espelhado e sobe em banco vazio): `club_rewards`, `coupons`, `coupon_redemptions`, `coupon_campaigns`, `coupon_campaign_targets`, `review_gifts`, `webhook_events`, `admin_push_subscriptions`; em `orders`: `club_points`, `coupon_id`, `coupon_code`, `coupon_discount_cents`, `pix_qr_code`, `pix_qr_base64`, `pix_expires_at`, `push_notified_at`, `scheduled_for` (N10); índices parciais `orders_paid_created_idx` e `orders_scheduled_for_idx`; CHECK do ledger com `reward_*`. Prêmios de exemplo (só dev): `scripts/migrate-2026-11-12-v4-club-seed.js`. `ingredient_synonyms` fica no banco, sem uso.
+Migração `scripts/migrate-2026-11-12-v4-schema.js` (aditiva, idempotente; `schema.sql` espelhado e sobe em banco vazio): `club_rewards`, `coupons`, `coupon_redemptions`, `coupon_campaigns`, `coupon_campaign_targets`, `review_gifts`, `webhook_events`, `admin_push_subscriptions`; em `orders`: `club_points`, `coupon_id`, `coupon_code`, `coupon_discount_cents`, `pix_qr_code`, `pix_qr_base64`, `pix_expires_at`, `push_notified_at`, `scheduled_for` (N10), `payment_attempt_at`, `address_district` e `address_city` (F3, 10.14); índices parciais `orders_paid_created_idx` e `orders_scheduled_for_idx`; CHECK do ledger com `reward_*`. Prêmios de exemplo (só dev): `scripts/migrate-2026-11-12-v4-club-seed.js`. `ingredient_synonyms` fica no banco, sem uso.
 
 ### 10.12 Encomenda com data marcada (N10)
 
@@ -545,3 +545,60 @@ Resposta: `{ settings: { ...campos acima, limits: { scheduling_min_lead_min: [0,
 - `GET /api/menu`: todo produto ganha `best_seller` (boolean). `true` nos até 3 produtos ativos com mais unidades vendidas nos últimos 30 dias, em pedidos pagos (`approved`) e não cancelados, com no mínimo 5 unidades cada. Prêmios do Clube não contam. Empate: menor id. `best_seller_enabled = false` = todos `false`. Sem dado pessoal.
 - `GET /api/menu`: `delivery_eta_min` e `delivery_eta_max` (minutos, padrão 30 e 50). Só informativos. A4 mostra "Entrega em 30 a 50 min".
 - Ajustes no painel: `order_settings` / `order_settings_save` (10.12).
+
+### 10.14 Rodada F3: novo pagamento, link da conta, rastreio com itens, MIME e regra de pontos
+
+**Novo pagamento do mesmo pedido: `POST /api/order?a=retry_payment`** (mesmas exigências do pedido: mesma origem e corpo JSON; senão 403/415).
+
+- Corpo: `{ t: "<token de rastreio>", payment_choice?: "pix" | "card" }` ou, na conta, `{ o: <id do pedido>, payment_choice? }` com a sessão do dono. Sem `payment_choice`: o método atual (Pix continua Pix; cartão ou nada vira cartão). Pode trocar entre Pix e cartão.
+- Não recalcula nada: total, itens, frete, desconto e as reservas (prêmio do Clube, cupom e vaga agendada) continuam as do pedido. Nada é reservado de novo.
+- Antes de gerar, confere no Mercado Pago (o cliente pode ter acabado de pagar).
+- 200: `{ public_code, total_cents, payment_choice, payment }`. `payment` igual ao da criação: Pix `{ type: "pix", id, qr_code, qr_code_base64, expires_at }` ou cartão `{ type: "card", url, id }`. O Pix novo fica guardado (10.6, U-01) e aparece em `order-status`. Trocar para cartão apaga o Pix guardado.
+- A volta do cartão vai para `/pedido.html?t=<token>&pagamento=ok|pendente` (ou `?o=<id>` quando veio da conta).
+- Erros:
+
+| Status | `code` | Quando |
+|---|---|---|
+| 400 | (sem code) | `payment_choice` diferente de `pix` e `card` |
+| 401 | `login_required` | `{ o }` sem sessão |
+| 404 | `order_not_found` | token inválido ou pedido de outro cliente |
+| 404 | `unknown_action` | `?a=` diferente de `retry_payment` |
+| 409 | `already_paid` | pagamento aprovado, estornado ou contestado |
+| 409 | `order_cancelled` | pedido cancelado |
+| 409 | `retry_expired` | pedido criado há 24 h ou mais |
+| 409 | `payment_in_process` | cartão em análise (`in_process`, `authorized`): outro pagamento cobraria duas vezes |
+| 409 | `schedule_passed` | a data marcada já passou |
+| 409 | `reservation_released` | o prêmio do Clube ou o cupom já foi devolvido (pagamento recusado ou vencido). Fazer pedido novo |
+| 409 | `slot_full` | o pedido agendado já não segurava a vaga (pendente há mais de 60 min) e a janela lotou |
+| 429 | `rate_limited` | mais de 10 por IP ou 3 por pedido em 10 min |
+| 502 | `payment_unavailable` | o Mercado Pago falhou |
+| 503 | `payment_unavailable` | pagamento on-line desligado no servidor |
+
+- Aviso atrasado do pagamento antigo: depois de um novo pagamento (`orders.payment_attempt_at`), aviso não aprovado de pagamento criado antes dele é ignorado (`payment_check` do painel responde `outcome: "stale"`). Assim o Pix antigo vencido não cancela o novo. Pagamento aprovado vale sempre.
+
+**Link em "Meus pedidos"** (`GET /api/customer?a=orders`): cada pedido traz `tracking_url: "/pedido.html?o=<id>"`.
+
+- O banco guarda só o SHA-256 do token de rastreio, então o token não pode voltar. O link usa o id interno e só abre com a sessão do dono.
+- `GET /api/order-status?o=<id>`: mesma resposta do `?t=`. Sem sessão: 401 `login_required` (a página pede para entrar na conta). Pedido de outro cliente ou id inválido: 404.
+- A4: em `pedido.html`, ler `?o=` além de `?t=` e chamar `/api/order-status?o=<id>` (o fetch na mesma origem já manda o cookie). O "pagar de novo" nessa página manda `{ o }` no lugar de `{ t }`.
+
+**Rastreio com itens e endereço resumido** (`GET /api/order-status?t=` e `?o=`):
+
+- `items`: `[{ name, size, qty, reward }]`. Só nome, tamanho (ou `null`), quantidade e se é prêmio do Clube. Sem preço, complemento ou id. No máximo 30.
+- `address_summary`: texto ou `null`.
+  - Entrega: só `"Bairro, Cidade"`, vindos do CEP (ViaCEP, no servidor) e gravados no pedido. Nunca rua, número ou complemento.
+  - Pedido antigo (antes da F3) ou CEP sem bairro e cidade: `null`. O texto livre do endereço nunca é recortado.
+  - Retirada: o endereço da loja (`store_address` do painel).
+
+**Servidor local** (`scripts/dev-server.js`): `.webmanifest` = `application/manifest+json`, `.wav` = `audio/wav`, `.avif` = `image/avif`, `.txt` = `text/plain`, `.xml` = `application/xml`, além de `.woff`, `.gif` e `.mp3`. Só o servidor de desenvolvimento; a Vercel serve pelos próprios tipos.
+
+**Regra de pontos no painel** (`POST points_save`, só admin):
+
+- Corpo: `{ enabled: boolean, points_per_real: 1 a 10 }`. Grava só essas duas chaves.
+- `block_points` e `block_value_cents` (desconto em reais, fim na v4 N3) não são mais pedidos. Se vierem, são ignorados e as chaves antigas não mudam.
+- O teto de 50% de retorno saiu: 10 pt/R$ 1 vale.
+- Erro: 400 `invalid_rules` com mensagem.
+- Auditoria `pontos_regra_alterada`: `ligado, 1 pt/R$ 1 -> ligado, 2 pt/R$ 1`.
+- `points_get` continua igual (as regras ainda trazem `block_*`, só para os pedidos antigos).
+
+**Banco:** em `orders`, `payment_attempt_at`, `address_district` e `address_city`. A migração `scripts/migrate-2026-11-12-v4-schema.js` foi ampliada e já rodou no dev. Em produção, rodar antes do deploy da v4, como o resto.

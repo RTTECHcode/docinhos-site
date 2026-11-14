@@ -894,7 +894,8 @@ const PAYMENT_CHECK_MSG = {
   amount_mismatch: 'O valor pago no Mercado Pago é diferente do total do pedido. Confira no Mercado Pago antes de aceitar.',
   currency_mismatch: 'O pagamento no Mercado Pago não está em reais. Confira no Mercado Pago.',
   no_order: 'O pagamento encontrado não corresponde a este pedido.',
-  invalid: 'O Mercado Pago devolveu um pagamento incompleto. Tente de novo em instantes.'
+  invalid: 'O Mercado Pago devolveu um pagamento incompleto. Tente de novo em instantes.',
+  stale: 'O pagamento encontrado é anterior ao último pagamento gerado para o pedido e foi ignorado.'
 };
 A.payment_check = { m: 'POST', fn: async ({ body, user }) => {
   const id = vId(body.id, 'Pedido');
@@ -1183,15 +1184,14 @@ A.shipping_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
 
 // ---------- Regra de pontos (settings points_*; validação e cálculo em api/_lib/loyalty.js) ----------
 const pointsInfo = async () => ({ rules: await loyalty.getRules(getSql()), defaults: { ...loyalty.DEFAULT_RULES }, limits: loyalty.RULE_LIMITS });
-const rulesText = r => `${r.enabled ? 'ligado' : 'desligado'}, ${r.points_per_real} pt/R$ 1, ${r.block_points} pts = ${r.block_value_cents} centavos`;
+const rulesText = r => `${r.enabled ? 'ligado' : 'desligado'}, ${r.points_per_real} pt/R$ 1`;
 A.points_get = { m: 'GET', fn: async () => ({ points: await pointsInfo() }) };
 
 // Só admin. Vale para os próximos pedidos: o que já foi creditado ou reservado não muda.
+// F3: só Clube ligado/desligado e pontos por R$ 1,00. block_points e block_value_cents (desconto antigo) são ignorados se vierem.
 A.points_save = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   const before = await loyalty.getRules(getSql());
-  const r = await loyalty.saveRules(getSql(), {
-    enabled: body.enabled, points_per_real: body.points_per_real, block_points: body.block_points, block_value_cents: body.block_value_cents
-  });
+  const r = await loyalty.saveEarnRules(getSql(), { enabled: body.enabled, points_per_real: body.points_per_real });
   await audit(user.username, 'pontos_regra_alterada', `${rulesText(before)} -> ${rulesText(r)}`);
   return { ok: true, points: await pointsInfo() };
 } };

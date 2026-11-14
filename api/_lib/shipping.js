@@ -254,7 +254,7 @@ async function tooManyNewLookups(sql) {
 
 /**
  * Cotação de entrega. input: { cep, address, number? }. Lança ShippingError (status 400/422/503).
- * Retorna { km, fee_cents, band: { max_km, fee_cents }, source: 'osrm'|'straight_line', max_km }.
+ * Retorna { km, fee_cents, band: { max_km, fee_cents }, source: 'osrm'|'straight_line', max_km, district, city }.
  */
 async function quoteDelivery(sql, input) {
   const deadline = Date.now() + TOTAL_BUDGET_MS;
@@ -294,7 +294,9 @@ async function quoteDelivery(sql, input) {
   const km = Math.round(route.km * 100) / 100;
   const band = bandForKm(bands, km);
   if (!band) { const e = new ShippingError(422, `Fora da área de entrega (até ${kmLabel(maxKmOf(bands))} km).`, 'out_of_area'); e.max_km = maxKmOf(bands); throw e; }
-  return { km, fee_cents: band.fee_cents, band: { max_km: band.max_km, fee_cents: band.fee_cents }, source: route.source, max_km: maxKmOf(bands) };
+  // F3: bairro e cidade do CEP (ViaCEP, no servidor) para o rastreio resumido; null se o ViaCEP não respondeu.
+  return { km, fee_cents: band.fee_cents, band: { max_km: band.max_km, fee_cents: band.fee_cents }, source: route.source, max_km: maxKmOf(bands),
+    district: via && via.bairro ? String(via.bairro).slice(0, 120) : null, city: via && via.localidade ? String(via.localidade).slice(0, 120) : null };
 }
 
 module.exports = {
