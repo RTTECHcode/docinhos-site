@@ -60,7 +60,8 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F3 A2 extra | em andamento | v4-a2 | retry_payment, tracking_url, itens/bairro no rastreio, MIME do dev-server, points_save |
 | F3 A3 | feito | v4-a3 | 5972489; N1, N3-N6, N8, N10, N11, U-06 (som, PWA, push), O-01; 44 prints |
 | F4 A5 revisão | feito | v4-a5 | 6c46ab2; só CSS: toque 44 px, Quando? em 360, pós-pagamento, foco, barra do Clube; prints "depois" interrompidos por falta de memória (A6 cobre na F5) |
-| F5 A6, A1 | aguardando | — | |
+| F5 A1 segurança | em andamento | v4-a1 | revisão do diff bff189f..v4; achados em seguranca-v4-f5.md |
+| F5 A6 QA | aguardando | — | depois do merge do A2 extra |
 | F6 Netlify | aguardando | — | migração (plano seção 5); deploy só com o Renan |
 | F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
