@@ -1,6 +1,7 @@
 // Testes v4 (A2) da rodada F3 (pedidos do A4) contra o banco de DESENVOLVIMENTO:
 //  1. POST /api/order?a=retry_payment (novo Pix ou link do cartão do mesmo pedido);
 //  2. tracking_url em GET /api/customer?a=orders (link ?o=<id> que só abre com a sessão do dono);
+//  3. itens e endereço resumido (bairro e cidade; retirada = loja) em GET /api/order-status.
 // Uso: node -r ./scripts/dev-env.js scripts/test-v4-f3.js
 //  - Produtos, categoria, pedidos, cupons e contas "ZZ-v4-a2" criados aqui e apagados no final.
 //  - Mercado Pago simulado (fetch trocado; o driver do banco segue no fetch real). Token falso no processo, nenhuma chamada externa.
@@ -302,6 +303,47 @@ const row = async id => (await Q('select payment_status, payment_method, payment
       const anon = await retry({ o: ra.body.id });
       assert.equal(anon.status, 401); assert.equal(anon.body.code, 'login_required');
       assert.equal((await retry({ o: 'abc' }, { cookie: A.cookie })).status, 404);
+    });
+
+    console.log('3. itens e endereço resumido no order-status');
+    await t('retirada: itens (nome, tamanho, quantidade) e endereço da loja; nada de preço, telefone ou id', async () => {
+      const r = await track({ t: ra.body.tracking_token });
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.items, [{ name: `${P} F3 Doce`, size: null, qty: 2, reward: false }]);
+      const [st] = await Q(`select value from settings where key = 'store_address'`);
+      assert.equal(r.body.address_summary, (st && st.value) || ordersLib.STORE_ADDRESS);
+      const txt = JSON.stringify(r.body);
+      assert.ok(!txt.includes('unit_total_cents') && !txt.includes('product_id') && !txt.includes('customer_phone'));
+    });
+    await t('entrega: só bairro e cidade gravados no pedido; rua, número e complemento nunca aparecem', async () => {
+      const o = await mkOrder({ label: 'entrega' });
+      await Q(`update orders set delivery_method = 'delivery', address = 'Rua ZZ Secreta, 999 - apto 77 - Centro, Cidade ZZ',
+        address_district = 'Centro ZZ', address_city = 'Cidade ZZ' where id = $1`, [o.id]);
+      const r = await track({ t: o.token });
+      assert.equal(r.body.address_summary, 'Centro ZZ, Cidade ZZ');
+      assert.deepEqual(r.body.items, [{ name: `${P} Doce`, size: 'Médio', qty: 2, reward: false }]);
+      const txt = JSON.stringify(r.body);
+      assert.ok(!txt.includes('Secreta') && !txt.includes('999') && !txt.includes('apto'));
+      await Q(`update orders set address_district = null, address_city = null where id = $1`, [o.id]);
+      assert.equal((await track({ t: o.token })).body.address_summary, null, 'pedido antigo sem bairro/cidade: null (o texto livre não é recortado)');
+    });
+    await t('publicItems e addressSummary (puros): prêmio marcado, quantidade inválida vira 1, só cidade', async () => {
+      assert.deepEqual(ordersLib.publicItems([{ name: 'Brinde', qty: 1, reward: true, reward_id: 3, points_cost: 60, unit_total_cents: 0 }, null, { qty: 'x' }]),
+        [{ name: 'Brinde', size: null, qty: 1, reward: true }, { name: 'Item', size: null, qty: 1, reward: false }]);
+      assert.equal(ordersLib.addressSummary({ delivery_method: 'delivery', address_district: '', address_city: 'Cidade' }), 'Cidade');
+      assert.equal(ordersLib.addressSummary({ delivery_method: 'pickup', address: 'qualquer' }, 'Loja X'), 'Loja X');
+    });
+    await t('pedido de entrega novo grava bairro e cidade do CEP (quoteDelivery devolve district e city)', async () => {
+      const shipping = require('../api/_lib/shipping');
+      const real = shipping.quoteDelivery;
+      shipping.quoteDelivery = async () => ({ km: 2, fee_cents: 500, district: 'Bairro ZZ', city: 'Cidade ZZ' });
+      try {
+        const r = await order(body({ delivery_method: 'delivery', cep: '01001000', address: 'Rua ZZ Teste, 10' }));
+        assert.equal(r.status, 201, JSON.stringify(r.body));
+        const [o] = await Q('select address_district, address_city from orders where id = $1', [r.body.id]);
+        assert.deepEqual(o, { address_district: 'Bairro ZZ', address_city: 'Cidade ZZ' });
+        assert.equal((await track({ t: r.body.tracking_token })).body.address_summary, 'Bairro ZZ, Cidade ZZ');
+      } finally { shipping.quoteDelivery = real; }
     });
   } finally {
     global.fetch = realFetch;

@@ -31,9 +31,8 @@ function backUrls(trackingToken, orderId = null) {
     : { success: `${SITE_URL}/?pagamento=ok`, failure: `${SITE_URL}/?pagamento=erro`, pending: `${SITE_URL}/?pagamento=pendente` };
 }
 
-// Endereço da loja gravado nos pedidos de retirada ("pickup").
-// TODO: no futuro virá do painel admin (configuração da loja), não mais desta constante.
-const STORE_ADDRESS = 'Manoel Hare Peralta, 101';
+// Endereço da loja gravado nos pedidos de retirada ("pickup"). Padrão em _lib/orders.js; o painel troca em settings.store_address.
+const STORE_ADDRESS = ordersLib.STORE_ADDRESS;
 
 const DELIVERY_METHODS = ['delivery', 'pickup'];
 const MAX_ITEMS = 30;
@@ -567,11 +566,12 @@ module.exports = async (req, res) => {
     const priced = priceItems(b.items, catalog);
 
     // Frete: retirada R$ 0; entrega por faixa de km, recalculado aqui (o cliente nunca informa valor).
-    let deliveryFee = 0, distanceKm = null;
+    let deliveryFee = 0, distanceKm = null, area = { district: null, city: null };
     if (customer.method === 'delivery') {
       const quote = await shipping.quoteDelivery(sql, { cep: customer.cep, address: customer.address, number: customer.number });
       deliveryFee = quote.fee_cents;
       distanceKm = quote.km;
+      area = { district: quote.district || null, city: quote.city || null }; // F3: bairro e cidade do CEP, para o rastreio
     }
 
     const session = await customerLib.getSession(sql, req);
@@ -624,10 +624,10 @@ module.exports = async (req, res) => {
       queries.push(sql.query(
         `insert into orders (code, public_code, tracking_token_hash, customer_id, customer_name, customer_phone, delivery_method, address, items,
                              subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, total_cents, distance_km, notes, payment_status, client_ip,
-                             club_points, coupon_id, coupon_code, coupon_discount_cents, scheduled_for)
+                             club_points, coupon_id, coupon_code, coupon_discount_cents, scheduled_for, address_district, address_city)
          select $1::text, $2::text, $3::text, $4::int, $5::text, $6::text, $7::text, $8::text, $9::jsonb,
                 $10::int, $11::int, $12::int, 0, $13::int, $14::numeric, $15::text, 'pending', $17::text,
-                $19::int, $20::int, $21::text, $12::int, $23::timestamptz
+                $19::int, $20::int, $21::text, $12::int, $23::timestamptz, $25::text, $26::text
           where (select count(*) from orders
                   where regexp_replace(customer_phone, '\\D', '', 'g') = $6::text
                     and created_at > now() - interval '10 minutes') < $16::int
@@ -641,7 +641,7 @@ module.exports = async (req, res) => {
         [newCode(), publicCode, tracking.hash, customerId, customer.name, customer.phone, customer.method, customer.address,
           JSON.stringify(allItems), priced.subtotal_cents, deliveryFee, discount, total, distanceKm, customer.notes, MAX_ORDERS_PER_PHONE,
           ip, MAX_ORDERS_PER_IP, clubPoints, coupon ? coupon.id : null, coupon ? coupon.code : null, pk,
-          schedule ? schedule.iso : null, schedule ? schedule.capacity : 0]
+          schedule ? schedule.iso : null, schedule ? schedule.capacity : 0, area.district, area.city]
       ));
       if (clubPoints > 0) {
         queries.push(sql.query(
