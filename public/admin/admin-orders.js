@@ -84,9 +84,12 @@
     }
   }
   async function cancelOrder(o) {
-    const ok = await DG.confirm('Cancelar o pedido ' + codeOf(o) + ' de ' + o.customer_name + '? Isso não pode ser desfeito.', 'Cancelar pedido', true);
+    // v4: pedido já pago não é estornado pelo painel; a Gigi devolve o dinheiro no Mercado Pago.
+    const paid = o.payment_status === 'approved';
+    const ok = await DG.confirm('Cancelar o pedido ' + codeOf(o) + ' de ' + o.customer_name + '? Isso não pode ser desfeito.'
+      + (paid ? ' Este pedido já foi pago: depois de cancelar, devolva o dinheiro pelo Mercado Pago (o painel não faz o estorno).' : ''), 'Cancelar pedido', true);
     if (!ok) return false;
-    return changeStatus(o.id, 'cancelled', 'Pedido cancelado.');
+    return changeStatus(o.id, 'cancelled', paid ? 'Pedido cancelado. Lembre de devolver o dinheiro no Mercado Pago.' : 'Pedido cancelado.');
   }
 
   // Aceitar (ou avançar) um pedido novo sem pagamento aprovado (Pix ou cartão ainda não pago) pede confirmação.
@@ -145,7 +148,8 @@
       ? ' (' + Number(o.distance_km).toFixed(1).replace('.', ',') + ' km)' : '';
     return el('div', { class: 'row wrap-row' },
       DG.statusPill(o),
-      el('span', { class: 'pill ord-how', text: (isPickup(o) ? 'Retirada' : 'Entrega') + km }));
+      el('span', { class: 'pill ord-how', text: (isPickup(o) ? 'Retirada' : 'Entrega') + km }),
+      ...DG.orderFlags(o));
   }
 
   function kanbanCard(o, fresh) {
@@ -203,7 +207,6 @@
 
   function openOrder(o) {
     DG.sheet('Pedido ' + codeOf(o), (body, close) => {
-      const items = Array.isArray(o.items) ? o.items : [];
       const statusBox = el('div', { class: 'status-grid' });
       const STEPS = ['new', 'accepted', 'preparing', 'ready', 'awaiting_delivery', 'completed', 'cancelled'];
       const paintStatus = () => {
@@ -234,16 +237,12 @@
           el('dt', { text: 'Situação' }), el('dd', {}, DG.statusPill(o)),
           el('dt', { text: 'Pagamento' }), el('dd', { text: (PAY[o.payment_status] || o.payment_status) + (o.payment_method ? ' (' + (METHOD[o.payment_method] || o.payment_method) + ')' : '') }),
           el('dt', { text: 'Hora' }), el('dd', { text: DG.fmtDate(o.created_at) }))),
+        DG.orderFlags(o).length ? el('div', { class: 'row wrap-row' }, ...DG.orderFlags(o)) : null,
+        DG.giftBox(o, () => { const c = byId(o.id); if (c) { c.gift = o.gift; renderAll(); } }),
         el('h3', { class: 'section-title', text: 'Itens' }),
-        ...items.map(i => el('div', { class: 'card' },
-          el('div', { class: 'row between' }, el('strong', { class: 'wrap', text: (i.qty || 1) + 'x ' + (i.name || '') }), el('span', { text: DG.money((i.unit_total_cents || 0) * (i.qty || 1)) })),
-          i.size ? el('p', { class: 'muted small wrap', text: 'Tamanho: ' + i.size }) : null,
-          Array.isArray(i.extras) && i.extras.length ? el('p', { class: 'muted small wrap', text: 'Extras: ' + i.extras.join(', ') }) : null)),
+        ...DG.orderItems(o.items),
         o.notes ? el('div', { class: 'card' }, el('strong', { text: 'Observações' }), el('p', { class: 'wrap', text: o.notes })) : null,
-        el('div', { class: 'card' },
-          el('div', { class: 'row between' }, el('span', { text: 'Subtotal' }), el('span', { text: DG.money(o.subtotal_cents) })),
-          el('div', { class: 'row between' }, el('span', { text: 'Entrega' }), el('span', { text: DG.money(o.delivery_fee_cents) })),
-          el('div', { class: 'row between' }, el('strong', { text: 'Total' }), el('strong', { text: DG.money(o.total_cents) }))),
+        DG.orderTotals(o),
         el('h3', { class: 'section-title', text: 'Andamento' }), statusBox,
         canCheckPay(o) ? el('button', { class: 'btn block', type: 'button', text: 'Conferir pagamento', on: { click: async function () { this.disabled = true; await checkPayment(o.id); const c = byId(o.id) || o; Object.assign(o, c); this.disabled = false; if (!canCheckPay(c)) { this.hidden = true; } paintStatus(); } } }) : null,
         el('a', { class: 'btn primary block', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer', text: 'Chamar cliente no WhatsApp' }),

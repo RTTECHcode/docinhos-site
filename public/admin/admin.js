@@ -52,6 +52,59 @@
   DG.daySP = iso => (iso ? new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) : '');
   DG.fmtDay = iso => (iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '');
   DG.todaySP = () => DG.daySP(new Date().toISOString());
+  // v4: partes do pedido usadas em Pedidos e Histórico (mesmo desenho nos dois).
+  // Destaques: agendamento (N10) e mimo pendente do cliente (N8). Textos vêm prontos da API.
+  DG.orderFlags = o => [
+    o.scheduled_label ? el('span', { class: 'pill sched', text: o.scheduled_label }) : null,
+    o.gift ? el('span', { class: 'pill gift', text: 'Mimo: ' + o.gift.label }) : null
+  ].filter(Boolean);
+  // Itens: prêmio do Clube aparece como "Prêmio do Clube" (não cobra), não como R$ 0,00.
+  DG.orderItems = items => (Array.isArray(items) ? items : []).map(i => el('div', { class: 'card' + (i.reward ? ' item-reward' : '') },
+    el('div', { class: 'row between' }, el('strong', { class: 'wrap', text: (i.qty || 1) + 'x ' + (i.name || '') }),
+      i.reward ? el('span', { class: 'pill club-cost', text: 'Prêmio do Clube' }) : el('span', { text: DG.money((i.unit_total_cents || 0) * (i.qty || 1)) })),
+    i.size ? el('p', { class: 'muted small wrap', text: 'Tamanho: ' + i.size }) : null,
+    Array.isArray(i.extras) && i.extras.length ? el('p', { class: 'muted small wrap', text: 'Extras: ' + i.extras.map(x => (x && x.name) || x).join(', ') }) : null,
+    i.reward && i.points_cost ? el('p', { class: 'muted small', text: 'Trocado por ' + Number(i.points_cost).toLocaleString('pt-BR') + ' pontos' }) : null));
+  // Totais: todos os valores vêm do servidor; a tela só mostra.
+  DG.orderTotals = o => {
+    const line = (label, value, strong) => el('div', { class: 'row between' }, el(strong ? 'strong' : 'span', { class: 'wrap', text: label }), el(strong ? 'strong' : 'span', { text: value }));
+    return el('div', { class: 'card' },
+      line('Subtotal', DG.money(o.subtotal_cents)),
+      line('Entrega', DG.money(o.delivery_fee_cents)),
+      o.coupon_code ? line('Cupom ' + o.coupon_code, '- ' + DG.money(o.coupon_discount_cents || o.discount_cents || 0))
+        : (o.discount_cents ? line('Desconto' + (o.points_redeemed ? ' (' + o.points_redeemed + ' pontos)' : ''), '- ' + DG.money(o.discount_cents)) : null),
+      o.club_points ? line('Pontos do Clube usados', Number(o.club_points).toLocaleString('pt-BR') + ' pontos') : null,
+      line('Total', DG.money(o.total_cents), true));
+  };
+  // Mimo da avaliação no Google (N8). Pedido com mimo pendente: mostra e deixa cancelar.
+  // Sem mimo: "Cliente avaliou" registra o mimo para o PRÓXIMO pedido desse telefone (o servidor recusa se já houver um pendente).
+  DG.giftBox = (o, onChange) => {
+    const box = el('div', { class: 'card stack gift-box', 'aria-live': 'polite' });
+    const paint = () => {
+      if (o.gift) {
+        box.replaceChildren(
+          el('strong', { class: 'wrap', text: 'Mimo para entregar: ' + o.gift.label }),
+          el('p', { class: 'muted small wrap', text: 'O cliente avaliou a loja. Mande o mimo junto com este pedido; ao concluir, ele fica como entregue.' }),
+          el('button', { class: 'btn small danger', type: 'button', text: 'Cancelar mimo', on: { click: async function () {
+            if (!(await DG.confirm('Cancelar o mimo "' + o.gift.label + '"?', 'Cancelar mimo', true))) return;
+            this.disabled = true;
+            if (await DG.run(() => DG.api('gift_cancel', { body: { id: o.gift.id } }), 'Mimo cancelado.')) { o.gift = null; paint(); if (onChange) onChange(); } else this.disabled = false;
+          } } }));
+        return;
+      }
+      if (o.fulfillment_status === 'cancelled') { box.hidden = true; return; }
+      box.replaceChildren(
+        el('p', { class: 'muted small wrap', text: 'O cliente avaliou a loja no Google? Registre o mimo: ele aparece no próximo pedido deste telefone.' }),
+        el('button', { class: 'btn small', type: 'button', text: 'Cliente avaliou: dar mimo', on: { click: async function () {
+          this.disabled = true;
+          const r = await DG.run(() => DG.api('gift_grant', { body: { order_id: o.id } }));
+          if (r && r.gift) { box.replaceChildren(el('p', { class: 'wrap', role: 'status', text: 'Mimo registrado (' + r.gift.label + '). Ele aparece no próximo pedido deste cliente.' })); DG.toast('Mimo registrado.'); }
+          else this.disabled = false;
+        } } }));
+    };
+    paint();
+    return box;
+  };
   // Campo numérico inteiro com rótulo. Lê com DG.readInt(input, min, max, rótulo): número ou { problem }.
   DG.intField = (label, value, min, max) => {
     const input = el('input', { type: 'number', inputmode: 'numeric', step: 1, min, max, value: value === null || value === undefined ? '' : String(value) });

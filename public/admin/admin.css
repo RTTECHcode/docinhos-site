@@ -412,3 +412,11 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 .cp-preview { margin: 0; padding-left: 20px; display: grid; gap: 2px; }
 .cp-camp { display: grid; gap: 2px; text-align: left; width: 100%; }
 .cp-target a.btn { text-decoration: none; }
+/* Mimo, agendamento e prêmio no pedido */
+.pill.sched { background: #e8f0fb; color: #1d4f91; }
+.pill.gift { background: var(--manteiga); color: var(--cacau); }
+.pill.gift::before { content: "🎁 "; }
+.gift-box { border-left: 5px solid var(--manteiga); }
+.gift-box .btn.small { justify-self: start; }
+.item-reward { background: #fffaf0; }
+.rv-link { color: var(--brand-deep); font-weight: 700; }

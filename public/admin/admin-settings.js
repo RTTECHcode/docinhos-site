@@ -282,6 +282,56 @@
       el('button', { class: 'btn block', type: 'button', text: 'Abrir o Clube', on: { click: () => DG.go('club') } }));
   }
 
+  // ---------- Avaliação no Google e Instagram (v4 N8) ----------
+  // O cliente vê o pedido de avaliação depois do pagamento aprovado. Link vazio desliga o bloco. Só https.
+  function reviewCard() {
+    const box = el('div', { class: 'card stack' }, DG.loading());
+    const load = async () => {
+      const r = await DG.api('review_settings').catch(() => null);
+      if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar o link de avaliação.' })); return; }
+      const v = r.review;
+      const link = (url, off) => (url ? el('a', { class: 'wrap rv-link', href: url, target: '_blank', rel: 'noopener noreferrer', text: url }) : el('span', { class: 'muted', text: off }));
+      box.replaceChildren(
+        el('dl', { class: 'kv' },
+          el('dt', { text: 'Google' }), el('dd', {}, link(v.google_review_url, 'Desligado (o cliente não vê o pedido de avaliação)')),
+          el('dt', { text: 'Instagram' }), el('dd', {}, link(v.instagram_url, 'Sem botão do Instagram'))),
+        v.google_review_url && v.review_url_is_default ? el('p', { class: 'muted small wrap', text: 'Usando o link padrão (busca da loja no Google Maps). Se tiver o link direto "Pedir avaliações" do Perfil da Empresa no Google, cole aqui.' }) : null,
+        el('p', { class: 'muted small wrap', text: 'Quando o cliente contar que avaliou, use "Cliente avaliou: dar mimo" no pedido ou em Mais > Relatórios > Clientes.' }),
+        isAdmin() ? el('button', { class: 'btn block', type: 'button', text: 'Editar links', on: { click: () => reviewSheet(v, load) } }) : el('p', { class: 'muted small', text: 'Só o administrador edita estes links.' }));
+    };
+    load();
+    return box;
+  }
+  function reviewSheet(v, onSaved) {
+    DG.sheet('Avaliação e Instagram', (body, close) => {
+      const g = el('input', { type: 'url', inputmode: 'url', maxlength: 300, placeholder: 'https://g.page/r/...', value: v.google_review_url || '' });
+      const ig = el('input', { type: 'url', inputmode: 'url', maxlength: 300, placeholder: 'https://instagram.com/...', value: v.instagram_url || '' });
+      const msg = el('p', { class: 'error wrap', role: 'alert', hidden: true });
+      const fail = t => { msg.textContent = t; msg.hidden = false; };
+      const send = async (payload, btn, ok) => {
+        msg.hidden = true; btn.disabled = true;
+        try { await DG.api('review_settings_save', { body: payload }); DG.toast(ok); close(); onSaved(); } catch (e) { fail(e.message); btn.disabled = false; }
+      };
+      const save = el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar links' });
+      const reset = el('button', { class: 'btn block', type: 'button', text: 'Voltar ao link padrão do Google', on: { click: () => send({ reset_review_url: true }, reset, 'Link padrão restaurado.') } });
+      const form = el('form', { class: 'stack', novalidate: true, on: { submit: e => {
+        e.preventDefault();
+        const gv = g.value.trim(), iv = ig.value.trim();
+        if ((gv && !/^https:\/\//i.test(gv)) || (iv && !/^https:\/\//i.test(iv))) return fail('Os links precisam começar com https://');
+        const payload = {};
+        if (gv !== (v.google_review_url || '')) payload.google_review_url = gv;
+        if (iv !== (v.instagram_url || '')) payload.instagram_url = iv;
+        if (!Object.keys(payload).length) return fail('Nada para alterar.');
+        send(payload, save, 'Links salvos.');
+      } } },
+      el('label', { class: 'field' }, el('span', { text: 'Link de avaliação no Google (vazio = desligado)' }), g),
+      el('label', { class: 'field' }, el('span', { text: 'Link do Instagram (vazio = sem botão)' }), ig),
+      msg, save, v.review_url_is_default ? null : reset);
+      body.replaceChildren(form);
+      g.focus();
+    });
+  }
+
   // ---------- Segurança ----------
   function securityCard() {
     const box = el('div', { class: 'card stack' }, DG.loading());
@@ -330,6 +380,7 @@
         el('h2', { class: 'section-title', text: 'Horários e fechamento da loja' }), hoursSection(catalog),
         el('h2', { class: 'section-title', text: 'Frete' }), shippingCard(),
         el('h2', { class: 'section-title', text: 'Clube de pontos' }), pointsCard(),
+        el('h2', { class: 'section-title', text: 'Avaliação no Google' }), reviewCard(),
         el('h2', { class: 'section-title', text: 'Loja' }), DG.storeCard(catalog),
         el('h2', { class: 'section-title', text: 'Segurança' }), securityCard());
     }
