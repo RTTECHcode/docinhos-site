@@ -282,12 +282,18 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
     });
 
     console.log('O-01: saúde');
-    await t('/api/health: só sim/não (sem valores); 401 do webhook nas últimas 24 h derruba; health_detail com resumo', async () => {
+    await t('/api/health: só sim/não (sem valores); 3 recusas do webhook depois do último aceito derrubam (F5-S-01); health_detail com resumo', async () => {
       const r1 = await new Promise(res => healthHandler({ method: 'GET' }, { setHeader() {}, status(c) { return { json: d => res({ status: c, body: d }) }; } }));
       assert.ok([200, 503].includes(r1.status));
       assert.deepEqual(Object.keys(r1.body.checks).sort(), ['database', 'mercadopago_token', 'mercadopago_webhook_secret', 'webhook_no_401_24h']);
       assert.ok(Object.values(r1.body.checks).every(v => typeof v === 'boolean'));
       assert.equal(r1.body.checks.database, true);
+      // F5-S-01: um aceito agora zera o alerta; 1 ou 2 recusas depois dele não derrubam; a 3ª derruba.
+      await monitor.recordWebhookEvent(sql, 'accepted', EV_MARK);
+      await monitor.recordWebhookEvent(sql, 'unauthorized', EV_MARK);
+      await monitor.recordWebhookEvent(sql, 'unauthorized', EV_MARK);
+      const r15 = await new Promise(res => healthHandler({ method: 'GET' }, { setHeader() {}, status(c) { return { json: d => res({ status: c, body: d }) }; } }));
+      assert.equal(r15.body.checks.webhook_no_401_24h, true, '2 recusas depois do aceito não acendem');
       await monitor.recordWebhookEvent(sql, 'unauthorized', EV_MARK);
       const r2 = await new Promise(res => healthHandler({ method: 'GET' }, { setHeader() {}, status(c) { return { json: d => res({ status: c, body: d }) }; } }));
       assert.equal(r2.status, 503); assert.equal(r2.body.checks.webhook_no_401_24h, false);

@@ -1,6 +1,8 @@
 const crypto = require('node:crypto');
 const payments = require('./_lib/payments');
 const { recordWebhookEvent } = require('./_lib/monitor');
+const { hitExceeded } = require('./_lib/rate-limit');
+const { clientIp } = require('./_lib/auth');
 const getSql = () => require('./_lib/db'); // carregado sob demanda: o parser é testado sem DATABASE_URL
 
 // Extrai ts e v1 do header x-signature ("ts=...,v1=...").
@@ -74,6 +76,21 @@ function isLegacyIpn(query, body) {
 
 const paymentMethodOf = payments.paymentMethodOf;
 
+// F5-S-01: limite da gravação de recusas (401) em webhook_events. Acima dele responde 401 igual, sem gravar.
+const UNAUTH_WINDOW_MIN = 10;
+const UNAUTH_MAX_PER_IP = 5;
+const UNAUTH_MAX_GLOBAL = 60;
+async function mayRecordUnauthorized(ip) {
+  try {
+    const sql = getSql();
+    if (await hitExceeded(sql, 'webhook_unauthorized', ip, { windowMinutes: UNAUTH_WINDOW_MIN, max: UNAUTH_MAX_PER_IP })) return false;
+    return !(await hitExceeded(sql, 'webhook_unauthorized_global', 'global', { windowMinutes: UNAUTH_WINDOW_MIN, max: UNAUTH_MAX_GLOBAL }));
+  } catch (error) {
+    console.error('Falha no limite de recusas do webhook:', error.message);
+    return false; // sem banco também não grava (recordWebhookEvent falharia)
+  }
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
@@ -95,8 +112,9 @@ module.exports = async (req, res) => {
       // Log sem segredo e sem v1: só o motivo e o que identifica o aviso no painel do Mercado Pago.
       console.warn('Webhook do Mercado Pago recusado (401):', problem,
         JSON.stringify({ type, data_id: dataId, request_id: requestId || null, user_agent: req.headers['user-agent'] || null }));
-      // O-01 (v4): todo 401 fica registrado (o /api/health fica vermelho por 24 h e o painel mostra a contagem).
-      await recordWebhookEvent(getSql, 'unauthorized', `${type || 'sem tipo'}: ${problem}`);
+      // O-01 (v4): o 401 fica registrado para o painel e o /api/health. F5-S-01: com limite por IP e geral, e o health só
+      // acende com várias recusas depois do último aviso aceito (monitor.webhookAlert).
+      if (await mayRecordUnauthorized(clientIp(req))) await recordWebhookEvent(getSql, 'unauthorized', `${type || 'sem tipo'}: ${problem}`);
       return res.status(401).json({ error: 'Assinatura inválida' });
     }
   } else {
@@ -132,4 +150,4 @@ module.exports = async (req, res) => {
 };
 
 const { CANCELLED_PAID_ACTION, noteCancelledPaid } = payments;
-module.exports._internal = { CANCELLED_PAID_ACTION, noteCancelledPaid, parseSignature, verifySignature, signatureProblem, tsToSeconds, parseNotification, isLegacyIpn, paymentMethodOf };
+module.exports._internal = { UNAUTH_WINDOW_MIN, UNAUTH_MAX_PER_IP, UNAUTH_MAX_GLOBAL, CANCELLED_PAID_ACTION, noteCancelledPaid, parseSignature, verifySignature, signatureProblem, tsToSeconds, parseNotification, isLegacyIpn, paymentMethodOf };

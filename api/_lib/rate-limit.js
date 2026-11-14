@@ -8,7 +8,8 @@
 // De vez em quando (2% das chamadas) apaga linhas com mais de 1 dia, sem cron.
 
 const SCOPES = new Set(['order_status', 'shipping_quote', 'payment_check', 'cep_lookup', 'cep_lookup_global', 'points_preview', 'coupon_check', 'schedule_slots',
-  'retry_payment', 'retry_payment_order']);
+  'retry_payment', 'retry_payment_order', 'webhook_unauthorized', 'webhook_unauthorized_global']);
+// webhook_unauthorized: gravação de aviso recusado (401) do webhook por IP; _global: o mesmo somando todos (ip = 'global'), F5-S-01.
 // retry_payment: novo pagamento do mesmo pedido por IP; retry_payment_order: o mesmo, por pedido (ip = "order:<id>"), F3.
 // payment_check: conferência de pagamento (A1); cep_lookup: consulta de CEP por IP (GET /api/store?a=cep), v3 D3;
 // coupon_check: validação de cupom por IP (v4 N6, contra adivinhação de código);
