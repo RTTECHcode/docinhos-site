@@ -58,7 +58,7 @@ Nenhum Crítico nas duas auditorias. Entram todos os Altos (10) e os Médios/Bai
 | U-10 | A4 | "Meus pedidos" com link para acompanhar o pedido. |
 | X-01 | A4 | Modais de produto e carrinho com nome acessível (`aria-labelledby`). |
 
-Pendências que só o Renan resolve (não travam os agentes): cadastrar o monitor externo (O-01), concluir o registro do domínio `docinhosdagigioz.com.br` (solicitado em 14/11) e apontar na Vercel (P-02, N9), gerar as chaves VAPID e colocar na Vercel.
+Pendências que só o Renan resolve (não travam os agentes): cadastrar o monitor externo (O-01), concluir o registro do domínio `docinhosdagigioz.com.br` (solicitado em 14/11) e apontar na Vercel (P-02, N9), gerar as chaves VAPID e colocar na Vercel, ligar Vercel Web Analytics (Analytics → Enable; pedir no relatório final, A4 coloca o script `/_vercel/insights/script.js`), avaliar o plano Pro da Vercel (o Hobby não permite uso comercial).
 
 ## 3. Desenho técnico das demandas
 
