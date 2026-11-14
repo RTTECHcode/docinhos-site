@@ -295,7 +295,7 @@ function renderMenu() {
     <section class="category" id="cat-${c.id}">
       <h2>${brigIcon(c)}${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
-        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
+        <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable && !p.paused ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
           ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="88" height="88" loading="lazy" decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}
           <span class="body">
             <span class="name">${esc(p.name)}</span>
@@ -306,7 +306,7 @@ function renderMenu() {
             </span>
           </span>
           ${p.unavailable ? '' : '<span class="add-hint" aria-hidden="true">+</span>'}
-          ${p.paused ? '<span class="pause-clip"><span class="pause-band">Volto logo</span></span>' : ''}
+          ${p.paused ? '<span class="pause-clip"><span class="pause-band">Volto logo</span></span><span class="sr-only">Volto logo: indisponível agora. Toque para ver os detalhes.</span>' : ''}
         </button>`).join('')}</div>
     </section>`).join('');
 }
@@ -321,7 +321,9 @@ document.addEventListener('click', e => {
 function openProduct(id, opener) {
   activeProduct = findProduct(id);
   if (!activeProduct) return;
-  if (activeProduct.unavailable) { activeProduct = null; toast('Este produto está indisponível no momento.'); return; }
+  // v4 N2: "Volto logo" (paused) abre para ver detalhes e complementos, mas não entra no carrinho (o servidor também recusa).
+  const paused = !!activeProduct.paused;
+  if (activeProduct.unavailable && !paused) { activeProduct = null; toast('Este produto está indisponível no momento.'); return; }
   const comps = activeProduct.complements || [];
   const sizes = comps.filter(c => c.kind === 'size');
   const extras = comps.filter(c => c.kind !== 'size');
@@ -381,7 +383,8 @@ function openProduct(id, opener) {
           </div>`).join('')}
       </div>` : ''}
     <div class="pm-total-row"><span>Total</span><span id="pm-total"></span></div>
-    <button type="button" class="button primary full" id="pm-add" ${sizes.length && !firstSize ? 'disabled' : ''}>Adicionar ao carrinho</button>`;
+    ${paused ? '<p class="pm-paused-note" id="pm-paused-note">Volto logo! Este doce está pausado agora e não pode ser pedido. Dá uma olhada nos outros do cardápio.</p>' : ''}
+    <button type="button" class="button primary full" id="pm-add" ${paused ? 'disabled aria-describedby="pm-paused-note"' : sizes.length && !firstSize ? 'disabled' : ''}>${paused ? 'Indisponível no momento' : 'Adicionar ao carrinho'}</button>`;
   updatePmTotal();
   openModal('#product-modal', { opener });
 }
@@ -458,7 +461,7 @@ document.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('#pm-add')) {
-    if (closing.has('#product-modal')) return; // toque duplo durante o fechamento não adiciona duas vezes
+    if (closing.has('#product-modal') || activeProduct.paused) return; // toque duplo durante o fechamento não adiciona duas vezes
     const missing = pmGroups.find(g => groupCount(g) < g.min);
     if (missing) { // minChoices não atendido: não adiciona
       const root = groupRoot(missing);
