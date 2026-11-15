@@ -67,7 +67,8 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F5 A6 QA etapa 2 | feito | v4-a6 | 8503dcd; loja 38/38 x3, painel ok, 0 erro de console; só Baixos/Info (A6-02 a A6-07) em qa-v4.md |
 | F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
 | F7 A3 painel | feito | v4-a3 | 2e0e30e; F-01 (prévia quadrada, arrastar/zoom, 800x800 WebP), A6-03/04/05, O-01 63 para 47 px, nova aba; 3 erros 404 de recurso com API moqueada (A6 confere) |
-| F7 A4 loja + F6 domínio | em andamento | v4-a4 | Sonnet; URLs, robots/sitemap, analytics, 404, cache, JSON-LD, Instagram (A6-02) |
+| F7 A4 loja + F6 domínio | feito, aguarda merge | v4-a4 | 237e01b; contém v4-a2; junta depois dos testes de banco do A2; Instagram precisa do A2 expor instagram_url no /api/menu |
+| F7 A5 visual | em andamento | v4-a5 | Sonnet; P-07 fontes locais + CSP, nova aba, .pay-again, contraste, revisão |
 | F7 A4, A5, A2, limpeza | aguardando | — | depois do A3 e dos testes de banco do A2 (máx. 2 agentes pesados) |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
 
@@ -81,3 +82,4 @@ Dev: shipping_bands ausente (teste interrompido apagou; vale a faixa padrão do 
 Para a F7 (do A4): aviso de nova aba em privacidade.html e experimental.html (A5); revisar visual do .pay-again (A5); script v4-a4 antigo do U-08 clica no botão antigo "Tentar pagar de novo".
 Dev: sobram 2 pedidos e 1 cliente ZZ-a5 de 13/11 (do A5); apagar na F7.
 Antes do merge na main: Renan cadastra SITE_URL=https://docinhos-site.vercel.app na Vercel (senão o MP volta para o domínio que ainda não aponta). Analytics: CSP precisa de static.cloudflareinsights.com (script-src) e cloudflareinsights.com (connect-src).
+Relatório: depois do merge na main, a Vercel publica canonical/og apontando para o domínio; apontar o DNS logo. Imagens de /images com cache de 30 dias (trocar foto estática = nome novo). Cardápio com cache de 60 s.
