@@ -74,7 +74,7 @@
     // O-01 compacto: no celular o detalhe da última tentativa some da vista (o texto completo fica em title).
     if (bar.dataset.text !== text) {
       bar.dataset.text = text; bar.title = text;
-      bar.replaceChildren('O Mercado Pago foi recusado ao avisar pagamentos: confira a chave do webhook.', el('span', { class: 'wh-when', text: when }), ' Enquanto isso, use "Conferir pagamento" no pedido.');
+      bar.replaceChildren('O Mercado Pago foi recusado ao avisar pagamentos: confira a chave do webhook.', el('span', { class: 'wh-when', text: when }), el('span', { class: 'wh-when', text: ' Enquanto isso, use "Conferir pagamento" no pedido.' }));
     }
   }
 
