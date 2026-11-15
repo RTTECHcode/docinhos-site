@@ -192,6 +192,16 @@ async function t(name, fn) {
     assert.equal(r.statusCode, 405); assert.equal(r.headers['X-Robots-Tag'], 'noindex');
   });
 
+  console.log('M5: servidor local');
+  await t('dev-server aplica os cabeçalhos do netlify.toml', () => {
+    const { applyHeaders } = require('./dev-server');
+    const got = {};
+    applyHeaders({ setHeader: (k, v) => { got[k] = v; } }, '/api/order-status');
+    assert.deepStrictEqual(got, toml.headersFor(rules, '/api/order-status'));
+    assert.equal(got['Cache-Control'], 'no-store');
+    assert.ok(got['Content-Security-Policy'].startsWith("default-src 'self'"));
+  });
+
   console.log(`\n${pass} ok, ${fail} falha(s)`);
   if (fail) process.exitCode = 1;
 })();
