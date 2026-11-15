@@ -84,3 +84,4 @@ Para a F7 (do A4): aviso de nova aba em privacidade.html e experimental.html (A5
 Dev: sobram 2 pedidos e 1 cliente ZZ-a5 de 13/11 (do A5); apagar na F7.
 Antes do merge na main: Renan cadastra SITE_URL=https://docinhos-site.vercel.app na Vercel (senão o MP volta para o domínio que ainda não aponta). Analytics: CSP precisa de static.cloudflareinsights.com (script-src) e cloudflareinsights.com (connect-src).
 Relatório: depois do merge na main, a Vercel publica canonical/og apontando para o domínio; apontar o DNS logo. Imagens de /images com cache de 30 dias (trocar foto estática = nome novo). Cardápio com cache de 60 s.
+Números (preço, total, pontos, contadores, timer) em Fredoka 600, aprovado pelo Renan em 15/11 a pedido da Gigi; títulos seguem na Bagel Fat One (v4-a5).
