@@ -984,7 +984,9 @@ A.user_toggle = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   if (id === user.id && !active) bad('Você não pode desativar o seu próprio usuário.');
   const row = own(await q('update admin_users set active = $2 where id = $1 returning id, username, active', [id, active]), 'Usuário não encontrado.');
   if (!active) await killSessions(id, '');
-  await audit(user.username, active ? 'usuario_ativado' : 'usuario_desativado', row.username);
+  // F5-S-04: desativado também perde os avisos de pedido pago nos aparelhos dele.
+  const pushRemoved = active ? 0 : await push.removeAllFor(getSql(), row.username);
+  await audit(user.username, active ? 'usuario_ativado' : 'usuario_desativado', row.username + (pushRemoved ? ` (${pushRemoved} aparelho(s) de aviso removido(s))` : ''));
   return { ok: true, target: row };
 } };
 

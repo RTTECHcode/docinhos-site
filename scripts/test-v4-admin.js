@@ -389,6 +389,26 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
       const u = await acall('push_unsubscribe', { method: 'POST', cookie: SC, body: { endpoint } });
       assert.equal(u.json.removed, 1); assert.equal(u.json.devices, 0);
     });
+    // F5-S-04: usuário desativado perde as inscrições e não recebe aviso de pedido pago.
+    await t('F5-S-04: user_toggle (desativar) apaga as inscrições push do usuário; notifyPaid ignora usuário inativo', async () => {
+      const name = await adminUser('push', 'staff', pass());
+      const [{ id }] = await Q('select id from admin_users where username = $1', [name]);
+      const ep = 'https://fcm.googleapis.com/fcm/send/zz-v4-a2-f5-' + crypto.randomBytes(6).toString('hex');
+      await Q(`insert into admin_push_subscriptions (username, endpoint, p256dh, auth) values ($1, $2, $3, $4)`,
+        [name, ep, subscription.keys.p256dh, subscription.keys.auth]);
+      if (others === 0) {
+        await Q('update admin_users set active = false where id = $1', [id]);
+        const o = await mkOrder(phone(), { total: 1234 });
+        sent.length = 0;
+        await push.notifyPaid(sql, o.id);
+        assert.ok(!sent.some(x => x.url === ep), 'inativo não recebe');
+        await Q('update admin_users set active = true where id = $1', [id]);
+      }
+      const r = await acall('user_toggle', { method: 'POST', cookie: AC, body: { id, active: false } });
+      assert.equal(r.status, 200, JSON.stringify(r.json));
+      assert.equal((await Q('select count(*)::int n from admin_push_subscriptions where username = $1', [name]))[0].n, 0);
+      assert.match((await lastAudit(ADM, 'usuario_desativado')).detail, /1 aparelho/);
+    });
   } finally {
     global.fetch = realFetch;
     delete process.env[ENV_PUB]; delete process.env[ENV_PRIV]; delete process.env[ENV_SUBJ];
