@@ -287,7 +287,7 @@ async function coupon(code, fields) {
       const r2 = await order(body({ customer_phone: `(${ph.slice(0, 2)}) ${ph.slice(2)}`, coupon_code: 'ZZV4A2-P10' }));
       assert.equal(r2.status, 409); assert.equal(r2.body.code, 'coupon_customer_limit');
       const chk = await cust('POST', 'coupon_check', { body: { code: 'ZZV4A2-P10', items, phone: ph } });
-      assert.equal(chk.body.code, 'coupon_customer_limit', 'coupon_check também confere pelo telefone');
+      assert.equal(chk.status, 200, 'F5-S-08: visitante não consulta uso por telefone (phone ignorado)'); assert.equal(chk.body.discount_cents, 100);
       await pay(r.body, 'rejected');
       assert.equal((await Q('select status from coupon_redemptions where order_id = $1', [r.body.id]))[0].status, 'released');
       assert.equal((await order(body({ customer_phone: ph, coupon_code: 'ZZV4A2-P10' }))).status, 201, 'liberado: pode usar de novo');

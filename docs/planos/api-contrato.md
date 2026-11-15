@@ -396,7 +396,7 @@ Só prêmios ligados, dentro da vigência e com produto/categoria ativos. `avail
 
 ### 10.3 Cupons (N6)
 
-**Loja:** `POST /api/customer?a=coupon_check` (visitante ou logado) `{ code, items: [...mesmo formato do pedido], rewards?: [...], phone? }` retorna
+**Loja:** `POST /api/customer?a=coupon_check` (visitante ou logado) `{ code, items: [...mesmo formato do pedido], rewards?: [...] }` retorna
 
 ```json
 { "ok": true, "coupon": { "code": "GIGI10", "kind": "percent", "value": 10, "stacks_with_club": false, "expires_at": null },
@@ -404,7 +404,7 @@ Só prêmios ligados, dentro da vigência e com produto/categoria ativos. `avail
 ```
 
 - É só prévia: o pedido valida e reserva de novo. Subtotal recalculado no servidor (itens pagos; prêmio vale R$ 0).
-- Limite por cliente usa o telefone da conta (logado) ou `phone` (visitante, opcional).
+- Limite por cliente na prévia usa só o telefone da conta (logado). F5-S-08: `phone` de visitante é ignorado (não revela uso de telefone de outra pessoa); para visitante o limite por pessoa é conferido no pedido.
 - `kind`: `percent` (`value` = %) ou `fixed` (`value` = centavos). Desconto só nos produtos, nunca no frete; os produtos ficam com pelo menos R$ 1,00.
 - Erros: 400 `invalid_coupon` (`Cupom inválido ou indisponível.`: não existe, desligado, fora da validade), `coupon_min_order`, `coupon_not_stackable` (não acumula com prêmio), `coupon_no_discount`, `invalid_items`; 409 `coupon_exhausted`, `coupon_customer_limit`; 429 `rate_limited` (mais de 20 consultas do mesmo IP em 10 min).
 
