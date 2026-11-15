@@ -93,6 +93,7 @@ const CAP_KEY = sched.KEYS.slot_capacity;
 let capSnap = null;
 async function cleanup() {
   await Q(`delete from coupons where code like 'ZZV4A2-F3%'`); // cascata: coupon_redemptions
+  await Q(`delete from admin_audit where action = 'estorno_pagamento_antigo' and detail like '%(pagamento ZZF5-%'`); // F5-S-02
   const ids = (await Q(`select id from orders where customer_name like $1`, [P + '%'])).map(r => r.id);
   await Q(`delete from loyalty_ledger where customer_id in (select id from customers where name like $1) or order_id = any($2::int[])`, [P + '%', ids]);
   await Q(`delete from orders where id = any($1::int[])`, [ids]);
@@ -158,6 +159,30 @@ const row = async id => (await Q('select payment_status, payment_method, payment
       assert.equal(r.outcome, 'stale'); assert.ok(old);
       const o = await row(r0.body.id);
       assert.equal(o.payment_status, 'pending'); assert.ok(o.pix_qr_code, 'Pix novo continua guardado');
+    });
+    // F5-S-02: estorno de um pagamento antigo depois do retry_payment não pode virar 'stale'.
+    await t('F5-S-02: estorno do pagamento antigo aprovado (o atual) é processado mesmo com data antes do retry', async () => {
+      const payId = 'ZZF5-' + crypto.randomBytes(3).toString('hex');
+      const o = await mkOrder({ pay: 'approved', payId, label: 'estorno' });
+      await Q('update orders set payment_attempt_at = now() where id = $1', [o.id]);
+      const r = await payments.syncPayment(sql, { id: payId, status: 'refunded', external_reference: o.code, transaction_amount: 10,
+        currency_id: 'BRL', payment_method_id: 'pix', date_created: new Date(Date.now() - 30 * 60000).toISOString() }, { source: 'teste' });
+      assert.equal(r.outcome, 'updated', JSON.stringify(r));
+      assert.equal((await row(o.id)).payment_status, 'refunded');
+    });
+    await t('F5-S-02: estorno de pagamento que não é o atual não muda o pedido e vai para a auditoria (uma vez)', async () => {
+      const cur = 'ZZF5-' + crypto.randomBytes(3).toString('hex'), oldId = 'ZZF5-' + crypto.randomBytes(3).toString('hex');
+      const o = await mkOrder({ pay: 'approved', payId: cur, label: 'estorno2' });
+      await Q('update orders set payment_attempt_at = now() where id = $1', [o.id]);
+      const pay = { id: oldId, status: 'charged_back', external_reference: o.code, transaction_amount: 10, currency_id: 'BRL', payment_method_id: 'pix',
+        date_created: new Date(Date.now() - 30 * 60000).toISOString() };
+      const r = await payments.syncPayment(sql, pay, { source: 'teste' });
+      assert.equal(r.outcome, 'unchanged', JSON.stringify(r));
+      await payments.syncPayment(sql, pay, { source: 'teste' });
+      const o2 = await row(o.id);
+      assert.equal(o2.payment_status, 'approved'); assert.equal(o2.payment_id, cur);
+      const n = (await Q(`select count(*)::int n from admin_audit where action = 'estorno_pagamento_antigo' and detail like $1`, ['%(pagamento ' + oldId + ')%']))[0].n;
+      assert.equal(n, 1);
     });
     await t('isSuperseded: aprovado vale sempre; sem data ou sem retry não ignora', async () => {
       const at = new Date();

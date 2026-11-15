@@ -26,6 +26,18 @@ async function t(name, fn) {
     assert.ok(SCOPES.has('webhook_unauthorized') && SCOPES.has('webhook_unauthorized_global'));
   });
 
+  console.log('F5-S-02: estorno de pagamento antigo não é ignorado');
+  const payments = require('../api/_lib/payments');
+  await t('isSuperseded: refunded/charged_back e o pagamento atual nunca viram stale', () => {
+    const at = new Date();
+    const old = new Date(at.getTime() - 60000).toISOString();
+    const o = { payment_attempt_at: at, payment_id: '111' };
+    for (const st of ['refunded', 'charged_back', 'approved']) assert.equal(payments.isSuperseded({ id: 999, status: st, date_created: old }, o), false, st);
+    assert.equal(payments.isSuperseded({ id: 111, status: 'cancelled', date_created: old }, o), false, 'pagamento atual');
+    for (const st of ['pending', 'in_process', 'rejected', 'cancelled', 'expired']) assert.equal(payments.isSuperseded({ id: 999, status: st, date_created: old }, o), true, st);
+    assert.equal(payments.isSuperseded({ id: 999, status: 'cancelled', date_created: old }, { payment_attempt_at: at, payment_id: null }), true);
+  });
+
   console.log(`\n${pass} ok, ${fail} falha(s)`);
   if (fail) process.exitCode = 1;
 })();
