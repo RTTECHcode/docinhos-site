@@ -63,7 +63,8 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F4 A5 revisão | feito | v4-a5 | 6c46ab2; só CSS: toque 44 px, Quando? em 360, pós-pagamento, foco, barra do Clube; prints "depois" interrompidos por falta de memória (A6 cobre na F5) |
 | F5 A1 segurança | feito | v4-a1 | 9f17bb2; 0 Crítico/Alto; 2 Médios (F5-S-01, S-02) e 7 Baixos em seguranca-v4-f5.md |
 | F5 A2 correções + F6 Netlify | em andamento | v4-a2 | F5-S-01 a S-08; M1-M6; F5-S-06 decidido: health_detail só admin |
-| F5 A6 QA | em andamento | v4-a6 | etapa 1 regressão de banco; etapa 2 navegador depois do A4 |
+| F5 A6 QA etapa 1 | feito | v4-a6 | 6613581; 20 suítes + 2 novas ok, sem bug; colisão com teste alheio (A6-01) repetida ok |
+| F5 A6 QA etapa 2 | em andamento | v4-a6 | navegador 3 tamanhos, prints depois do A5 |
 | F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
 | F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
@@ -76,3 +77,4 @@ Para a F7 (achados do A5 na F4): placeholder da busca do painel cortado em 360 a
 
 Dev: shipping_bands ausente (teste interrompido apagou; vale a faixa padrão do código). Conferir na produção antes do deploy se existe ajuste salvo.
 Para a F7 (do A4): aviso de nova aba em privacidade.html e experimental.html (A5); revisar visual do .pay-again (A5); script v4-a4 antigo do U-08 clica no botão antigo "Tentar pagar de novo".
+Dev: sobram 2 pedidos e 1 cliente ZZ-a5 de 13/11 (do A5); apagar na F7.
