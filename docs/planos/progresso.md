@@ -64,7 +64,7 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F5 A1 segurança | feito | v4-a1 | 9f17bb2; 0 Crítico/Alto; 2 Médios (F5-S-01, S-02) e 7 Baixos em seguranca-v4-f5.md |
 | F5 A2 correções + F6 Netlify | código pronto | v4-a2 | c824d72; F5-S-01 a S-08, M1-M6; testes sem banco ok; testes de banco esperam o fim do A6 etapa 2 |
 | F5 A6 QA etapa 1 | feito | v4-a6 | 6613581; 20 suítes + 2 novas ok, sem bug; colisão com teste alheio (A6-01) repetida ok |
-| F5 A6 QA etapa 2 | em andamento | v4-a6 | navegador 3 tamanhos, prints depois do A5 |
+| F5 A6 QA etapa 2 | feito | v4-a6 | 8503dcd; loja 38/38 x3, painel ok, 0 erro de console; só Baixos/Info (A6-02 a A6-07) em qa-v4.md |
 | F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
 | F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
