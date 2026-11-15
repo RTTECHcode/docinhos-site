@@ -2,7 +2,7 @@
 
 Base: branch v4 em 20e6207 (merge da rodada F3 do A2); depois merge da v4 em 36312ec (A4 extra e revisão do A1, só `public/` e docs).
 Worktree v4-a6, banco dev, porta 3406.
-Etapa 1: regressão de backend, sem navegador, um script por vez (14 e 15/11). Etapa 2: navegador (aguarda liberação).
+Etapa 1: regressão de backend, sem navegador, um script por vez (14 e 15/11). Etapa 2: navegador (15/11), Edge headless, 360x740, 390x844 e 1366x800, um tamanho por execução.
 Logs: `C:\Users\menez\AppData\Local\gigi-tools\v4-a6-logs\<script>.log` e `resumo.txt`.
 
 ## 1. Testes automáticos (scripts/test-*.js, um por vez)
@@ -42,38 +42,61 @@ Banco dev depois da Etapa 1: ajustes, horários (00:00-23:59 todos os dias) e `s
 
 ## 2. Checklist por ID
 
-Status: ok, falha ou não testado. "Etapa 2" = depende do navegador.
+Status: ok, falha, parcial ou não testado. A coluna Tela vem da Etapa 2 (seção 4).
 
 | ID | Backend | Tela | Evidência |
 |---|---|---|---|
-| N1 status único | ok | Etapa 2 | test-v4-qa-status (10 chaves), test-v4-pedido (rastreio e conta), test-v4-qa-gaps (cancelado) |
-| N2 "Volto logo" abre | ok (servidor recusa pausado) | Etapa 2 | test-v3-backend (cardápio `paused`, pedido recusa) |
-| N3 Clube por itens | ok | Etapa 2 | test-v4-pedido (10 pedidos em paralelo, 1 entra; reserva, commit, estorno), test-v4-admin (cadastro), test-v4-qa-gaps (48 h, cancelar, required_group/size_required) |
-| N4 fim dos sinônimos | ok | Etapa 2 | test-v4-admin (`textMatches`), test-admin-painel (busca da pausa) |
-| N5 relatórios | ok | Etapa 2 | test-v4-admin (report_sales, report_customers, CSV com BOM, `;`, fórmula neutralizada, auditoria) |
-| N6 cupons | ok | Etapa 2 | test-v4-pedido (coupon_check, limite por cliente e max_uses em paralelo, liberação), test-v4-admin (cadastro, campanha, enviado) |
-| N7 Quem somos | não se aplica | Etapa 2 | só tela |
-| N8 avaliação e mimo | ok | Etapa 2 | test-v4-admin (mimo por pedido e telefone, entrega ao concluir, review_settings), test-v4-pedido e test-v4-qa-gaps (`post_payment`) |
-| N9 benchmarking | não se aplica | Etapa 2 | só tela/docs (A5) |
-| N10 encomenda com data | ok | Etapa 2 | test-v4-agenda (janelas, recusas, loja fechada, 6 em paralelo com vaga 1, sweep) |
-| N11 Mais pedido e prazo | ok | Etapa 2 | test-v4-agenda (best_seller, ajuste desligado, delivery_eta no menu) |
-| retry_payment | ok | Etapa 2 | test-v4-f3 (Pix/cartão, recusas, limites, `?o=`, aviso antigo `stale`) |
-| U-01 Pix reabre | ok | Etapa 2 | test-v4-pedido (Pix volta enquanto pendente, aprovado apaga, vencido não volta) |
-| U-02 a U-05 | não se aplica | Etapa 2 | só tela |
-| U-06 aviso de pedido | ok (push) | Etapa 2 (som, título) | test-v4-admin (VAPID ausente, inscrição, aviso cifrado, 410) |
-| S-01 senha e teto | ok | Etapa 2 | test-v4-admin (403 `weak_password_blocked` em produção, teto de 50 falhas) |
-| O-01 health | ok | Etapa 2 | test-v4-admin (`/api/health` sim/não, 401 derruba, `health_detail`) |
-| P-01, P-02 | não se aplica | Etapa 2 | só tela (A5) |
+| N1 status único | ok | ok | test-v4-qa-status, test-v4-pedido, test-v4-qa-gaps; tela: kanban com 4 colunas e os pedidos ZZ na coluna certa (Aguardando pagamento com Pix pendente e pagamento falhou), "Meus pedidos" e pedido.html com `status_label` |
+| N2 "Volto logo" abre | ok (servidor recusa pausado) | parcial | faixa "Volto logo" aparece no produto pausado do dev (print home-1366). Abrir o produto pausado não foi testado no navegador |
+| N3 Clube por itens | ok | ok | checkout logado: prêmio ZZ (60 pontos) para marcar, pedido manda só `rewards [{reward_id, qty}]`, item grátis no resumo; pedido real reservou 60 pontos (saldo 200 para 140); conta mostra saldo e prêmio; painel lista o prêmio |
+| N4 fim dos sinônimos | ok | não testado | fora do roteiro da Etapa 2 (backend coberto) |
+| N5 relatórios | ok | ok | painel: Vendas e Clientes abrem nos 3 tamanhos (prints filtrados para linhas ZZ) |
+| N6 cupons | ok | ok | ZZV4A6 aplicado pelo servidor (R$ 0,80 de R$ 8,00); código inválido mostra erro; com prêmio do Clube o cupom é recusado ("não pode ser usado junto"); pedido real gravou desconto 80 e total 720; painel lista o cupom |
+| N7 Quem somos | não se aplica | ok (ver A6-02) | texto oficial sem `CONFIRMAR`, morango e chocolate carregados; botão do Instagram fica escondido com `INSTAGRAM_URL` vazio e aparece com config.js moqueado |
+| N8 avaliação e mimo | ok | ok | painel 1366: "Cliente avaliou: dar mimo" no pedido pago antigo; pedido pago novo do mesmo telefone (criado no meio do teste) chega com "Mimo: 1 brigadeirinho" no card e "Mimo para entregar" / "Cancelar mimo" no detalhe; celular mostra o selo na aba Pagos |
+| N9 benchmarking | não se aplica | ok (A5) | prints "depois" do A5 (seção 4) |
+| N10 encomenda com data | ok | ok | checkout: "Agendar", 8 dias, janela escolhida, pedido manda `scheduled_for`; pedido real gravado com data; painel: selo "Agendado: ..." no card, filtro Agendados, resumo e edição dos 4 ajustes (sem salvar) |
+| N11 Mais pedido e prazo | ok | ok | selo "Mais pedido" no card ZZ pelo caminho real (1 pedido ZZ pago com 6 un.); número de selos na tela = `best_seller` do `/api/menu`; "chega em 30 a 50 min" no topo; ajustes de prazo e selo no painel |
+| retry_payment | ok | ok | pedido.html `?t=` e `?o=` com pagamento falhou: "Gerar novo pagamento" manda `{t}` ou `{o}` + `payment_choice` (moqueado) e mostra o Pix novo com Copiar; pedido real sem pagamento (MP placeholder) mostra o bloco "Gerar novo pagamento" e WhatsApp |
+| U-01 Pix reabre | ok | ok | `?o=` logada: o Pix guardado do pedido ZZ volta (real); `?o=` sem sessão pede para entrar |
+| U-02 a U-05 | não se aplica | ok (U-03 parcial) | U-02: "Falta só pagar o Pix", Copiar na primeira tela nos 3 tamanhos; U-04: frete no topo e no carrinho; U-05: faixa de confiança; U-03: loja aberta esconde a faixa (loja fechada não testada: regra de não fechar a loja do dev) |
+| U-06 aviso de pedido | ok (push) | ok | "Ativar som" vira "Som ligado"; título "(3) Pedidos pagos" sobe sozinho para "(4)" quando um pedido pago ZZ entra (refresh de 30 s) e o card novo fica destacado |
+| S-01 senha e teto | ok | não testado | admin ZZ sem senha fraca; aviso de senha fraca fora do roteiro |
+| O-01 health | ok | ok | `health_detail` moqueado com `unauthorized_24h: 3`: faixa "O Mercado Pago tentou avisar pagamentos e foi recusado..." no topo do painel |
+| P-01, P-02 | não se aplica | ok (A5) | prints "depois" do A5 |
 | A-02, A-07, A-10, S-04, S-06 | ok | - | test-v4-pedido, test-v4-admin, test-v4-qa-gaps |
+
+Sem erro de console em nenhuma tela (loja, pedido.html, Quem somos, conta e painel), nos 3 tamanhos.
 
 ## 3. Achados
 
 | ID | Severidade | Responsável | Achado |
 |---|---|---|---|
 | A6-01 | Baixo (processo) | Orquestrador / A2 | Outro agente rodou testes de banco junto com os meus (`test-admin.js` de outro worktree). A loja do dev ficou fechada por alguns segundos e 4 casos do test-v4-pedido deram 503 `store_closed`. Repetido sozinho: passou. Não é bug de código. |
+| A6-02 | Baixo | A4 (+ Renan) | Instagram em dois lugares. O campo do painel (`settings.instagram_url`, Ajustes > Avaliação no Google) só alimenta o bloco depois do pagamento. Quem somos e rodapé leem `window.INSTAGRAM_URL` de `public/config.js`, vazio no repo, e o botão fica escondido. Quem preencher só o painel não vê o botão em Quem somos. Sugestão: uma fonte só, ou avisar no painel que o rodapé usa o config.js. |
+| A6-03 | Baixo (UX) | A3 | No kanban, o card em "Aguardando pagamento" tem "Aceitar" como botão principal (vermelho), acima de "Conferir pagamento". Existe confirmação (`confirmUnpaid`), mas o destaque convida a aceitar pedido não pago. Sugestão: "Conferir pagamento" como principal nessa coluna. |
+| A6-04 | Baixo (visual) | A3 / A5 | Painel em 360: o texto da busca dos pedidos aparece cortado ("Buscar por código ou n") ao lado do botão de som. |
+| A6-05 | Info | A3 | O botão de som só troca o texto depois que `audio.play()` termina; numa execução levou mais de 800 ms sem retorno visual. |
+| A6-06 | Info | - | O dev não tem venda paga nos últimos 30 dias, então o selo "Mais pedido" nunca aparece no dev. Testado com 1 pedido ZZ pago de 6 un. (apagado). Com horário 00:00-23:59, a primeira janela agendada é 00:00-00:30: efeito do ajuste do dev. A observação anterior "Hoje (14/11)" no print do A5 veio do contexto moqueado: no fluxo real de 15/11 o 2º dia é "Amanhã (16/11)". |
+| A6-07 | Info | - | Depois de 3 execuções seguidas, o `coupon_check` respondeu "Muitas tentativas de cupom" (limite funcionando). Zerei só os `rate_hits` locais (127.0.0.1) antes de repetir. |
 
 Sobre `retry_payment`, a corrida entre o novo pagamento e o aviso atrasado do Pix antigo já está registrada pelo A1 (F5-S-02 Médio e F5-S-03 Baixo, `docs/planos/seguranca-v4-f5.md`). Não repeti aqui.
 
-## 4. Prints
+## 4. Prints e execução da Etapa 2
 
-Etapa 2 ainda não começou.
+Pasta: `C:\Users\menez\AppData\Local\gigi-tools\`. Scripts: `v4-a6-setup.js` (dados ZZ-v4-a6 no dev e limpeza), `v4-a6-loja.js`, `v4-a6-painel.js`. Resultado de cada execução em `v4-a6-loja-result-<vw>.json` e `v4-a6-painel-result-<vw>.json`.
+
+| Bloco | 360 | 390 | 1366 |
+|---|---|---|---|
+| Loja: visitante, pedido.html `?t=`/`?o=`, Quem somos, cliente logada | 38/38 | 38/38 (modo real: pedidos de verdade no dev, MP placeholder) | 38/38 |
+| Painel admin | 21/21 | 21/21 | 19/19, mais 23/24 no modo "novo" (mimo e título). A falha foi no passo Ajustes, por erro do script. Corrigi o script e repeti. |
+
+Moques com `page.route`: frete e CEP, POST `/api/order` (só nos tamanhos sem "real"), `?a=retry_payment`, `/api/order-status` no `?t=` falso, `health_detail`, `config.js` (Instagram). No painel, as respostas `orders`, `order_history`, `report_customers`, `coupon_audience`, `coupon_campaign`, `review_gifts` e `audit` são filtradas no navegador para só linhas ZZ (o dev é cópia da produção). Ações que mudam ajuste ou fecham a loja ficam bloqueadas no script.
+
+Prints da loja (`v4-a6-loja-<passo>-<vw>.png`, 47): home, selo-mais-pedido, carrinho, checkout-cupom, checkout-quando, pix, pedido-falhou, pedido-pix-novo, pedido-o-sem-login, quem-somos, conta-pedidos, conta-pontos, pedido-o-pix, pedido-o-novo-pix, checkout-clube; no 390 também pedido-real-sem-pagamento e pedido-real-clube.
+
+Prints do painel (`v4-a6-painel-<passo>-<vw>.png`, 41): login, kanban, kanban-a-pagar e kanban-pagos (celular), agendados, clube, cupons, relatorio-vendas, relatorio-clientes, ajustes-resumo, ajustes-editar, ajustes-vitrine, cardapio; no 1366 também pedido-detalhe, mimo-registrado, mimo-pedido-novo e mimo-detalhe.
+
+Prints "depois" do A5 (execução separada, servidor da v4-a6 na porta 3405): `v4-a5-f4b.js depois all skip` e `depois all audit`, 62 arquivos `v4-a5-f4b-depois-*-{360,390,1366}.png`, auditoria em `v4-a5-tmp/f4b-audit-depois-all.json`. Comparado com o "antes": alvos pequenos de 4 para 0, foco sem contorno de 3 para 0, nenhum estouro horizontal. Só sobra 1 contraste baixo, o texto em curva "acompanhe" (SVG `textPath`) do checkout, 3,94:1, que já existia no "antes".
+
+Fim da Etapa 2: `v4-a6-setup.js clean` sem sobras (pedidos, clientes, produtos, admin e cupons ZZ-v4-a6 = 0; nenhuma sessão órfã; mimos ZZ = 0). Ajustes, horários (00:00-23:59) e estado da loja iguais ao snapshot. Servidor 3406 encerrado, nenhum Edge aberto. Sobras do A5 (2 pedidos e 1 cliente `ZZ-a5` de 13/11) não são minhas e ficaram.
