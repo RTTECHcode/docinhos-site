@@ -50,3 +50,25 @@
   for = "/api/order-status"
   [headers.values]
     Cache-Control = "no-store"
+
+# v4 F7 P-04/P-05: /api/menu não lê sessão nem cookie (igual para todos), então a CDN pode guardar 60 s.
+
+[[headers]]
+  for = "/api/menu"
+  [headers.values]
+    Cache-Control = "public, max-age=0, s-maxage=60, stale-while-revalidate=300"
+
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/images/*"
+  [headers.values]
+    Cache-Control = "public, max-age=2592000"
