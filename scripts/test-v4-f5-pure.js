@@ -39,6 +39,16 @@ async function t(name, fn) {
     assert.equal(payments.isSuperseded({ id: 999, status: 'cancelled', date_created: old }, { payment_attempt_at: at, payment_id: null }), true);
   });
 
+  console.log('F5-S-05: IP fora da auditoria do staff');
+  const adm = require('../api/admin')._internal;
+  await t('ações com IP só para admin; IP mascarado no detalhe para staff', () => {
+    for (const a of ['login_falhou', 'recuperacao_falhou', 'login_senha_curta_bloqueado', 'login_teto_diario']) assert.ok(adm.ADMIN_ONLY_AUDIT.includes(a), a);
+    assert.equal(adm.maskIp('ip 203.0.113.7'), 'ip (oculto)');
+    assert.equal(adm.maskIp('ip 2001:db8::1'), 'ip (oculto)');
+    assert.equal(adm.maskIp('Pedido DG-0001 pago'), 'Pedido DG-0001 pago');
+    assert.equal(adm.maskIp(null), null);
+  });
+
   console.log(`\n${pass} ok, ${fail} falha(s)`);
   if (fail) process.exitCode = 1;
 })();

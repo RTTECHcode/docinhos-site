@@ -960,11 +960,16 @@ A.password_change = { m: 'POST', fn: async ({ body, user }) => {
 } };
 
 // Eventos com IP e usuário DIGITADO (pode ser senha colada no campo errado) ficam só para o admin (A1-08).
-const ADMIN_ONLY_AUDIT = ['login_falhou', 'recuperacao_falhou'];
-A.audit = { m: 'GET', fn: async ({ user }) => ({
-  rows: await q(`select id, username, action, detail, at from admin_audit
-                  where $1::boolean or action <> all($2::text[]) order by at desc, id desc limit 50`, [user.role === 'admin', ADMIN_ONLY_AUDIT])
-}) };
+// F5-S-05: login_senha_curta_bloqueado (com IP) e login_teto_diario também só para o admin. Para o staff, qualquer
+// "ip <endereço>" que sobrar no detalhe (ex.: login_ok) sai mascarado.
+const ADMIN_ONLY_AUDIT = ['login_falhou', 'recuperacao_falhou', 'login_senha_curta_bloqueado', 'login_teto_diario'];
+const maskIp = detail => (typeof detail === 'string' ? detail.replace(/\bip [0-9A-Fa-f:.]+(\.zz)?/g, 'ip (oculto)') : detail);
+A.audit = { m: 'GET', fn: async ({ user }) => {
+  const isAdmin = user.role === 'admin';
+  const rows = await q(`select id, username, action, detail, at from admin_audit
+                  where $1::boolean or action <> all($2::text[]) order by at desc, id desc limit 50`, [isAdmin, ADMIN_ONLY_AUDIT]);
+  return { rows: isAdmin ? rows : rows.map(r => ({ ...r, detail: maskIp(r.detail) })) };
+} };
 
 A.users = { m: 'GET', role: 'admin', fn: async () => ({
   users: await q('select id, username, role, active, weak_password, created_at, last_login_at from admin_users order by id')
@@ -1663,7 +1668,7 @@ async function handler(req, res) {
 }
 
 module.exports = handler;
-module.exports._internal = {
+module.exports._internal = { maskIp, ADMIN_ONLY_AUDIT,
   hashPassword, verifyPassword, evaluateLock, parseCommand, norm, detectImage, decodeImage, sameOrigin, isJsonType,
   vId, vInt, vStr, vBool, vCents, vEnum, vUsername, vPassword, vKey, HttpError, MSG_ACTIVE_NEEDS_PRICE, FILTER_STATUSES, DEFAULT_SETTINGS, SESSION_COOKIE, expandTerms, textMatches, searchByTerms,
   USER_DAY_MAX, USER_SPREAD_MAX, weakBlocked, MIN_PASSWORD_PROD, A
