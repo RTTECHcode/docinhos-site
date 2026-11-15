@@ -444,3 +444,9 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
 .crop-stage + .field input[type="range"] { width: 100%; min-height: var(--tap); }
 /* só para leitor de tela */
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* O-01 compacto no celular */
+@media (max-width: 600px) {
+  .wh-warn { padding: 6px 10px; font-size: 12.5px; line-height: 1.3; margin-top: 6px; }
+  .wh-warn .wh-when { display: none; }
+}
