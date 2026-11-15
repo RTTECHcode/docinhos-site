@@ -70,7 +70,8 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F7 A4 loja + F6 domínio | feito | v4-a4 | 237e01b; contém v4-a2; junta depois dos testes de banco do A2; Instagram precisa do A2 expor instagram_url no /api/menu |
 | F7 A5 visual | feito (7d99226) | v4-a5 | 81cbd6c; contém v4-a4 e v4-a2; fontes locais (CSP sem Google), nova aba, .pay-again, contraste 5,84 |
 | F7 limpeza worktrees | bloqueado | — | 22 antigas limpas e contidas na main; a10-account removida pela metade (Permission denied, OneDrive); prune negado pelo classificador; decisão do Renan |
-| F7 limpeza final | em andamento | v4-a7 | Sonnet; docs sem vercel.app, start, scripts/migracoes, npm test, A-04, O-03, Instagram da API no front |
+| F7 limpeza final | feito | v4-a7 | fc59d8f; npm test/test:puro, scripts/migracoes (v4-schema AINDA NÃO rodou em produção), README Netlify, A-04, O-03 (dry-run), Instagram da API |
+| F7 regressão final | em andamento | v4-a6b | Sonnet; npm test completo + fumaça no navegador |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
 
 Pendências do A5 para a F3: A4 aplica morango/chocolate no Quem somos, faixa de confiança, P-06, P-12. Fora da faixa de todos (vão para o A4 na F3): vercel.json e raiz de public/ (P-04 cache do menu, P-05 cache de estáticos, P-07 fontes locais + CSP, P-09 robots/sitemap, P-10 404, manifest da loja).
@@ -86,3 +87,4 @@ Antes do merge na main: Renan cadastra SITE_URL=https://docinhos-site.vercel.app
 Relatório: depois do merge na main, a Vercel publica canonical/og apontando para o domínio; apontar o DNS logo. Imagens de /images com cache de 30 dias (trocar foto estática = nome novo). Cardápio com cache de 60 s.
 Números (preço, total, pontos, contadores, timer) em Fredoka 600, aprovado pelo Renan em 15/11 a pedido da Gigi; títulos seguem na Bagel Fat One (v4-a5).
 Interferência: às 05:06-05:10 UTC de 15/11 algum test-admin-painel alheio fechou a loja do dev até 05:08 e não restaurou; o A2 restaurou o store_state.
+Caminhos novos: scripts/migracoes/migrate-2026-11-12-v4-schema.js e scripts/migracoes/conferir-pagamento.js. A-06 (escrita na leitura do saldo de pontos) fica para a v5.
