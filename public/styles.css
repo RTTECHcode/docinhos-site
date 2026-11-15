@@ -806,7 +806,7 @@ body.modal-open { overflow: hidden; }
   display: grid; place-items: center;
   width: 72px; height: 72px; padding: 0;
   border-radius: 50%;
-  background: var(--brand); color: var(--manteiga);
+  background: #b8324a; /* texto em arco branco: 5,8:1 (AA) */ color: var(--manteiga);
   border: 2px solid var(--brand-deep);
   box-shadow: 0 4px 0 var(--brand-deep), 0 16px 24px -10px rgba(156, 42, 64, .7);
   cursor: pointer;
@@ -1009,10 +1009,11 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
 }
 
 /* v4 F3: "Gerar novo pagamento" do mesmo pedido (checkout e rastreio) */
-.pay-again { display: grid; gap: 10px; width: 100%; }
+.pay-again { display: grid; gap: 12px; width: 100%; padding: 14px; background: #fff; border: 2px solid var(--chip-line); border-radius: var(--radius-md); }
 .pay-again[hidden] { display: none; }
 .pay-again-choice { display: flex; flex-wrap: wrap; gap: 10px; border: 0; margin: 0; padding: 0; min-width: 0; }
-.pay-again-choice legend { font-size: .9rem; font-weight: 800; color: var(--cacau); margin-bottom: 6px; padding: 0; }
+.pay-again-choice legend { font-size: .95rem; font-weight: 800; color: var(--cacau); margin-bottom: 8px; padding: 0; }
+.pay-again .radio { min-height: 48px; border-radius: var(--radius-sm); }
 .pay-again-status { min-height: 1.2em; font-size: .9rem; font-weight: 700; color: var(--ink-soft); }
 .pay-again-status:empty { min-height: 0; }
 .pay-again-status.warn { color: var(--brand-deep); }
