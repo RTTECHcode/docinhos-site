@@ -280,7 +280,7 @@
     stop,
     async render(view) {
       stop();
-      const searchInput = el('input', { class: 'search', type: 'search', placeholder: 'Buscar por código ou nome', maxlength: 60, value: st.search, 'aria-label': 'Buscar pedido' });
+      const searchInput = el('input', { class: 'search', type: 'search', placeholder: 'Código ou nome', maxlength: 60, value: st.search, 'aria-label': 'Buscar pedido por código ou nome' });
       let debounce = null;
       searchInput.addEventListener('input', () => {
         clearTimeout(debounce);
