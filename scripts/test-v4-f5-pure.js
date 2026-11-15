@@ -49,6 +49,17 @@ async function t(name, fn) {
     assert.equal(adm.maskIp(null), null);
   });
 
+  console.log('A6-02: instagram_url público');
+  await t('publicInstagramUrl: só https://(www.)instagram.com com caminho; resto null', () => {
+    const { publicInstagramUrl: ig } = require('../api/_lib/gifts');
+    assert.equal(ig('https://www.instagram.com/docinhosdagigi'), 'https://www.instagram.com/docinhosdagigi');
+    assert.equal(ig('  https://Instagram.com/docinhosdagigi/  '), 'https://instagram.com/docinhosdagigi/');
+    for (const bad of [undefined, null, '', 42, 'https://instagram.com', 'https://instagram.com/', 'http://instagram.com/x',
+      'https://instagram.com.evil.com/x', 'https://evilinstagram.com/x', 'https://m.instagram.com/x', 'https://u:p@instagram.com/x',
+      'https://instagram.com:8443/x', 'javascript:alert(1)', 'https://instagram.com/x y', 'https://instagram.com/"x', 'https://instagram.com/' + 'a'.repeat(300)])
+      assert.equal(ig(bad), null, String(bad));
+  });
+
   console.log(`\n${pass} ok, ${fail} falha(s)`);
   if (fail) process.exitCode = 1;
 })();
