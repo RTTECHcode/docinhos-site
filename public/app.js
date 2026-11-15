@@ -1334,8 +1334,6 @@ async function checkCoupon(raw) {
     const body = { code, items: itemsPayload() };
     const rw = rewardsPayload();
     if (rw.length) body.rewards = rw;
-    const ph = digitsOf(field('phone').value);
-    if (!account && ph.length >= 10) body.phone = ph; // limite por cliente (logado usa o telefone da conta)
     const r = await fetch('/api/customer?a=coupon_check', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let d = {};
     try { d = await r.json(); } catch { /* corpo não-JSON */ }
