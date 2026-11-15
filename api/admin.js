@@ -25,6 +25,7 @@ const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data m
 const showcase = require('./_lib/showcase'); // v4 N11: selo "Mais pedido" e prazo de entrega
 const monitor = require('./_lib/monitor');
 const push = require('./_lib/push');
+const { isProduction } = require('./_lib/env');
 
 const SESSION_COOKIE = '__Host-dg_admin';
 const SESSION_TTL_MS = 12 * 3600 * 1000;
@@ -415,7 +416,7 @@ async function noteDailyCap(username) {
 }
 // S-01: em produção, senha com menos de 8 caracteres não entra (força a troca pela recuperação).
 const MIN_PASSWORD_PROD = 8;
-const weakBlocked = password => process.env.VERCEL_ENV === 'production' && password.length < MIN_PASSWORD_PROD;
+const weakBlocked = password => isProduction() && password.length < MIN_PASSWORD_PROD; // F6 M3: APP_ENV, fail-closed
 const recordAttempt = (username, ip, ok) =>
   q('insert into login_attempts (username, ip, ok) values ($1, $2, $3)', [String(username).slice(0, 64), ip, ok]);
 

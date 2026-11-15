@@ -3,6 +3,7 @@ const payments = require('./_lib/payments');
 const { recordWebhookEvent } = require('./_lib/monitor');
 const { hitExceeded } = require('./_lib/rate-limit');
 const { clientIp } = require('./_lib/auth');
+const { isProduction } = require('./_lib/env');
 const getSql = () => require('./_lib/db'); // carregado sob demanda: o parser é testado sem DATABASE_URL
 
 // Extrai ts e v1 do header x-signature ("ts=...,v1=...").
@@ -45,7 +46,7 @@ function signatureProblem({ secret, signatureHeader, requestId, dataId, nowMs = 
     .digest('hex');
   const a = Buffer.from(expected);
   const b = Buffer.from(v1);
-  if (!(a.length === b.length && crypto.timingSafeEqual(a, b))) return 'HMAC diferente (segredo da Vercel não confere com a assinatura secreta do app no Mercado Pago?)';
+  if (!(a.length === b.length && crypto.timingSafeEqual(a, b))) return 'HMAC diferente (segredo da variável de ambiente não confere com a assinatura secreta do app no Mercado Pago?)';
   return null;
 }
 
@@ -100,8 +101,9 @@ module.exports = async (req, res) => {
   const { type, dataId } = parseNotification(req.query, req.body);
 
   const secret = (process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim();
-  if (!secret && process.env.VERCEL_ENV === 'production') {
-    // Fail-closed: em produção, sem segredo não há como validar a origem da notificação.
+  if (!secret && isProduction()) {
+    // Fail-closed: em produção, sem segredo não há como validar a origem da notificação. F6 M3 (S-05): produção é o
+    // padrão (APP_ENV ausente ou desconhecido); só APP_ENV=development/preview ou NODE_ENV=test aceitam sem segredo.
     console.error('MERCADOPAGO_WEBHOOK_SECRET não definido em produção: notificação recusada.');
     return res.status(500).json({ error: 'Configuração ausente' });
   }

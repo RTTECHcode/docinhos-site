@@ -23,9 +23,9 @@ const U = 'zz-v4-a2-';
 const Q = (t, p = []) => sql.query(t, p);
 const HOST = 'painel.test.local';
 const ENV_PUB = 'VAPID_PUBLIC_KEY', ENV_PRIV = 'VAPID_' + 'PRIVATE_KEY', ENV_SUBJ = 'VAPID_SUBJECT';
-const ORIGINAL_VERCEL_ENV = process.env.VERCEL_ENV;
+const ORIGINAL_APP_ENV = process.env.APP_ENV;
 delete process.env[ENV_PUB]; delete process.env[ENV_PRIV]; delete process.env[ENV_SUBJ];
-delete process.env.VERCEL_ENV;
+process.env.APP_ENV = 'development'; // F6 M3: fora de produção, salvo no teste da senha curta
 let ipN = 0;
 const nextIp = () => `203.0.113.${(++ipN % 250) + 1}`; // TEST-NET-3
 const rnd = n => Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join('');
@@ -261,9 +261,9 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
     await t('produção: senha certa mas curta = 401 igual à senha errada (F5-S-07), sem sessão, conta falha; fora de produção entra', async () => {
       const shortPass = 'Ab1-' + rnd(3); // 7 caracteres
       const SH = await adminUser('curta', 'staff', shortPass);
-      process.env.VERCEL_ENV = 'production';
+      process.env.APP_ENV = 'production';
       let r;
-      try { r = await login(SH, shortPass); } finally { delete process.env.VERCEL_ENV; }
+      try { r = await login(SH, shortPass); } finally { process.env.APP_ENV = 'development'; }
       const wrong = await login(SH, shortPass + 'x');
       assert.equal(r.status, 401); assert.equal(cookieOf(r), null);
       assert.deepEqual(r.json, wrong.json, 'mesma resposta da senha errada');
@@ -415,7 +415,7 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
   } finally {
     global.fetch = realFetch;
     delete process.env[ENV_PUB]; delete process.env[ENV_PRIV]; delete process.env[ENV_SUBJ];
-    if (ORIGINAL_VERCEL_ENV !== undefined) process.env.VERCEL_ENV = ORIGINAL_VERCEL_ENV;
+    if (ORIGINAL_APP_ENV !== undefined) process.env.APP_ENV = ORIGINAL_APP_ENV; else delete process.env.APP_ENV;
     await restoreReview();
     await cleanup();
     const [left] = await Q(`select (select count(*) from admin_users where username like $1)::int u, (select count(*) from orders where customer_name like $2 or customer_name like $3)::int o,
