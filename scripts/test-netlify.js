@@ -149,6 +149,30 @@ async function t(name, fn) {
     r = await createHandler(async (req, res) => res.redirect(303, '/pedido.html?ok=1'), 'order', { rules })(ev());
     assert.equal(r.statusCode, 303); assert.equal(r.headers.Location, '/pedido.html?ok=1');
   });
+  await t('CSV dos relatórios N5 (res.setHeader + res.end, como api/admin.js): tipo, attachment, BOM e acentos intactos', async () => {
+    const { csvDoc } = require('../api/_lib/reports');
+    const body = csvDoc(['Nome', 'Cidade', 'Total (R$)'], [['ZZ Conceição Ávila', 'São Paulo', '12,50'], ['=ZZ fórmula', 'Jundiaí', '0,00']]);
+    // Mesmo caminho de api/admin.js (resultado __csv): statusCode, dois setHeader e end(texto).
+    const h = createHandler(async (req, res) => {
+      res.setHeader('Cache-Control', 'no-store');
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="clientes-2026-11-15.csv"');
+      return res.end(body);
+    }, 'admin', { rules });
+    const r = await h(ev({ rawQuery: 'a=report_customers_csv' }));
+    assert.equal(r.statusCode, 200);
+    assert.equal(r.headers['Content-Type'], 'text/csv; charset=utf-8');
+    assert.equal(r.headers['Content-Disposition'], 'attachment; filename="clientes-2026-11-15.csv"');
+    assert.equal(r.isBase64Encoded, false, 'texto: sem base64');
+    assert.equal(r.body, body, 'corpo idêntico');
+    assert.equal(r.body.charCodeAt(0), 0xfeff, 'BOM UTF-8 preservado');
+    assert.ok(r.body.includes('"ZZ Conceição Ávila";"São Paulo"') && r.body.includes('"Jundiaí"'), 'acentos intactos');
+    assert.ok(r.body.includes(`"'=ZZ fórmula"`), 'fórmula neutralizada segue');
+    // Bytes que a Netlify entrega: o texto do resultado em UTF-8 começa com EF BB BF.
+    assert.deepStrictEqual([...Buffer.from(r.body, 'utf8').subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+    assert.ok(Buffer.from(r.body, 'utf8').equals(Buffer.from(body, 'utf8')));
+  });
   await t('erro no handler ou handler sem resposta: 500 "Erro interno", sem detalhe', async () => {
     const quiet = console.error; console.error = () => {};
     try {

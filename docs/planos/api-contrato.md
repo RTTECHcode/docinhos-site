@@ -22,7 +22,7 @@ Campos novos (os antigos continuam):
       "groups": [{ "id": 12, "key": "frutas", "label": "Frutas", "minChoices": 0, "maxChoices": 2 }],
       "unavailable": true, "paused": true }
   ]}],
-  "settings": { "storeAddress": "...", "deliveryFeeCents": 0, "storePaused": false, "storePausedMessage": "" },
+  "settings": { "storeAddress": "...", "deliveryFeeCents": 0, "storePaused": false, "storePausedMessage": "", "instagram_url": "https://www.instagram.com/..." },
   "store": { "open": true, "reason": null, "reopens_at": null, "next_open_at": null, "closes_at": "2026-11-10T21:00:00.000Z", "message": null },
   "shipping": { "bands": [{ "max_km": 3, "fee_cents": 600 }, { "max_km": 6, "fee_cents": 900 }, { "max_km": 10, "fee_cents": 1400 }], "maxKm": 10, "pickupFeeCents": 0 }
 }
@@ -615,3 +615,10 @@ Resposta: `{ settings: { ...campos acima, limits: { scheduling_min_lead_min: [0,
 | F5-S-06 | `health_detail` só admin (staff: 403). O painel só consulta para o admin. Decisão do A0. |
 | F5-S-07 | Login com senha certa porém curta em produção: 401 com a mesma mensagem da senha errada (`Usuário ou senha incorretos. Se a sua senha tem menos de 8 caracteres, use "Esqueci minha senha" para criar uma nova.`). Conta como falha. Sai o 403 `weak_password_blocked`. Motivo real só na auditoria do admin. |
 | F5-S-08 | `coupon_check` sem sessão ignora `phone` (ver 10.3). O limite por pessoa do visitante é conferido no pedido. |
+
+### 10.16 Instagram no cardápio (A6-02)
+
+`GET /api/menu` passa a trazer `settings.instagram_url`: o mesmo ajuste `instagram_url` do pós-pagamento (`review_settings_save`), para o front (whatsapp.js) não manter o link fixo.
+- Validado no servidor a cada resposta: só `https://instagram.com/...` ou `https://www.instagram.com/...`, com caminho, sem usuário, senha ou porta, até 300 caracteres. Ausente, vazio ou fora disso: `null` (o front esconde o botão).
+- Não é dado de sessão: o cache curto do `/api/menu` (`s-maxage=60`, do A4) pode valer para ele; uma troca no painel aparece em até 1 min.
+- O pós-pagamento (`post_payment.instagram_url` em `/api/order-status`) não mudou.

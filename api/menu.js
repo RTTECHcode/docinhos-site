@@ -5,6 +5,7 @@ const { getRules } = require('./_lib/loyalty');
 const club = require('./_lib/club'); // v4 N3: prêmios do Clube (vitrine)
 const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data marcada
 const showcase = require('./_lib/showcase'); // v4 N11: selo "Mais pedido" e prazo de entrega
+const { publicInstagramUrl } = require('./_lib/gifts'); // A6-02: link do Instagram (validado)
 // Produto sem preço e sem tamanho disponível: aparece, mas não pode ir para o carrinho (o pedido recusaria no fim).
 const NO_PRICE_LABEL = 'Consulte pelo WhatsApp';
 module.exports = async (req, res) => {
@@ -23,7 +24,7 @@ module.exports = async (req, res) => {
       order by c.kind, c.name
     `;
     // Configurações da loja (painel /admin). Valores padrão se a chave ainda não existir.
-    const settingRows = await sql`select key, value from settings where key in ('store_address', 'delivery_fee_cents', 'store_paused', 'store_paused_message')`;
+    const settingRows = await sql`select key, value from settings where key in ('store_address', 'delivery_fee_cents', 'store_paused', 'store_paused_message', 'instagram_url')`;
     const st = {};
     for (const s of settingRows) st[s.key] = s.value;
     // Estado da loja (horário + fechamento manual) e faixas de frete (públicas, o cliente só vê; o servidor recalcula).
@@ -34,7 +35,9 @@ module.exports = async (req, res) => {
       storeAddress: st.store_address || 'Manoel Hare Peralta, 101',
       deliveryFeeCents: Number.parseInt(st.delivery_fee_cents, 10) || 0, // legado: o frete real vem de shipping.bands
       storePaused: !store.open, // compatível com a loja antiga: true quando fechada (horário ou manual)
-      storePausedMessage: store.open ? '' : (store.message || '')
+      storePausedMessage: store.open ? '' : (store.message || ''),
+      // A6-02 (v4): link do Instagram dos Ajustes (o mesmo do pós-pagamento). Só https://(www.)instagram.com/...; senão null.
+      instagram_url: publicInstagramUrl(st.instagram_url)
     };
     const groupRows = await sql`
       select id, product_id, key, label, min_choices, max_choices
