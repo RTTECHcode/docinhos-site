@@ -62,15 +62,15 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F3 A3 | feito | v4-a3 | 5972489; N1, N3-N6, N8, N10, N11, U-06 (som, PWA, push), O-01; 44 prints |
 | F4 A5 revisão | feito | v4-a5 | 6c46ab2; só CSS: toque 44 px, Quando? em 360, pós-pagamento, foco, barra do Clube; prints "depois" interrompidos por falta de memória (A6 cobre na F5) |
 | F5 A1 segurança | feito | v4-a1 | 9f17bb2; 0 Crítico/Alto; 2 Médios (F5-S-01, S-02) e 7 Baixos em seguranca-v4-f5.md |
-| F5 A2 correções + F6 Netlify | código pronto | v4-a2 | c824d72; F5-S-01 a S-08, M1-M6; testes sem banco ok; testes de banco esperam o fim do A6 etapa 2 |
+| F5 A2 correções + F6 Netlify | feito | v4-a2 | 7216106; F5-S-01 a S-08, M1-M6, CSV no adaptador, instagram_url no /api/menu; 22 suítes de banco ok (2 interferências externas repetidas ok) |
 | F5 A6 QA etapa 1 | feito | v4-a6 | 6613581; 20 suítes + 2 novas ok, sem bug; colisão com teste alheio (A6-01) repetida ok |
 | F5 A6 QA etapa 2 | feito | v4-a6 | 8503dcd; loja 38/38 x3, painel ok, 0 erro de console; só Baixos/Info (A6-02 a A6-07) em qa-v4.md |
 | F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
 | F7 A3 painel | feito | v4-a3 | 2e0e30e; F-01 (prévia quadrada, arrastar/zoom, 800x800 WebP), A6-03/04/05, O-01 63 para 47 px, nova aba; 3 erros 404 de recurso com API moqueada (A6 confere) |
-| F7 A4 loja + F6 domínio | feito, aguarda merge | v4-a4 | 237e01b; contém v4-a2; junta depois dos testes de banco do A2; Instagram precisa do A2 expor instagram_url no /api/menu |
-| F7 A5 visual | feito, aguarda merge | v4-a5 | 81cbd6c; contém v4-a4 e v4-a2; fontes locais (CSP sem Google), nova aba, .pay-again, contraste 5,84 |
+| F7 A4 loja + F6 domínio | feito | v4-a4 | 237e01b; contém v4-a2; junta depois dos testes de banco do A2; Instagram precisa do A2 expor instagram_url no /api/menu |
+| F7 A5 visual | feito (7d99226) | v4-a5 | 81cbd6c; contém v4-a4 e v4-a2; fontes locais (CSP sem Google), nova aba, .pay-again, contraste 5,84 |
 | F7 limpeza worktrees | bloqueado | — | 22 antigas limpas e contidas na main; a10-account removida pela metade (Permission denied, OneDrive); prune negado pelo classificador; decisão do Renan |
-| F7 A4, A5, A2, limpeza | aguardando | — | depois do A3 e dos testes de banco do A2 (máx. 2 agentes pesados) |
+| F7 limpeza final | em andamento | v4-a7 | Sonnet; docs sem vercel.app, start, scripts/migracoes, npm test, A-04, O-03, Instagram da API no front |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
 
 Pendências do A5 para a F3: A4 aplica morango/chocolate no Quem somos, faixa de confiança, P-06, P-12. Fora da faixa de todos (vão para o A4 na F3): vercel.json e raiz de public/ (P-04 cache do menu, P-05 cache de estáticos, P-07 fontes locais + CSP, P-09 robots/sitemap, P-10 404, manifest da loja).
@@ -85,3 +85,4 @@ Dev: sobram 2 pedidos e 1 cliente ZZ-a5 de 13/11 (do A5); apagar na F7.
 Antes do merge na main: Renan cadastra SITE_URL=https://docinhos-site.vercel.app na Vercel (senão o MP volta para o domínio que ainda não aponta). Analytics: CSP precisa de static.cloudflareinsights.com (script-src) e cloudflareinsights.com (connect-src).
 Relatório: depois do merge na main, a Vercel publica canonical/og apontando para o domínio; apontar o DNS logo. Imagens de /images com cache de 30 dias (trocar foto estática = nome novo). Cardápio com cache de 60 s.
 Números (preço, total, pontos, contadores, timer) em Fredoka 600, aprovado pelo Renan em 15/11 a pedido da Gigi; títulos seguem na Bagel Fat One (v4-a5).
+Interferência: às 05:06-05:10 UTC de 15/11 algum test-admin-painel alheio fechou a loja do dev até 05:08 e não restaurou; o A2 restaurou o store_state.
