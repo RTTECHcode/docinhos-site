@@ -26,6 +26,26 @@
 <link rel="apple-touch-icon" href="/images/branding/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css">
+<!-- v4 P-08: dados estruturados (JSON, não executa). Única exceção à regra de script inline; sem horário fixo porque o site só mostra o horário do dia pelo painel. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Bakery",
+  "name": "Docinhos da Gigi",
+  "url": "https://docinhosdagigioz.com.br/",
+  "image": "https://docinhosdagigioz.com.br/images/branding/compartilhar.jpg",
+  "telephone": "+5511987882303",
+  "servesCuisine": "Doces artesanais",
+  "address": {
+    "@type": "PostalAddress",
+    "streetAddress": "Manoel Hare Peralta, 101",
+    "addressLocality": "Osasco",
+    "addressRegion": "SP",
+    "addressCountry": "BR"
+  },
+  "areaServed": { "@type": "City", "name": "Osasco", "containedInPlace": { "@type": "State", "name": "São Paulo" } }
+}
+</script>
 </head>
 <body>
 <div class="topbar" id="topbar">
