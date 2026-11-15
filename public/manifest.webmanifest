@@ -1,0 +1,15 @@
+{
+  "name": "Docinhos da Gigi",
+  "short_name": "Docinhos da Gigi",
+  "description": "Doces artesanais em Osasco/SP. Peça pelo site e receba em casa ou retire na loja.",
+  "lang": "pt-BR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fff4ec",
+  "theme_color": "#3b1a12",
+  "icons": [
+    { "src": "/favicon.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/images/branding/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}
