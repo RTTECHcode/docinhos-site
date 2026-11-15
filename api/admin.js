@@ -361,27 +361,13 @@ function baseHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
 }
 const clientIp = auth.clientIp; // x-real-ip (Vercel) primeiro; x-forwarded-for só como reserva
-function parseCookies(header) {
-  const out = {};
-  if (typeof header !== 'string') return out;
-  for (const part of header.split(';')) {
-    const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
-  }
-  return out;
-}
+const parseCookies = auth.parseCookies; // um só (api/_lib/auth.js), igual para admin e cliente
 const sessionCookie = token => `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`;
 const clearCookie = () => `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`;
 
 // CSRF: toda requisição mutável precisa de Origin igual ao Host (e não pode vir de outro site).
-function sameOrigin(req) {
-  const origin = req.headers.origin, host = req.headers.host;
-  if (!origin || !host) return false;
-  const site = req.headers['sec-fetch-site'];
-  if (site && site !== 'same-origin' && site !== 'none') return false;
-  try { return new URL(origin).host === host; } catch { return false; }
-}
-const isJsonType = req => /^application\/json\s*(;|$)/i.test(String(req.headers['content-type'] || ''));
+const sameOrigin = auth.sameOrigin; // api/_lib/auth.js
+const isJsonType = auth.isJsonType;
 
 async function audit(username, action, detail) {
   try {

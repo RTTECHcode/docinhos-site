@@ -1,7 +1,7 @@
 // Migração do Painel v2 (F2: O1-O13). Idempotente e só aditiva: nada é apagado, renomeado nem reescrito.
-// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migrate-2026-11-10-painel-v2.js
-// Uso (produção, só com ordem do Renan): set -a && . ./.env && set +a && node scripts/migrate-2026-11-10-painel-v2.js
-const sql = require('../api/_lib/db');
+// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migracoes/migrate-2026-11-10-painel-v2.js
+// Uso (produção, só com ordem do Renan): set -a && . ./.env && set +a && node scripts/migracoes/migrate-2026-11-10-painel-v2.js
+const sql = require('../../api/_lib/db');
 
 const DEFAULT_BANDS = JSON.stringify([
   { max_km: 3, fee_cents: 600 },

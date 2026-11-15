@@ -1,4 +1,4 @@
-// Limite de consultas por IP guardado no banco (tabela rate_hits, scripts/migrate-2026-11-10-rate-limits.js).
+// Limite de consultas por IP guardado no banco (tabela rate_hits, scripts/migracoes/migrate-2026-11-10-rate-limits.js).
 // Antes ficava num Map em memória: na Vercel cada instância tem a própria memória, então o limite valia por instância
 // e quem caísse em instâncias diferentes passava do teto.
 // Contagem por minuto: uma linha por (escopo, IP, minuto) com o total de chamadas daquele minuto. Sob ataque a tabela

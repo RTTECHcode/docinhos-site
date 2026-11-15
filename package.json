@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
-  "scripts": { "start": "vercel dev", "seed": "node scripts/seed.js" },
+  "scripts": {
+    "start": "node -r ./scripts/dev-env.js scripts/dev-server.js",
+    "seed": "node scripts/seed.js",
+    "test": "node scripts/run-tests.js",
+    "test:puro": "node scripts/run-tests.js --puro"
+  },
   "dependencies": { "@neondatabase/serverless": "^1.0.2" }
 }

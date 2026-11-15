@@ -189,7 +189,7 @@ async function logoutFromRequest(sql, req) {
 
 // ---------- Bloqueio por tentativas ----------
 // Login e recuperação: 5 erros = 30 min e 10 erros em 24 h = 24 h, por par telefone+IP (detalhes em lockMessage). Acerto zera a contagem do par.
-// Scopes (migração scripts/migrate-2026-11-10-scopes.js): 'login', 'recover', 'register' (cadastro, por IP; phone = '')
+// Scopes (migração scripts/migracoes/migrate-2026-11-10-scopes.js): 'login', 'recover', 'register' (cadastro, por IP; phone = '')
 // e 'password' (senha atual errada na troca de senha, phone = telefone da conta; contagem separada do login).
 // LEGADO: antes da migração, cadastro e troca de senha iam para scope 'login' com chaves falsas na coluna phone
 // ('#cadastro' e '#senha:+55...'). Essas linhas continuam sendo LIDAS (só lidas) dentro das mesmas janelas

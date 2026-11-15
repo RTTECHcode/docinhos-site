@@ -4,13 +4,13 @@
 //  - Só insere se club_rewards estiver vazia (idempotente: rodar de novo não duplica).
 //  - Escolhe os 3 produtos ativos mais baratos, com preço próprio e sem grupo de escolha obrigatória.
 //  - Custo em pontos = preço x 10 x pontos por real (ex.: R$ 5,00 com 1 ponto por real = 50 pontos, 10% de volta).
-// Uso: node -r ./scripts/dev-env.js scripts/migrate-2026-11-12-v4-club-seed.js
+// Uso: node -r ./scripts/dev-env.js scripts/migracoes/migrate-2026-11-12-v4-club-seed.js
 if (process.env.GIGI_ENV_LOADED !== '1') {
   console.error('Recusado: este script só roda no banco de desenvolvimento (node -r ./scripts/dev-env.js ...).');
   process.exit(1);
 }
-const sql = require('../api/_lib/db');
-const { getRules } = require('../api/_lib/loyalty');
+const sql = require('../../api/_lib/db');
+const { getRules } = require('../../api/_lib/loyalty');
 
 (async () => {
   const [{ n }] = await sql.query('select count(*)::int n from club_rewards');

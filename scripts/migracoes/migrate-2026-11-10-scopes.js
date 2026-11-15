@@ -3,9 +3,9 @@
 // Também cria a coluna orders.client_ip (limite de pedidos por IP, A1-05).
 // Idempotente e só aditiva: o CHECK novo aceita tudo o que o antigo aceitava; nenhuma linha ou coluna é apagada.
 // Rodar ANTES do deploy do código que usa os scopes novos e a coluna nova (senão o cadastro e o pedido falham).
-// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migrate-2026-11-10-scopes.js
-// Uso (produção, só com ordem do Renan): set -a && . ./.env && set +a && node scripts/migrate-2026-11-10-scopes.js
-const sql = require('../api/_lib/db');
+// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migracoes/migrate-2026-11-10-scopes.js
+// Uso (produção, só com ordem do Renan): set -a && . ./.env && set +a && node scripts/migracoes/migrate-2026-11-10-scopes.js
+const sql = require('../../api/_lib/db');
 
 const SCOPES = ['login', 'recover', 'register', 'password'];
 const CONSTRAINT = 'customer_login_attempts_scope_check';

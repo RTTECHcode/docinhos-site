@@ -444,7 +444,7 @@ async function cleanup() {
   // ===== D7: categoria =====
   console.log('\nD7: categoria "Para família"');
   await t('migração idempotente: roda 2 vezes sem erro; não sobra "Sobremesas tamanho família"; catalog.js e seed.js usam o novo nome', async () => {
-    const run = () => execFileSync(process.execPath, ['-r', './scripts/dev-env.js', 'scripts/migrate-2026-11-10-v3-categoria-familia.js'], { encoding: 'utf8', cwd: require('node:path').join(__dirname, '..') });
+    const run = () => execFileSync(process.execPath, ['-r', './scripts/dev-env.js', 'scripts/migracoes/migrate-2026-11-10-v3-categoria-familia.js'], { encoding: 'utf8', cwd: require('node:path').join(__dirname, '..') });
     run(); const out = run();
     assert.match(out, /Nada a fazer/);
     assert.equal((await Q(`select count(*)::int n from categories where name = 'Sobremesas tamanho família'`))[0].n, 0);
