@@ -258,14 +258,16 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
     });
 
     console.log('S-01: login');
-    await t('produção: senha certa mas curta = 403 weak_password_blocked, sem sessão e sem contar falha; fora de produção entra', async () => {
+    await t('produção: senha certa mas curta = 401 igual à senha errada (F5-S-07), sem sessão, conta falha; fora de produção entra', async () => {
       const shortPass = 'Ab1-' + rnd(3); // 7 caracteres
       const SH = await adminUser('curta', 'staff', shortPass);
       process.env.VERCEL_ENV = 'production';
       let r;
       try { r = await login(SH, shortPass); } finally { delete process.env.VERCEL_ENV; }
-      assert.equal(r.status, 403); assert.equal(r.json.code, 'weak_password_blocked'); assert.equal(cookieOf(r), null);
-      assert.equal((await Q(`select count(*)::int n from login_attempts where username = $1`, [SH]))[0].n, 0);
+      const wrong = await login(SH, shortPass + 'x');
+      assert.equal(r.status, 401); assert.equal(cookieOf(r), null);
+      assert.deepEqual(r.json, wrong.json, 'mesma resposta da senha errada');
+      assert.equal((await Q(`select count(*)::int n from login_attempts where username = $1 and not ok`, [SH]))[0].n, 2);
       assert.ok(await lastAudit(SH, 'login_senha_curta_bloqueado'));
       assert.equal((await login(SH, shortPass)).status, 200);
     });

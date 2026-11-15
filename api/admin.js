@@ -346,7 +346,8 @@ function parseCommand(text, catalog) {
 
 // ---------- HTTP, sessão e anti força bruta ----------
 const MSG_LOCKED = 'Muitas tentativas. Tente mais tarde.';
-const MSG_BAD_LOGIN = 'Usuário ou senha incorretos.';
+// F5-S-07: a mesma resposta serve para senha errada e para senha certa porém curta em produção (não confirma a senha).
+const MSG_BAD_LOGIN = 'Usuário ou senha incorretos. Se a sua senha tem menos de 8 caracteres, use "Esqueci minha senha" para criar uma nova.';
 
 function send(res, status, payload) {
   res.statusCode = status;
@@ -415,7 +416,6 @@ async function noteDailyCap(username) {
 // S-01: em produção, senha com menos de 8 caracteres não entra (força a troca pela recuperação).
 const MIN_PASSWORD_PROD = 8;
 const weakBlocked = password => process.env.VERCEL_ENV === 'production' && password.length < MIN_PASSWORD_PROD;
-const MSG_WEAK_BLOCKED = 'Sua senha é curta demais para entrar. Use "Esqueci minha senha" para criar uma nova com 8 caracteres ou mais.';
 const recordAttempt = (username, ip, ok) =>
   q('insert into login_attempts (username, ip, ok) values ($1, $2, $3)', [String(username).slice(0, 64), ip, ok]);
 
@@ -459,20 +459,18 @@ async function doLogin(req, res, body) {
   const usable = !!(user && user.active);
   // scrypt roda sempre (mesmo sem usuário) para não vazar existência pelo tempo de resposta.
   const matches = await verifyPassword(password, usable ? user.password_hash : dummy);
-  if (!(matches && usable)) {
+  // S-01 + F5-S-07: senha certa, mas curta demais em produção, responde IGUAL à senha errada (401, mesma mensagem, conta
+  // como falha). Só o admin vê o motivo real na auditoria (login_senha_curta_bloqueado, ADMIN_ONLY_AUDIT).
+  const weak = matches && usable && weakBlocked(password);
+  if (!(matches && usable) || weak) {
     await recordAttempt(username, ip, false);
-    await audit(username, 'login_falhou', 'ip ' + ip);
+    await audit(username, weak ? 'login_senha_curta_bloqueado' : 'login_falhou', 'ip ' + ip);
     const after = await lockStatus(username, ip);
     if (after.locked) {
       if (after.reason === 'daily') await noteDailyCap(username);
       return send(res, 429, { error: MSG_LOCKED });
     }
     return send(res, 401, { error: MSG_BAD_LOGIN });
-  }
-  // S-01: senha certa, mas curta demais em produção. Não cria sessão nem conta como falha (quem acertou a senha não é travado).
-  if (weakBlocked(password)) {
-    await audit(username, 'login_senha_curta_bloqueado', 'ip ' + ip);
-    return send(res, 403, { error: MSG_WEAK_BLOCKED, code: 'weak_password_blocked' });
   }
   await recordAttempt(username, ip, true);
   const token = await createSession(user.id, req);
