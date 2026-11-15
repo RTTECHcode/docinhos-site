@@ -68,7 +68,8 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
 | F7 A3 painel | feito | v4-a3 | 2e0e30e; F-01 (prévia quadrada, arrastar/zoom, 800x800 WebP), A6-03/04/05, O-01 63 para 47 px, nova aba; 3 erros 404 de recurso com API moqueada (A6 confere) |
 | F7 A4 loja + F6 domínio | feito, aguarda merge | v4-a4 | 237e01b; contém v4-a2; junta depois dos testes de banco do A2; Instagram precisa do A2 expor instagram_url no /api/menu |
-| F7 A5 visual | em andamento | v4-a5 | Sonnet; P-07 fontes locais + CSP, nova aba, .pay-again, contraste, revisão |
+| F7 A5 visual | feito, aguarda merge | v4-a5 | 81cbd6c; contém v4-a4 e v4-a2; fontes locais (CSP sem Google), nova aba, .pay-again, contraste 5,84 |
+| F7 limpeza worktrees | bloqueado | — | 22 antigas limpas e contidas na main; a10-account removida pela metade (Permission denied, OneDrive); prune negado pelo classificador; decisão do Renan |
 | F7 A4, A5, A2, limpeza | aguardando | — | depois do A3 e dos testes de banco do A2 (máx. 2 agentes pesados) |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
 
