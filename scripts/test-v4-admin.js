@@ -23,9 +23,9 @@ const U = 'zz-v4-a2-';
 const Q = (t, p = []) => sql.query(t, p);
 const HOST = 'painel.test.local';
 const ENV_PUB = 'VAPID_PUBLIC_KEY', ENV_PRIV = 'VAPID_' + 'PRIVATE_KEY', ENV_SUBJ = 'VAPID_SUBJECT';
-const ORIGINAL_VERCEL_ENV = process.env.VERCEL_ENV;
+const ORIGINAL_APP_ENV = process.env.APP_ENV;
 delete process.env[ENV_PUB]; delete process.env[ENV_PRIV]; delete process.env[ENV_SUBJ];
-delete process.env.VERCEL_ENV;
+process.env.APP_ENV = 'development'; // F6 M3: fora de produção, salvo no teste da senha curta
 let ipN = 0;
 const nextIp = () => `203.0.113.${(++ipN % 250) + 1}`; // TEST-NET-3
 const rnd = n => Array.from({ length: n }, () => Math.floor(Math.random() * 10)).join('');
@@ -113,7 +113,8 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
       for (const a of ['coupon_save', 'coupon_toggle', 'coupon_audience', 'coupon_campaign_create', 'club_reward_save', 'club_reward_toggle', 'review_settings_save'])
         assert.equal((await acall(a, { method: 'POST', cookie: SC, body: {} })).status, 403, a);
       assert.equal((await acall('gift_grant', { method: 'POST', cookie: SC, body: { phone: phone() } })).status, 403);
-      for (const a of ['club_rewards', 'review_settings', 'health_detail', 'push_config']) assert.equal((await acall(a, { cookie: SC })).status, 200, a);
+      for (const a of ['club_rewards', 'review_settings', 'push_config']) assert.equal((await acall(a, { cookie: SC })).status, 200, a);
+      assert.equal((await acall('health_detail', { cookie: SC })).status, 403, 'F5-S-06: health_detail só admin');
     });
 
     console.log('N4: busca sem sinônimos');
@@ -257,14 +258,16 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
     });
 
     console.log('S-01: login');
-    await t('produção: senha certa mas curta = 403 weak_password_blocked, sem sessão e sem contar falha; fora de produção entra', async () => {
+    await t('produção: senha certa mas curta = 401 igual à senha errada (F5-S-07), sem sessão, conta falha; fora de produção entra', async () => {
       const shortPass = 'Ab1-' + rnd(3); // 7 caracteres
       const SH = await adminUser('curta', 'staff', shortPass);
-      process.env.VERCEL_ENV = 'production';
+      process.env.APP_ENV = 'production';
       let r;
-      try { r = await login(SH, shortPass); } finally { delete process.env.VERCEL_ENV; }
-      assert.equal(r.status, 403); assert.equal(r.json.code, 'weak_password_blocked'); assert.equal(cookieOf(r), null);
-      assert.equal((await Q(`select count(*)::int n from login_attempts where username = $1`, [SH]))[0].n, 0);
+      try { r = await login(SH, shortPass); } finally { process.env.APP_ENV = 'development'; }
+      const wrong = await login(SH, shortPass + 'x');
+      assert.equal(r.status, 401); assert.equal(cookieOf(r), null);
+      assert.deepEqual(r.json, wrong.json, 'mesma resposta da senha errada');
+      assert.equal((await Q(`select count(*)::int n from login_attempts where username = $1 and not ok`, [SH]))[0].n, 2);
       assert.ok(await lastAudit(SH, 'login_senha_curta_bloqueado'));
       assert.equal((await login(SH, shortPass)).status, 200);
     });
@@ -282,16 +285,22 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
     });
 
     console.log('O-01: saúde');
-    await t('/api/health: só sim/não (sem valores); 401 do webhook nas últimas 24 h derruba; health_detail com resumo', async () => {
+    await t('/api/health: só sim/não (sem valores); 3 recusas do webhook depois do último aceito derrubam (F5-S-01); health_detail com resumo', async () => {
       const r1 = await new Promise(res => healthHandler({ method: 'GET' }, { setHeader() {}, status(c) { return { json: d => res({ status: c, body: d }) }; } }));
       assert.ok([200, 503].includes(r1.status));
       assert.deepEqual(Object.keys(r1.body.checks).sort(), ['database', 'mercadopago_token', 'mercadopago_webhook_secret', 'webhook_no_401_24h']);
       assert.ok(Object.values(r1.body.checks).every(v => typeof v === 'boolean'));
       assert.equal(r1.body.checks.database, true);
+      // F5-S-01: um aceito agora zera o alerta; 1 ou 2 recusas depois dele não derrubam; a 3ª derruba.
+      await monitor.recordWebhookEvent(sql, 'accepted', EV_MARK);
+      await monitor.recordWebhookEvent(sql, 'unauthorized', EV_MARK);
+      await monitor.recordWebhookEvent(sql, 'unauthorized', EV_MARK);
+      const r15 = await new Promise(res => healthHandler({ method: 'GET' }, { setHeader() {}, status(c) { return { json: d => res({ status: c, body: d }) }; } }));
+      assert.equal(r15.body.checks.webhook_no_401_24h, true, '2 recusas depois do aceito não acendem');
       await monitor.recordWebhookEvent(sql, 'unauthorized', EV_MARK);
       const r2 = await new Promise(res => healthHandler({ method: 'GET' }, { setHeader() {}, status(c) { return { json: d => res({ status: c, body: d }) }; } }));
       assert.equal(r2.status, 503); assert.equal(r2.body.checks.webhook_no_401_24h, false);
-      const d = await acall('health_detail', { cookie: SC });
+      const d = await acall('health_detail', { cookie: AC });
       assert.equal(d.status, 200); assert.ok(d.json.health.unauthorized_24h >= 1); assert.ok(d.json.health.last_unauthorized_at);
       await Q(`delete from webhook_events where detail = $1`, [EV_MARK]);
     });
@@ -383,10 +392,30 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
       const u = await acall('push_unsubscribe', { method: 'POST', cookie: SC, body: { endpoint } });
       assert.equal(u.json.removed, 1); assert.equal(u.json.devices, 0);
     });
+    // F5-S-04: usuário desativado perde as inscrições e não recebe aviso de pedido pago.
+    await t('F5-S-04: user_toggle (desativar) apaga as inscrições push do usuário; notifyPaid ignora usuário inativo', async () => {
+      const name = await adminUser('push', 'staff', pass());
+      const [{ id }] = await Q('select id from admin_users where username = $1', [name]);
+      const ep = 'https://fcm.googleapis.com/fcm/send/zz-v4-a2-f5-' + crypto.randomBytes(6).toString('hex');
+      await Q(`insert into admin_push_subscriptions (username, endpoint, p256dh, auth) values ($1, $2, $3, $4)`,
+        [name, ep, subscription.keys.p256dh, subscription.keys.auth]);
+      if (others === 0) {
+        await Q('update admin_users set active = false where id = $1', [id]);
+        const o = await mkOrder(phone(), { total: 1234 });
+        sent.length = 0;
+        await push.notifyPaid(sql, o.id);
+        assert.ok(!sent.some(x => x.url === ep), 'inativo não recebe');
+        await Q('update admin_users set active = true where id = $1', [id]);
+      }
+      const r = await acall('user_toggle', { method: 'POST', cookie: AC, body: { id, active: false } });
+      assert.equal(r.status, 200, JSON.stringify(r.json));
+      assert.equal((await Q('select count(*)::int n from admin_push_subscriptions where username = $1', [name]))[0].n, 0);
+      assert.match((await lastAudit(ADM, 'usuario_desativado')).detail, /1 aparelho/);
+    });
   } finally {
     global.fetch = realFetch;
     delete process.env[ENV_PUB]; delete process.env[ENV_PRIV]; delete process.env[ENV_SUBJ];
-    if (ORIGINAL_VERCEL_ENV !== undefined) process.env.VERCEL_ENV = ORIGINAL_VERCEL_ENV;
+    if (ORIGINAL_APP_ENV !== undefined) process.env.APP_ENV = ORIGINAL_APP_ENV; else delete process.env.APP_ENV;
     await restoreReview();
     await cleanup();
     const [left] = await Q(`select (select count(*) from admin_users where username like $1)::int u, (select count(*) from orders where customer_name like $2 or customer_name like $3)::int o,

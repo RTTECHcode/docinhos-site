@@ -1,0 +1,52 @@
+# F6 M2: configuração da Netlify (docs/planos/deploy-netlify.md).
+# Site estático em public/ e a API em netlify/functions/*.js, que só embrulham os handlers de api/*.js
+# (netlify/lib/adapter.js). Os cabeçalhos abaixo são a fonte única: a CDN aplica nos arquivos estáticos, o adaptador
+# aplica nas respostas da API e o servidor local (scripts/dev-server.js) aplica em tudo.
+# Mesmos valores do vercel.json (que fica até a F7); scripts/test-netlify.js confere que os dois não divergem.
+# Leitura própria em netlify/lib/toml-headers.js: valores só entre aspas duplas, sem aspas duplas dentro.
+
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+  command = ""
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  node_bundler = "esbuild"
+  # api/** vai junto (o esbuild já segue os require; isto garante qualquer arquivo lido em tempo de execução).
+  # netlify.toml vai junto para o adaptador aplicar os cabeçalhos de segurança nas respostas da API.
+  included_files = ["api/**", "netlify.toml"]
+
+# /api/<nome> -> Function <nome>, com status 200 (reescrita, a URL não muda; a query string segue junto).
+[[redirects]]
+  from = "/api/:name"
+  to = "/.netlify/functions/:name"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), interest-cohort=()"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+
+[[headers]]
+  for = "/api/order"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/api/mp-webhook"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/api/order-status"
+  [headers.values]
+    Cache-Control = "no-store"

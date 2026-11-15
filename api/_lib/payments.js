@@ -54,9 +54,14 @@ function paymentMethodOf(pay) {
 }
 
 // F3: pagamento criado antes do último retry_payment (folga de 2 s para o relógio do Mercado Pago). Sem data: não é ignorado.
+// F5-S-02: nunca ignora aprovado, estorno (refunded) nem contestação (charged_back).
+// Só pendente, recusado, cancelado ou vencido de pagamento criado antes da tentativa vira 'stale'. F5-S-03: o pagamento
+// "atual" (payment_id) não tem exceção: durante a chamada ao Mercado Pago ele ainda é o Pix antigo, e o aviso de
+// expiração dele não pode devolver as reservas. Se o Mercado Pago falhar, retry_payment devolve a hora anterior.
 const SUPERSEDED_SKEW_MS = 2000;
+const NEVER_STALE = ['approved', 'refunded', 'charged_back'];
 function isSuperseded(pay, order) {
-  if (!pay || pay.status === 'approved' || !order || !order.payment_attempt_at || !pay.date_created) return false;
+  if (!pay || NEVER_STALE.includes(pay.status) || !order || !order.payment_attempt_at || !pay.date_created) return false;
   const created = Date.parse(pay.date_created);
   if (!Number.isFinite(created)) return false;
   return created < new Date(order.payment_attempt_at).getTime() - SUPERSEDED_SKEW_MS;
@@ -74,6 +79,22 @@ async function noteCancelledPaid(sql, orderId, paymentId) {
       where id = $1 and fulfillment_status = 'cancelled' and payment_status = 'approved'
         and not exists (select 1 from admin_audit where action = $2::text and detail like 'Pedido ' || orders.public_code || ' %(pagamento ' || $3::text || ')%')`,
     [orderId, CANCELLED_PAID_ACTION, paymentId]);
+}
+
+// F5-S-02: estorno ou contestação de um pagamento que não é o atual do pedido (o pedido segue pago por outro). Não muda o
+// pedido; avisa o admin na auditoria (uma vez por pedido + pagamento + status) para conferir e estornar à mão se preciso.
+const OLD_PAYMENT_REVERSED_ACTION = 'estorno_pagamento_antigo';
+async function noteOldPaymentReversed(sql, orderId, paymentId, status) {
+  await sql.query(
+    `insert into admin_audit (username, action, detail)
+     select 'mercadopago', $2::text,
+            'Pedido ' || public_code || ': pagamento antigo ' || $4::text || ' (pagamento ' || $3::text || '). '
+            || 'O pedido segue com o pagamento ' || coalesce(payment_id, '-') || ' (' || payment_status || '). Confira no Mercado Pago.'
+       from orders
+      where id = $1 and payment_id is distinct from $3::text
+        and not exists (select 1 from admin_audit where action = $2::text
+                          and detail like 'Pedido ' || orders.public_code || ': pagamento antigo ' || $4::text || ' (pagamento ' || $3::text || ')%')`,
+    [orderId, OLD_PAYMENT_REVERSED_ACTION, String(paymentId), status]);
 }
 
 // Status do Mercado Pago em que o pagamento ainda pode acontecer (o Pix continua valendo).
@@ -95,7 +116,7 @@ async function clearPix(sql, orderId) {
 async function syncPayment(sql, pay, { source = 'webhook' } = {}) {
   const code = pay && pay.external_reference;
   if (!code || !pay.status || !pay.id) return { outcome: 'invalid' };
-  const [order] = await sql.query('select id, total_cents, payment_attempt_at from orders where code = $1', [String(code)]);
+  const [order] = await sql.query('select id, total_cents, payment_attempt_at, payment_id from orders where code = $1', [String(code)]);
   if (!order) return { outcome: 'no_order' };
 
   // Só confirma se moeda e valor pago batem com o total gravado no servidor.
@@ -128,6 +149,10 @@ async function syncPayment(sql, pay, { source = 'webhook' } = {}) {
   // U-01 (v4): o Pix guardado só serve enquanto o pagamento está pendente. Saiu de pendente: apaga o código e o QR.
   await clearPix(sql, order.id);
   await noteCancelledPaid(sql, order.id, String(pay.id));
+  // F5-S-02: estorno/contestação que não alterou o pedido (pagamento diferente do atual) vai para a auditoria do admin.
+  if (!changed.length && (pay.status === 'refunded' || pay.status === 'charged_back')) {
+    await noteOldPaymentReversed(sql, order.id, String(pay.id), String(pay.status));
+  }
   await require('./loyalty').onPaymentStatus(sql, order.id);
   const [now] = await sql.query('select payment_status from orders where id = $1', [order.id]);
   // U-06 (v4): aviso de pedido pago nos aparelhos do admin (uma vez por pedido, nunca lança, desligado sem VAPID).

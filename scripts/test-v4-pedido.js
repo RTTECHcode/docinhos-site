@@ -138,6 +138,25 @@ async function coupon(code, fields) {
       assert.equal(it.name, P_BRINDE); assert.equal(it.points_cost, 60); assert.equal(it.available, true);
     });
 
+    await t('A6-02: /api/menu traz settings.instagram_url só se for https://(www.)instagram.com/...; senão null', async () => {
+      // Ajuste compartilhado do banco dev: guarda a linha original e devolve igual no fim (existindo ou não).
+      const [orig] = await Q(`select value from settings where key = 'instagram_url'`);
+      const put = v => Q(`insert into settings (key, value) values ('instagram_url', $1) on conflict (key) do update set value = excluded.value`, [v]);
+      try {
+        await put('https://www.instagram.com/zzv4a2/');
+        let r = await runJson(menuHandler, { method: 'GET', headers: {} });
+        assert.equal(r.status, 200); assert.equal(r.body.settings.instagram_url, 'https://www.instagram.com/zzv4a2/');
+        for (const bad of ['https://evil.example.com/zz', 'http://instagram.com/zz', 'https://instagram.com/', 'https://u:p@instagram.com/zz', ''])
+        {
+          await put(bad);
+          r = await runJson(menuHandler, { method: 'GET', headers: {} });
+          assert.equal(r.body.settings.instagram_url, null, bad);
+        }
+      } finally {
+        if (orig) await put(orig.value); else await Q(`delete from settings where key = 'instagram_url'`);
+      }
+    });
+
     const A = await account('Cliente A', 60);
     await t('conta: GET club exige login e mostra saldo e quanto falta', async () => {
       assert.equal((await cust('GET', 'club')).status, 401);
@@ -287,7 +306,7 @@ async function coupon(code, fields) {
       const r2 = await order(body({ customer_phone: `(${ph.slice(0, 2)}) ${ph.slice(2)}`, coupon_code: 'ZZV4A2-P10' }));
       assert.equal(r2.status, 409); assert.equal(r2.body.code, 'coupon_customer_limit');
       const chk = await cust('POST', 'coupon_check', { body: { code: 'ZZV4A2-P10', items, phone: ph } });
-      assert.equal(chk.body.code, 'coupon_customer_limit', 'coupon_check também confere pelo telefone');
+      assert.equal(chk.status, 200, 'F5-S-08: visitante não consulta uso por telefone (phone ignorado)'); assert.equal(chk.body.discount_cents, 100);
       await pay(r.body, 'rejected');
       assert.equal((await Q('select status from coupon_redemptions where order_id = $1', [r.body.id]))[0].status, 'released');
       assert.equal((await order(body({ customer_phone: ph, coupon_code: 'ZZV4A2-P10' }))).status, 201, 'liberado: pode usar de novo');

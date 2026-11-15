@@ -76,6 +76,19 @@ async function saveReviewSettings(sql, body) {
   return reviewSettings(sql);
 }
 
+// A6-02 (v4): link do Instagram para resposta pública (/api/menu). Mais estrito que o painel: só https://instagram.com/...
+// ou https://www.instagram.com/... com caminho, sem usuário/senha/porta. Qualquer outra coisa (inclusive ausente) = null.
+const INSTAGRAM_HOSTS = new Set(['instagram.com', 'www.instagram.com']);
+function publicInstagramUrl(value) {
+  const v = typeof value === 'string' ? value.trim() : '';
+  if (!v || v.length > 300 || /[\u0000-\u001f\u007f\s<>"'\\]/.test(v)) return null;
+  let url;
+  try { url = new URL(v); } catch { return null; }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || !INSTAGRAM_HOSTS.has(url.hostname)) return null;
+  if (url.pathname.length < 2) return null; // só o domínio não leva a perfil nenhum
+  return url.href;
+}
+
 // Bloco pós-pagamento do /api/order-status. row precisa de payment_status e fulfillment_status.
 // null quando o pagamento não foi aprovado ou o pedido foi cancelado (a tela nunca decide sozinha).
 async function postPayment(sql, row) {
@@ -175,6 +188,6 @@ async function listPending(sql) {
 
 module.exports = {
   DEFAULT_REVIEW_URL, GIFT_LABEL, SETTING_KEY, INSTAGRAM_KEY, GiftError,
-  getReviewUrl, validateReviewUrl, validateHttpsUrl, saveReviewUrl, reviewSettings, saveReviewSettings,
+  getReviewUrl, validateReviewUrl, validateHttpsUrl, saveReviewUrl, reviewSettings, saveReviewSettings, publicInstagramUrl,
   postPayment, grant, cancel, deliverForOrders, attachGifts, listPending
 };

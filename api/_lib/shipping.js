@@ -15,7 +15,7 @@ const VIACEP_URL = 'https://viacep.com.br/ws/';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const OSRM_URL = 'https://router.project-osrm.org/route/v1/driving/';
 // Política do Nominatim: User-Agent identificando o app (sem e-mail), no máximo 1 requisição por segundo.
-const USER_AGENT = 'DocinhosDaGigi/1.0 (+https://docinhos-site.vercel.app)';
+const USER_AGENT = `DocinhosDaGigi/1.0 (+${require('./site').DEFAULT_SITE_URL})`; // F6 M4: domínio próprio
 const TIMEOUT_MS = 5000;
 const NOMINATIM_GAP_MS = 1100;
 const TOTAL_BUDGET_MS = 12000; // orçamento total de rede por cotação (função serverless curta)
