@@ -451,10 +451,10 @@ Só prêmios ligados, dentro da vigência e com produto/categoria ativos. `avail
 
 - Objeto de pedido do painel ganha `status_key`, `status_label`, `club_points`, `coupon_code`, `coupon_discount_cents`, `gift`. Prêmio aparece em `items` com `reward: true` (mostrar "Prêmio do Clube").
 - `order_status` cancelar pedido JÁ PAGO: pontos ganhos estornados (`reversal`), pontos do prêmio devolvidos, uso do cupom liberado, Pix apagado. O dinheiro continua sendo estornado à mão no Mercado Pago (a tela deve lembrar disso). Auditoria `pedido_status` com `(pontos estornados)`.
-- Login em produção: senha certa com menos de 8 caracteres = 403 `weak_password_blocked` (`Sua senha é curta demais para entrar. Use "Esqueci minha senha" para criar uma nova com 8 caracteres ou mais.`), sem sessão. A tela deve mostrar a mensagem e o link de recuperação. Dev não bloqueia.
+- Login em produção: senha certa com menos de 8 caracteres não entra. Desde a F5 (F5-S-07) a resposta é igual à da senha errada (401, ver 10.15). Dev não bloqueia.
 - Teto diário: 50 senhas erradas de um usuário em 24 h (somando todos os IPs, inclusive o conhecido) travam o login desse usuário: 429 `Muitas tentativas. Tente mais tarde.`. Aviso em `admin_audit` `login_teto_diario` (1 por usuário a cada 24 h).
-- `GET /api/health` (público, sem login): 200 ou 503, `{ ok, checks: { database, mercadopago_token, mercadopago_webhook_secret, webhook_no_401_24h } }` (só sim/não, nunca valor). `no-store`. Serve para o UptimeRobot.
-- `health_detail` GET (qualquer usuário): `{ health: { ok, checks, last_accepted_at, last_unauthorized_at, unauthorized_24h, accepted_24h } }`. A3: mostrar aviso no painel quando `unauthorized_24h > 0` ("O Mercado Pago tentou avisar pagamentos e foi recusado: confira a chave do webhook").
+- `GET /api/health` (público, sem login): 200 ou 503, `{ ok, checks: { database, mercadopago_token, mercadopago_webhook_secret, webhook_no_401_24h } }` (só sim/não, nunca valor). `no-store`. Serve para o UptimeRobot. `webhook_no_401_24h` mudou na F5 (10.15).
+- `health_detail` GET (só admin desde a F5): `{ health: { ok, checks, last_accepted_at, last_unauthorized_at, unauthorized_24h, accepted_24h, unauthorized_since_accepted_24h } }`. Aviso no painel quando `checks.webhook_no_401_24h` for `false` ("O Mercado Pago tentou avisar pagamentos e foi recusado: confira a chave do webhook").
 
 ### 10.8 Busca da pausa em lote (N4)
 
@@ -602,3 +602,16 @@ Resposta: `{ settings: { ...campos acima, limits: { scheduling_min_lead_min: [0,
 - `points_get` continua igual (as regras ainda trazem `block_*`, só para os pedidos antigos).
 
 **Banco:** em `orders`, `payment_attempt_at`, `address_district` e `address_city`. A migração `scripts/migrate-2026-11-12-v4-schema.js` foi ampliada e já rodou no dev. Em produção, rodar antes do deploy da v4, como o resto.
+
+### 10.15 Correções da revisão de segurança F5 (`docs/planos/seguranca-v4-f5.md`)
+
+| ID | O que mudou |
+|---|---|
+| F5-S-01 | `POST /api/mp-webhook` sem assinatura válida: continua 401, mas grava em `webhook_events` no máximo 5 por IP e 60 no geral a cada 10 min. `checks.webhook_no_401_24h` (nome mantido) só fica `false` com 3 ou mais recusas nas últimas 24 h **depois do último aviso aceito**. Um aviso aceito apaga o alerta. |
+| F5-S-02 | Estorno (`refunded`) e contestação (`charged_back`) nunca viram `stale`, mesmo de pagamento antigo. Se o estorno é de um pagamento que não é o atual do pedido, o pedido não muda e vai para `admin_audit` (`estorno_pagamento_antigo`, uma vez por pagamento e status). |
+| F5-S-03 | `retry_payment` grava `payment_attempt_at` antes de chamar o Mercado Pago (pedido aberto; senão 409 `already_paid`). Se o Mercado Pago falhar (502), a hora anterior volta. Aviso de expiração do Pix antigo durante a chamada é ignorado. |
+| F5-S-04 | `user_toggle` com `active: false` apaga as inscrições push do usuário (a auditoria `usuario_desativado` diz quantas). Aviso de pedido pago só vai para usuário ativo. |
+| F5-S-05 | `audit` para staff: sem `login_falhou`, `recuperacao_falhou`, `login_senha_curta_bloqueado` e `login_teto_diario`. Qualquer `ip <endereço>` no detalhe aparece como `ip (oculto)`. O admin vê tudo. |
+| F5-S-06 | `health_detail` só admin (staff: 403). O painel só consulta para o admin. Decisão do A0. |
+| F5-S-07 | Login com senha certa porém curta em produção: 401 com a mesma mensagem da senha errada (`Usuário ou senha incorretos. Se a sua senha tem menos de 8 caracteres, use "Esqueci minha senha" para criar uma nova.`). Conta como falha. Sai o 403 `weak_password_blocked`. Motivo real só na auditoria do admin. |
+| F5-S-08 | `coupon_check` sem sessão ignora `phone` (ver 10.3). O limite por pessoa do visitante é conferido no pedido. |
