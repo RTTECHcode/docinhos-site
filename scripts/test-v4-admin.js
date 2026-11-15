@@ -113,7 +113,8 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
       for (const a of ['coupon_save', 'coupon_toggle', 'coupon_audience', 'coupon_campaign_create', 'club_reward_save', 'club_reward_toggle', 'review_settings_save'])
         assert.equal((await acall(a, { method: 'POST', cookie: SC, body: {} })).status, 403, a);
       assert.equal((await acall('gift_grant', { method: 'POST', cookie: SC, body: { phone: phone() } })).status, 403);
-      for (const a of ['club_rewards', 'review_settings', 'health_detail', 'push_config']) assert.equal((await acall(a, { cookie: SC })).status, 200, a);
+      for (const a of ['club_rewards', 'review_settings', 'push_config']) assert.equal((await acall(a, { cookie: SC })).status, 200, a);
+      assert.equal((await acall('health_detail', { cookie: SC })).status, 403, 'F5-S-06: health_detail só admin');
     });
 
     console.log('N4: busca sem sinônimos');
@@ -297,7 +298,7 @@ async function mkOrder(ph, { total = 1500, pay = 'approved', name = `${P} Pedido
       await monitor.recordWebhookEvent(sql, 'unauthorized', EV_MARK);
       const r2 = await new Promise(res => healthHandler({ method: 'GET' }, { setHeader() {}, status(c) { return { json: d => res({ status: c, body: d }) }; } }));
       assert.equal(r2.status, 503); assert.equal(r2.body.checks.webhook_no_401_24h, false);
-      const d = await acall('health_detail', { cookie: SC });
+      const d = await acall('health_detail', { cookie: AC });
       assert.equal(d.status, 200); assert.ok(d.json.health.unauthorized_24h >= 1); assert.ok(d.json.health.last_unauthorized_at);
       await Q(`delete from webhook_events where detail = $1`, [EV_MARK]);
     });

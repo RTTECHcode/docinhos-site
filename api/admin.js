@@ -1449,8 +1449,8 @@ A.pause_batches = { m: 'GET', fn: async ({ query }) => {
 } };
 
 // ---------- v4 O-01: monitoramento ----------
-// Qualquer usuário logado (o painel mostra aviso quando houver 401 recentes). Nunca devolve valor de variável.
-A.health_detail = { m: 'GET', fn: async () => {
+// F5-S-06 (decisão do A0): só admin, como o plano pedia (o painel mostra o aviso só para o admin). Nunca devolve valor de variável.
+A.health_detail = { m: 'GET', role: 'admin', fn: async () => {
   const r = await monitor.healthChecks(getSql);
   return { health: { ok: r.ok, checks: r.checks, ...(r.summary || { last_accepted_at: null, last_unauthorized_at: null, unauthorized_24h: null, accepted_24h: null }) } };
 } };
