@@ -145,11 +145,11 @@ test('pix: corpo do pagamento direto (valor do servidor, 30 min, e-mail sintéti
   assert.equal(body.transaction_amount, 45.99);
   assert.equal(body.external_reference, 'DG0123456789');
   assert.equal(body.description, 'Pedido DG0123456789 - Docinhos da Gigi');
-  assert.equal(body.notification_url, 'https://docinhos-site.vercel.app/api/mp-webhook?source_news=webhooks');
+  assert.equal(body.notification_url, 'https://docinhosdagigioz.com.br/api/mp-webhook?source_news=webhooks');
   assert.equal(body.date_of_expiration, '2026-01-01T10:30:00.000+00:00');
-  assert.equal(body.payer.email, 'pedido-dg0123456789@docinhos-site.vercel.app');
+  assert.equal(body.payer.email, 'pedido-dg0123456789@docinhosdagigioz.com.br');
   assert.equal(body.payer.first_name, 'Maria');
-  assert.equal(pixPayerEmail('DGABCDEF0123'), 'pedido-dgabcdef0123@docinhos-site.vercel.app');
+  assert.equal(pixPayerEmail('DGABCDEF0123'), 'pedido-dgabcdef0123@docinhosdagigioz.com.br');
   assert.equal(buildPixBody({ code: 'DGX', total_cents: 600 }, '', now).payer.first_name, 'Cliente');
   assert.deepEqual(PAYMENT_CHOICES, ['pix', 'card']);
 });
@@ -231,15 +231,15 @@ test('preference (cartão): sem Pix, boleto, atm e pré-pago; 3x; expira em 2h',
   assert.equal(body.expiration_date_to, '2026-01-01T12:00:00.000+00:00');
   assert.equal(body.external_reference, 'DGX');
   // Sem token de rastreio: volta para a loja (formato antigo).
-  assert.deepEqual(body.back_urls, { success: 'https://docinhos-site.vercel.app/?pagamento=ok', failure: 'https://docinhos-site.vercel.app/?pagamento=erro', pending: 'https://docinhos-site.vercel.app/?pagamento=pendente' });
-  assert.equal(body.notification_url, 'https://docinhos-site.vercel.app/api/mp-webhook?source_news=webhooks');
+  assert.deepEqual(body.back_urls, { success: 'https://docinhosdagigioz.com.br/?pagamento=ok', failure: 'https://docinhosdagigioz.com.br/?pagamento=erro', pending: 'https://docinhosdagigioz.com.br/?pagamento=pendente' });
+  assert.equal(body.notification_url, 'https://docinhosdagigioz.com.br/api/mp-webhook?source_news=webhooks');
 });
 
 test('preference (cartão): com token, aprovado e pendente voltam para a página do pedido; falha volta para a loja', () => {
   const body = buildPreferenceBody({ code: 'DGX', tracking_token: 'abc_DEF-123' }, [], new Date('2026-01-01T10:00:00.000Z'));
-  assert.equal(body.back_urls.success, 'https://docinhos-site.vercel.app/pedido.html?t=abc_DEF-123&pagamento=ok');
-  assert.equal(body.back_urls.pending, 'https://docinhos-site.vercel.app/pedido.html?t=abc_DEF-123&pagamento=pendente');
-  assert.equal(body.back_urls.failure, 'https://docinhos-site.vercel.app/?pagamento=erro');
+  assert.equal(body.back_urls.success, 'https://docinhosdagigioz.com.br/pedido.html?t=abc_DEF-123&pagamento=ok');
+  assert.equal(body.back_urls.pending, 'https://docinhosdagigioz.com.br/pedido.html?t=abc_DEF-123&pagamento=pendente');
+  assert.equal(body.back_urls.failure, 'https://docinhosdagigioz.com.br/?pagamento=erro');
   assert.equal(body.auto_return, 'approved');
 });
 

@@ -25,6 +25,7 @@ const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data m
 const showcase = require('./_lib/showcase'); // v4 N11: selo "Mais pedido" e prazo de entrega
 const monitor = require('./_lib/monitor');
 const push = require('./_lib/push');
+const { isProduction } = require('./_lib/env');
 
 const SESSION_COOKIE = '__Host-dg_admin';
 const SESSION_TTL_MS = 12 * 3600 * 1000;
@@ -346,7 +347,8 @@ function parseCommand(text, catalog) {
 
 // ---------- HTTP, sessão e anti força bruta ----------
 const MSG_LOCKED = 'Muitas tentativas. Tente mais tarde.';
-const MSG_BAD_LOGIN = 'Usuário ou senha incorretos.';
+// F5-S-07: a mesma resposta serve para senha errada e para senha certa porém curta em produção (não confirma a senha).
+const MSG_BAD_LOGIN = 'Usuário ou senha incorretos. Se a sua senha tem menos de 8 caracteres, use "Esqueci minha senha" para criar uma nova.';
 
 function send(res, status, payload) {
   res.statusCode = status;
@@ -414,8 +416,7 @@ async function noteDailyCap(username) {
 }
 // S-01: em produção, senha com menos de 8 caracteres não entra (força a troca pela recuperação).
 const MIN_PASSWORD_PROD = 8;
-const weakBlocked = password => process.env.VERCEL_ENV === 'production' && password.length < MIN_PASSWORD_PROD;
-const MSG_WEAK_BLOCKED = 'Sua senha é curta demais para entrar. Use "Esqueci minha senha" para criar uma nova com 8 caracteres ou mais.';
+const weakBlocked = password => isProduction() && password.length < MIN_PASSWORD_PROD; // F6 M3: APP_ENV, fail-closed
 const recordAttempt = (username, ip, ok) =>
   q('insert into login_attempts (username, ip, ok) values ($1, $2, $3)', [String(username).slice(0, 64), ip, ok]);
 
@@ -459,20 +460,18 @@ async function doLogin(req, res, body) {
   const usable = !!(user && user.active);
   // scrypt roda sempre (mesmo sem usuário) para não vazar existência pelo tempo de resposta.
   const matches = await verifyPassword(password, usable ? user.password_hash : dummy);
-  if (!(matches && usable)) {
+  // S-01 + F5-S-07: senha certa, mas curta demais em produção, responde IGUAL à senha errada (401, mesma mensagem, conta
+  // como falha). Só o admin vê o motivo real na auditoria (login_senha_curta_bloqueado, ADMIN_ONLY_AUDIT).
+  const weak = matches && usable && weakBlocked(password);
+  if (!(matches && usable) || weak) {
     await recordAttempt(username, ip, false);
-    await audit(username, 'login_falhou', 'ip ' + ip);
+    await audit(username, weak ? 'login_senha_curta_bloqueado' : 'login_falhou', 'ip ' + ip);
     const after = await lockStatus(username, ip);
     if (after.locked) {
       if (after.reason === 'daily') await noteDailyCap(username);
       return send(res, 429, { error: MSG_LOCKED });
     }
     return send(res, 401, { error: MSG_BAD_LOGIN });
-  }
-  // S-01: senha certa, mas curta demais em produção. Não cria sessão nem conta como falha (quem acertou a senha não é travado).
-  if (weakBlocked(password)) {
-    await audit(username, 'login_senha_curta_bloqueado', 'ip ' + ip);
-    return send(res, 403, { error: MSG_WEAK_BLOCKED, code: 'weak_password_blocked' });
   }
   await recordAttempt(username, ip, true);
   const token = await createSession(user.id, req);
@@ -960,11 +959,16 @@ A.password_change = { m: 'POST', fn: async ({ body, user }) => {
 } };
 
 // Eventos com IP e usuário DIGITADO (pode ser senha colada no campo errado) ficam só para o admin (A1-08).
-const ADMIN_ONLY_AUDIT = ['login_falhou', 'recuperacao_falhou'];
-A.audit = { m: 'GET', fn: async ({ user }) => ({
-  rows: await q(`select id, username, action, detail, at from admin_audit
-                  where $1::boolean or action <> all($2::text[]) order by at desc, id desc limit 50`, [user.role === 'admin', ADMIN_ONLY_AUDIT])
-}) };
+// F5-S-05: login_senha_curta_bloqueado (com IP) e login_teto_diario também só para o admin. Para o staff, qualquer
+// "ip <endereço>" que sobrar no detalhe (ex.: login_ok) sai mascarado.
+const ADMIN_ONLY_AUDIT = ['login_falhou', 'recuperacao_falhou', 'login_senha_curta_bloqueado', 'login_teto_diario'];
+const maskIp = detail => (typeof detail === 'string' ? detail.replace(/\bip [0-9A-Fa-f:.]+(\.zz)?/g, 'ip (oculto)') : detail);
+A.audit = { m: 'GET', fn: async ({ user }) => {
+  const isAdmin = user.role === 'admin';
+  const rows = await q(`select id, username, action, detail, at from admin_audit
+                  where $1::boolean or action <> all($2::text[]) order by at desc, id desc limit 50`, [isAdmin, ADMIN_ONLY_AUDIT]);
+  return { rows: isAdmin ? rows : rows.map(r => ({ ...r, detail: maskIp(r.detail) })) };
+} };
 
 A.users = { m: 'GET', role: 'admin', fn: async () => ({
   users: await q('select id, username, role, active, weak_password, created_at, last_login_at from admin_users order by id')
@@ -984,7 +988,9 @@ A.user_toggle = { m: 'POST', role: 'admin', fn: async ({ body, user }) => {
   if (id === user.id && !active) bad('Você não pode desativar o seu próprio usuário.');
   const row = own(await q('update admin_users set active = $2 where id = $1 returning id, username, active', [id, active]), 'Usuário não encontrado.');
   if (!active) await killSessions(id, '');
-  await audit(user.username, active ? 'usuario_ativado' : 'usuario_desativado', row.username);
+  // F5-S-04: desativado também perde os avisos de pedido pago nos aparelhos dele.
+  const pushRemoved = active ? 0 : await push.removeAllFor(getSql(), row.username);
+  await audit(user.username, active ? 'usuario_ativado' : 'usuario_desativado', row.username + (pushRemoved ? ` (${pushRemoved} aparelho(s) de aviso removido(s))` : ''));
   return { ok: true, target: row };
 } };
 
@@ -1442,8 +1448,8 @@ A.pause_batches = { m: 'GET', fn: async ({ query }) => {
 } };
 
 // ---------- v4 O-01: monitoramento ----------
-// Qualquer usuário logado (o painel mostra aviso quando houver 401 recentes). Nunca devolve valor de variável.
-A.health_detail = { m: 'GET', fn: async () => {
+// F5-S-06 (decisão do A0): só admin, como o plano pedia (o painel mostra o aviso só para o admin). Nunca devolve valor de variável.
+A.health_detail = { m: 'GET', role: 'admin', fn: async () => {
   const r = await monitor.healthChecks(getSql);
   return { health: { ok: r.ok, checks: r.checks, ...(r.summary || { last_accepted_at: null, last_unauthorized_at: null, unauthorized_24h: null, accepted_24h: null }) } };
 } };
@@ -1661,7 +1667,7 @@ async function handler(req, res) {
 }
 
 module.exports = handler;
-module.exports._internal = {
+module.exports._internal = { maskIp, ADMIN_ONLY_AUDIT,
   hashPassword, verifyPassword, evaluateLock, parseCommand, norm, detectImage, decodeImage, sameOrigin, isJsonType,
   vId, vInt, vStr, vBool, vCents, vEnum, vUsername, vPassword, vKey, HttpError, MSG_ACTIVE_NEEDS_PRICE, FILTER_STATUSES, DEFAULT_SETTINGS, SESSION_COOKIE, expandTerms, textMatches, searchByTerms,
   USER_DAY_MAX, USER_SPREAD_MAX, weakBlocked, MIN_PASSWORD_PROD, A

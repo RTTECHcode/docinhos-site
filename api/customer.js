@@ -231,7 +231,8 @@ const A = {
   } },
 
   // v4 N6: confere o cupom no carrinho. Visitante ou logado. O subtotal é recalculado no servidor (os preços do navegador
-  // são ignorados). Limite por cliente: telefone da conta (logado) ou o telefone digitado (phone, opcional).
+  // são ignorados). Limite por cliente: só o telefone da conta (logado). F5-S-08: o `phone` digitado por visitante é
+  // ignorado (revelaria se o telefone de outra pessoa já usou o cupom); para visitante o limite por pessoa vale no pedido.
   // É só uma prévia: o pedido valida tudo de novo (e reserva o uso) na hora de criar.
   coupon_check: { m: 'POST', async fn({ sql, req, body }) {
     if (await hitExceeded(sql, 'coupon_check', auth.clientIp(req), { windowMinutes: COUPON_WINDOW_MINUTES, max: COUPON_MAX_PER_IP })) {
@@ -248,7 +249,7 @@ const A = {
       throw e;
     }
     const session = await customerLib.getSession(sql, req);
-    const phone = session ? session.customer.phone : (typeof body.phone === 'string' ? body.phone : '');
+    const phone = session ? session.customer.phone : '';
     const hasRewards = Array.isArray(body.rewards) && body.rewards.length > 0;
     const ev = await coupons.evaluate(sql, { code: body.code, paidSubtotalCents: priced.subtotal_cents, phoneKey: phoneKey(phone) || null, hasRewards });
     const c = ev.coupon;

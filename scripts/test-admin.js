@@ -741,6 +741,9 @@ async function commandTests() {
     const st = await get(S.staff, 'audit'); // A1-08: staff não vê falhas de login/recuperação (IP e usuário digitado)
     assert.equal(st.status, 200); assert.ok(st.json.rows.length > 0);
     assert.ok(!st.json.rows.some(r => r.action === 'login_falhou' || r.action === 'recuperacao_falhou'));
+    // F5-S-05: nada de IP na auditoria do staff (login_ok tem 'ip ...' no detalhe; o staff vê 'ip (oculto)').
+    assert.ok(!st.json.rows.some(r => ['login_senha_curta_bloqueado', 'login_teto_diario'].includes(r.action)));
+    assert.ok(!st.json.rows.some(r => /ip [0-9a-f:.]*[0-9]/i.test(String(r.detail || ''))), 'staff não vê IP');
     const l = await loginAs(S.names.adm, S.pw.adm, S.ips.a);
     const out = await post(l.cookie, 'logout', {});
     assert.equal(out.status, 200); assert.ok(String(out.headers['set-cookie']).includes('Max-Age=0'));

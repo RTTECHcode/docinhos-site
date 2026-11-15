@@ -4,7 +4,8 @@
      O navegador só toca som depois de um toque: botão "Ativar som" (preferência guardada neste aparelho).
    - PWA: registra o service worker (/admin/sw.js, sem cache de dados) e oferece "Instalar o painel" quando o navegador deixa.
    - Web Push (contrato 10.9): "Receber notificações" neste aparelho. Sem chave VAPID no servidor o botão some e a tela explica.
-   - Aviso de webhook recusado (health_detail.unauthorized_24h > 0).
+   - Aviso de webhook recusado (health_detail, só admin: F5-S-06). Acende quando o check webhook_no_401_24h falha
+     (F5-S-01: várias recusas depois do último aviso aceito), não por qualquer 401 avulso.
    Nada de dado de cliente no console nem no título. */
 (function () {
   const DG = window.DG;
@@ -61,10 +62,11 @@
   // ---------- O-01: webhook do Mercado Pago recusado ----------
   async function checkHealth() {
     st.healthAt = Date.now();
+    let bar = $('#webhook-warn');
+    if (!DG.isAdmin()) { if (bar) bar.remove(); return; } // F5-S-06: health_detail é só do admin
     let h;
     try { h = (await DG.api('health_detail')).health; } catch { return; }
-    let bar = $('#webhook-warn');
-    if (!(h && h.unauthorized_24h > 0)) { if (bar) bar.remove(); return; }
+    if (!(h && h.checks && h.checks.webhook_no_401_24h === false)) { if (bar) bar.remove(); return; }
     const when = h.last_unauthorized_at ? ' Última tentativa recusada: ' + DG.fmtDate(h.last_unauthorized_at) + ' (' + h.unauthorized_24h + ' nas últimas 24 h).' : '';
     const text = 'O Mercado Pago tentou avisar pagamentos e foi recusado: confira a chave do webhook.' + when + ' Enquanto isso, use "Conferir pagamento" no pedido.';
     if (!bar) {

@@ -40,4 +40,8 @@ function loadEnvDev() {
   return names;
 }
 
-module.exports = { loadEnvDev, loaded: loadEnvDev() };
+const loaded = loadEnvDev();
+// F6 M3: local nunca é produção (api/_lib/env.js é fail-closed: sem APP_ENV, trata como produção).
+if (!process.env.APP_ENV) process.env.APP_ENV = 'development';
+
+module.exports = { loadEnvDev, loaded };

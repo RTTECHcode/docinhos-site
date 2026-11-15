@@ -1,4 +1,7 @@
-// Servidor local para desenvolvimento e testes no navegador (imita a Vercel: public/ + api/*.js).
+// Servidor local para desenvolvimento e testes no navegador (imita a hospedagem: public/ + api/*.js).
+// F6 M5: cabeçalhos (segurança, CSP, Cache-Control) lidos do netlify.toml, a mesma fonte da Netlify; corpo da
+// requisição lido igual ao adaptador das Functions (netlify/lib/adapter.js), com req.rawBody. APP_ENV=development
+// vem de scripts/dev-env.js (local nunca é produção).
 // Lê variáveis SOMENTE de .env.dev via scripts/dev-env.js. Nunca lê .env (produção).
 // Uso: node scripts/dev-server.js [porta]   (padrão 3000)  ->  http://localhost:3000
 // Os valores das variáveis nunca são impressos.
@@ -21,12 +24,12 @@ const MIME = {
 };
 const mimeOf = file => MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
 
-const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
+const { headersFor, loadRules } = require('../netlify/lib/toml-headers');
+const { parseBody } = require('../netlify/lib/adapter');
+let headerRules = null;
 function applyHeaders(res, urlPath) {
-  for (const rule of vercel.headers || []) {
-    const re = new RegExp('^' + rule.source.replace(/\(\.\*\)/g, '.*') + '$');
-    if (re.test(urlPath)) for (const h of rule.headers) res.setHeader(h.key, h.value);
-  }
+  if (!headerRules) headerRules = loadRules([path.join(ROOT, 'netlify.toml')]) || [];
+  for (const [k, v] of Object.entries(headersFor(headerRules, urlPath))) res.setHeader(k, v);
 }
 
 function readBody(req) {
@@ -63,14 +66,8 @@ async function handleApi(req, res, url) {
   if (!fs.existsSync(file)) { res.statusCode = 404; return res.end('Not found'); }
   const raw = await readBody(req);
   req.query = Object.fromEntries(url.searchParams);
-  const type = String(req.headers['content-type'] || '');
-  if (raw.length && /application\/json/i.test(type)) {
-    try { req.body = JSON.parse(raw.toString('utf8')); } catch { req.body = raw.toString('utf8'); }
-  } else if (raw.length && /application\/x-www-form-urlencoded/i.test(type)) {
-    req.body = Object.fromEntries(new URLSearchParams(raw.toString('utf8')));
-  } else {
-    req.body = raw.length ? raw.toString('utf8') : undefined;
-  }
+  req.rawBody = raw;
+  req.body = parseBody(raw, req.headers['content-type']);
   addHelpers(res);
   delete require.cache[require.resolve(file)];
   try {
@@ -95,7 +92,7 @@ function handleStatic(req, res, url) {
   fs.createReadStream(file).pipe(res);
 }
 
-module.exports = { MIME, mimeOf };
+module.exports = { MIME, mimeOf, applyHeaders };
 // Importado (teste do MIME): não sobe o servidor nem lê o .env.dev.
 if (require.main === module) {
 const { loaded } = require('./dev-env');

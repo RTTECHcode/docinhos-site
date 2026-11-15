@@ -197,12 +197,20 @@ async function notifyPaid(sql, orderId, opts = {}) {
           and fulfillment_status is distinct from 'cancelled' and created_at > now() - interval '24 hours'
         returning code, public_code, total_cents`, [orderId]);
     if (!order) return { skipped: 'already_or_not_eligible' };
-    const rows = await sql.query('select id, endpoint, p256dh, auth from admin_push_subscriptions order by id limit 200');
+    // F5-S-04: só aparelhos de usuário ativo (usuário desativado não recebe código nem valor de pedido).
+    const rows = await sql.query(`select s.id, s.endpoint, s.p256dh, s.auth from admin_push_subscriptions s
+      join admin_users u on u.username = s.username and u.active order by s.id limit 200`);
     return await sendMany(sql, rows, paidMessage(order), { ...opts, cfg });
   } catch (e) {
     console.error('Falha ao enviar push de pedido pago:', e.message);
     return { skipped: 'error' };
   }
+}
+
+// F5-S-04: apaga todas as inscrições de um usuário (usuário desativado). Devolve quantas apagou.
+async function removeAllFor(sql, username) {
+  const rows = await sql.query('delete from admin_push_subscriptions where username = $1 returning id', [username]);
+  return rows.length;
 }
 
 // Teste do painel: manda só para os aparelhos do próprio usuário.
@@ -214,7 +222,7 @@ async function sendTest(sql, username, opts = {}) {
   return sendMany(sql, rows, { title: 'Teste de notificação', body: 'Os avisos de pedido pago vão chegar assim.', tag: 'teste', url: '/admin/' }, { ...opts, cfg });
 }
 
-module.exports = {
+module.exports = { removeAllFor,
   PushError, PUSH_HOST_SUFFIXES, MAX_PER_USER, config, enabled, publicKey, vapidHeader, encrypt, validateSubscription,
   subscribe, unsubscribe, countFor, sendOne, sendMany, paidMessage, notifyPaid, sendTest
 };
