@@ -99,7 +99,7 @@ body.conta { min-height: 100vh; min-height: 100dvh; display: flex; flex-directio
 .order-items { list-style: none; font-size: .92rem; font-weight: 600; display: grid; gap: 2px; padding-left: 0; }
 .order-row { display: flex; justify-content: space-between; gap: 8px; font-size: 1rem; }
 .order-row.sub { font-size: .86rem; color: var(--ink-soft); font-weight: 600; }
-.order-row strong { font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--brand-deep); }
+.order-row strong { font-family: var(--numeric); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 1.2rem; color: var(--brand-deep); }
 .order-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .order-link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; font-weight: 800; color: var(--brand-deep); }
 .badge { display: inline-flex; align-items: center; padding: 4px 11px; border-radius: var(--pill); font-size: .78rem; font-weight: 800; background: #f1e7e2; color: var(--cacau); }
@@ -112,7 +112,7 @@ body.conta { min-height: 100vh; min-height: 100dvh; display: flex; flex-directio
 /* pontos */
 .points-card { display: grid; justify-items: center; gap: 2px; padding: 18px 12px; margin-bottom: 14px; border-radius: var(--radius); box-shadow: var(--shadow); text-align: center; color: var(--bg); background: radial-gradient(90% 80% at 50% 0, #6b3322 0%, rgba(107, 51, 34, 0) 72%), var(--cacau); }
 .points-label { font-size: .75rem; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; color: var(--rosa); }
-.points-balance { font-family: var(--display); font-weight: 400; font-size: 3rem; line-height: 1.1; color: var(--manteiga); }
+.points-balance { font-family: var(--numeric); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 3rem; line-height: 1.1; color: var(--manteiga); }
 .points-worth { font-size: .88rem; font-weight: 700; color: #f3d9cf; }
 .rules { padding: 2px 14px 10px; margin-bottom: 4px; border-radius: var(--radius-md); background: #fffaf6; border: 1px solid var(--line); }
 .rules ul { padding-left: 18px; font-size: .9rem; font-weight: 600; display: grid; gap: 4px; }
