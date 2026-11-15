@@ -66,7 +66,8 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F5 A6 QA etapa 1 | feito | v4-a6 | 6613581; 20 suítes + 2 novas ok, sem bug; colisão com teste alheio (A6-01) repetida ok |
 | F5 A6 QA etapa 2 | feito | v4-a6 | 8503dcd; loja 38/38 x3, painel ok, 0 erro de console; só Baixos/Info (A6-02 a A6-07) em qa-v4.md |
 | F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
-| F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
+| F7 A3 painel | em andamento | v4-a3 | Sonnet; F-01 enquadramento de foto, A6-03/04/05, faixa O-01, aviso de nova aba |
+| F7 A4, A5, A2, limpeza | aguardando | — | depois do A3 e dos testes de banco do A2 (máx. 2 agentes pesados) |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
 
 Pendências do A5 para a F3: A4 aplica morango/chocolate no Quem somos, faixa de confiança, P-06, P-12. Fora da faixa de todos (vão para o A4 na F3): vercel.json e raiz de public/ (P-04 cache do menu, P-05 cache de estáticos, P-07 fontes locais + CSP, P-09 robots/sitemap, P-10 404, manifest da loja).
