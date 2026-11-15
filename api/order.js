@@ -350,7 +350,7 @@ const MAX_CODE_TRIES = 10;
 const send = (res, status, payload) => res.status(status).json(payload);
 
 // Registra esta tentativa e diz se o IP passou do limite (a tentativa atual entra na conta). Tabela order_attempts
-// (scripts/migrate-2026-11-10-order-attempts.js). De vez em quando apaga linhas com mais de 1 dia.
+// (scripts/migracoes/migrate-2026-11-10-order-attempts.js). De vez em quando apaga linhas com mais de 1 dia.
 async function attemptsExceeded(sql, ip) {
   const [{ n }] = await sql.query(
     `with ins as (insert into order_attempts (ip) values ($1) returning 1)

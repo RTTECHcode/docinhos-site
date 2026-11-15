@@ -200,7 +200,7 @@ async function routeKm(sql, origin, dest) {
 }
 
 // ---------- CEP -> endereço (v3 D3) ----------
-// Devolve rua, bairro, cidade e UF de um CEP. Usa a tabela cep_cache (scripts/migrate-2026-11-10-v3-schema.js) para não repetir
+// Devolve rua, bairro, cidade e UF de um CEP. Usa a tabela cep_cache (scripts/migracoes/migrate-2026-11-10-v3-schema.js) para não repetir
 // chamadas ao ViaCEP: CEP encontrado vale CEP_CACHE_DAYS dias; CEP inexistente (404 do ViaCEP) vale CEP_NOT_FOUND_DAYS dia.
 // CEP inexistente é guardado SEM coluna nova: linha com localidade e uf vazias (CEP real sempre traz cidade e UF).
 // Teto global de chamadas ao ViaCEP (escopo cep_lookup_global, soma todos os IPs): checado só ANTES da chamada externa,

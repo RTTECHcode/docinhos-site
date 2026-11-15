@@ -1,6 +1,6 @@
--- Estado final do banco (aplicar com node scripts/migrate.js). Idempotente e aditivo.
+-- Estado final do banco (aplicar com node scripts/migracoes/migrate.js). Idempotente e aditivo.
 -- ATENÇÃO: migrate.js separa as instruções por ponto e vírgula. Nunca use esse caractere em comentário ou texto.
--- Contém o esquema base, o painel /admin (migrate-admin.js) e o Painel v2 (migrate-2026-11-10-painel-v2.js).
+-- Contém o esquema base, o painel /admin (scripts/migracoes/migrate-admin.js) e o Painel v2 (scripts/migracoes/migrate-2026-11-10-painel-v2.js).
 
 create table if not exists categories (
   id serial primary key,
@@ -158,7 +158,7 @@ create table if not exists customers (
    );
 create unique index if not exists customers_email_uq on customers (lower(email)) where email is not null;
 -- (v4 A-01: estas linhas ficavam antes do CREATE de customers e quebravam o schema em banco vazio)
--- v3 D1: endereço do cliente (1 por conta). Preenche o checkout. Migração: scripts/migrate-2026-11-10-v3-schema.js
+-- v3 D1: endereço do cliente (1 por conta). Preenche o checkout. Migração: scripts/migracoes/migrate-2026-11-10-v3-schema.js
 alter table customers add column if not exists address_cep text;
 alter table customers add column if not exists address_street text;
 alter table customers add column if not exists address_number text;
@@ -213,17 +213,17 @@ create index if not exists orders_public_code_idx on orders(public_code, created
 create unique index if not exists orders_tracking_token_uq on orders(tracking_token_hash) where tracking_token_hash is not null;
 create index if not exists orders_created_idx on orders(created_at desc);
 create index if not exists orders_customer_idx on orders(customer_id, created_at desc);
--- 2026-11-10 (scripts/migrate-2026-11-10-scopes.js): IP do pedido, para o limite por IP (A1-05)
+-- 2026-11-10 (scripts/migracoes/migrate-2026-11-10-scopes.js): IP do pedido, para o limite por IP (A1-05)
 alter table orders add column if not exists client_ip text;
 create index if not exists orders_client_ip_idx on orders (client_ip, created_at) where client_ip is not null;
--- 2026-11-10 (scripts/migrate-2026-11-10-order-attempts.js): toda tentativa de pedido (aceita ou recusada), para o limite por IP
+-- 2026-11-10 (scripts/migracoes/migrate-2026-11-10-order-attempts.js): toda tentativa de pedido (aceita ou recusada), para o limite por IP
 create table if not exists order_attempts (
      id bigserial primary key,
      ip text not null,
      at timestamptz not null default now()
    );
 create index if not exists order_attempts_ip_idx on order_attempts (ip, at);
--- 2026-11-10 (scripts/migrate-2026-11-10-rate-limits.js): consultas por IP e por minuto (acompanhamento do pedido e cotação de frete)
+-- 2026-11-10 (scripts/migracoes/migrate-2026-11-10-rate-limits.js): consultas por IP e por minuto (acompanhamento do pedido e cotação de frete)
 create table if not exists rate_hits (
      scope text not null,
      ip text not null,
@@ -325,7 +325,7 @@ create index if not exists ingredient_pause_items_product_idx on ingredient_paus
 insert into settings (key, value) values ('shipping_bands', '[{"max_km":3,"fee_cents":600},{"max_km":6,"fee_cents":900},{"max_km":10,"fee_cents":1400}]') on conflict (key) do nothing;
 insert into settings (key, value) values ('store_origin_address', 'Rua Manoel Hare Peralta, 101, Ayrosa, Osasco, SP') on conflict (key) do nothing;
 
--- ---- v4 (scripts/migrate-2026-11-12-v4-schema.js) ----
+-- ---- v4 (scripts/migracoes/migrate-2026-11-12-v4-schema.js) ----
 -- Clube de pontos por itens (N3). Custo em pontos por prêmio. Produto com grupo de escolha obrigatória não pode ser prêmio (regra da API).
 create table if not exists club_rewards (
      id serial primary key,

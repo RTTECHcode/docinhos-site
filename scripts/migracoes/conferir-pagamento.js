@@ -3,17 +3,17 @@
 // É o equivalente ao botão "Conferir pagamento" do admin, para quando o painel ainda não tem o botão.
 //
 // Uso (ids numéricos dos pedidos):
-//   node --env-file=.env scripts/conferir-pagamento.js 208 211      (produção, só com ordem do Renan)
-//   node -r ./scripts/dev-env.js scripts/conferir-pagamento.js 12  (banco dev)
+//   node --env-file=.env scripts/migracoes/conferir-pagamento.js 208 211      (produção, só com ordem do Renan)
+//   node -r ./scripts/dev-env.js scripts/migracoes/conferir-pagamento.js 12  (banco dev)
 // Sem --aplicar só mostra o que encontrou no Mercado Pago (nada é gravado). Com --aplicar grava e registra em admin_audit.
-const sql = require('../api/_lib/db');
-const payments = require('../api/_lib/payments');
+const sql = require('../../api/_lib/db');
+const payments = require('../../api/_lib/payments');
 
 (async () => {
   const args = process.argv.slice(2);
   const apply = args.includes('--aplicar');
   const ids = args.filter(a => /^\d+$/.test(a)).map(Number);
-  if (!ids.length) throw new Error('Informe os ids dos pedidos. Ex.: node --env-file=.env scripts/conferir-pagamento.js 208 211');
+  if (!ids.length) throw new Error('Informe os ids dos pedidos. Ex.: node --env-file=.env scripts/migracoes/conferir-pagamento.js 208 211');
   const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
   if (!token) throw new Error('MERCADOPAGO_ACCESS_TOKEN não definido.');
 

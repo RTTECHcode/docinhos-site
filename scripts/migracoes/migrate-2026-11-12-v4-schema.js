@@ -15,9 +15,9 @@
 // Idempotente e só aditiva: nenhuma tabela ou coluna é apagada ou renomeada; nenhuma linha muda.
 // A tabela ingredient_synonyms continua no banco, sem uso (N4).
 // Rodar ANTES do deploy do código v4.
-// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migrate-2026-11-12-v4-schema.js
+// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migracoes/migrate-2026-11-12-v4-schema.js
 // Produção: só com ordem do Renan, com o mesmo script apontando para o banco de produção.
-const sql = require('../api/_lib/db');
+const sql = require('../../api/_lib/db');
 
 const KINDS = ['earn', 'redeem_reserve', 'redeem_release', 'redeem_commit', 'reversal', 'adjust', 'reward_reserve', 'reward_release', 'reward_commit'];
 

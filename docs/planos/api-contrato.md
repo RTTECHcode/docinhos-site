@@ -284,16 +284,16 @@ Cookie: `__Host-dg_cliente` (HttpOnly, Secure, SameSite=Lax, Path=/, 30 dias). A
 
 ## 7. Banco (aditivo; `scripts/schema.sql` é o estado final)
 
-Migração: `node scripts/migrate-2026-11-10-painel-v2.js` (idempotente; nada é apagado ou renomeado).
+Migração: `node scripts/migracoes/migrate-2026-11-10-painel-v2.js` (idempotente; nada é apagado ou renomeado).
 
-F5: `node scripts/migrate-2026-11-10-scopes.js` (idempotente, aditiva; rodar ANTES do deploy do código da F5): amplia o CHECK de `customer_login_attempts.scope` para `login`, `recover`, `register` (cadastro, por IP) e `password` (senha atual errada na troca); cria `orders.client_ip` (limite de pedidos por IP; não aparece em nenhuma resposta). Linhas antigas com chave falsa na coluna `phone` (`#cadastro`, `#senha:+55...`) continuam sendo lidas nas mesmas janelas (até 48 h) e depois deixam de importar. Novas tabelas: `store_hours`, `store_state`, `ingredient_synonyms`, `ingredient_pause_batches`, `ingredient_pause_items`, `geocode_cache`, `route_cache`, `customers` e tabelas de sessão/pontos/consentimento, `admin_recovery_codes`, `admin_recovery_attempts`. Colunas novas: `products.paused/pause_label`, `product_complements.paused`, `orders.public_code/tracking_token_hash/…_at/discount_cents/points_redeemed/distance_km/customer_id`, `admin_users.security_*`.
+F5: `node scripts/migracoes/migrate-2026-11-10-scopes.js` (idempotente, aditiva; rodar ANTES do deploy do código da F5): amplia o CHECK de `customer_login_attempts.scope` para `login`, `recover`, `register` (cadastro, por IP) e `password` (senha atual errada na troca); cria `orders.client_ip` (limite de pedidos por IP; não aparece em nenhuma resposta). Linhas antigas com chave falsa na coluna `phone` (`#cadastro`, `#senha:+55...`) continuam sendo lidas nas mesmas janelas (até 48 h) e depois deixam de importar. Novas tabelas: `store_hours`, `store_state`, `ingredient_synonyms`, `ingredient_pause_batches`, `ingredient_pause_items`, `geocode_cache`, `route_cache`, `customers` e tabelas de sessão/pontos/consentimento, `admin_recovery_codes`, `admin_recovery_attempts`. Colunas novas: `products.paused/pause_label`, `product_complements.paused`, `orders.public_code/tracking_token_hash/…_at/discount_cents/points_redeemed/distance_km/customer_id`, `admin_users.security_*`.
 
-A2: `node scripts/migrate-2026-11-10-order-attempts.js` (idempotente, aditiva; rodar ANTES do deploy): cria `order_attempts (id, ip, at)` com índice `(ip, at)`. Uma linha por tentativa de pedido; o próprio `/api/order` apaga, de vez em quando, linhas com mais de 1 dia.
+A2: `node scripts/migracoes/migrate-2026-11-10-order-attempts.js` (idempotente, aditiva; rodar ANTES do deploy): cria `order_attempts (id, ip, at)` com índice `(ip, at)`. Uma linha por tentativa de pedido; o próprio `/api/order` apaga, de vez em quando, linhas com mais de 1 dia.
 
 v3 (A2): rodar ANTES do deploy do código da v3, nesta ordem (ambas idempotentes e não destrutivas; `node --env-file=.env ...` em produção, só com ordem do Renan; em desenvolvimento `node -r ./scripts/dev-env.js ...`):
 
-1. `scripts/migrate-2026-11-10-v3-schema.js`: colunas de endereço em `customers` (`address_cep`, `address_street`, `address_number`, `address_complement`, `address_district`, `address_city`, todas `text` nulas) e tabela `cep_cache (cep pk, logradouro, bairro, localidade, uf, created_at)`. O código novo falha sem elas.
-2. `scripts/migrate-2026-11-10-v3-categoria-familia.js`: renomeia a categoria "Sobremesas tamanho família" para "Para família" (só renomeia; ids e produtos iguais).
+1. `scripts/migracoes/migrate-2026-11-10-v3-schema.js`: colunas de endereço em `customers` (`address_cep`, `address_street`, `address_number`, `address_complement`, `address_district`, `address_city`, todas `text` nulas) e tabela `cep_cache (cep pk, logradouro, bairro, localidade, uf, created_at)`. O código novo falha sem elas.
+2. `scripts/migracoes/migrate-2026-11-10-v3-categoria-familia.js`: renomeia a categoria "Sobremesas tamanho família" para "Para família" (só renomeia; ids e produtos iguais).
 
 Colunas `products.pause_label`, `ingredient_pause_batches.pause_label`, `ingredient_pause_items.prev_pause_label` e a chave `settings.default_pause_label` ficam no banco, OBSOLETAS (ninguém lê nem grava; nada foi apagado).
 
@@ -478,7 +478,7 @@ Variável `SITE_URL` (só `https://`; `http://localhost` no dev). Sem ela: `http
 
 ### 10.11 Banco (v4)
 
-Migração `scripts/migrate-2026-11-12-v4-schema.js` (aditiva, idempotente; `schema.sql` espelhado e sobe em banco vazio): `club_rewards`, `coupons`, `coupon_redemptions`, `coupon_campaigns`, `coupon_campaign_targets`, `review_gifts`, `webhook_events`, `admin_push_subscriptions`; em `orders`: `club_points`, `coupon_id`, `coupon_code`, `coupon_discount_cents`, `pix_qr_code`, `pix_qr_base64`, `pix_expires_at`, `push_notified_at`, `scheduled_for` (N10), `payment_attempt_at`, `address_district` e `address_city` (F3, 10.14); índices parciais `orders_paid_created_idx` e `orders_scheduled_for_idx`; CHECK do ledger com `reward_*`. Prêmios de exemplo (só dev): `scripts/migrate-2026-11-12-v4-club-seed.js`. `ingredient_synonyms` fica no banco, sem uso.
+Migração `scripts/migracoes/migrate-2026-11-12-v4-schema.js` (aditiva, idempotente; `schema.sql` espelhado e sobe em banco vazio): `club_rewards`, `coupons`, `coupon_redemptions`, `coupon_campaigns`, `coupon_campaign_targets`, `review_gifts`, `webhook_events`, `admin_push_subscriptions`; em `orders`: `club_points`, `coupon_id`, `coupon_code`, `coupon_discount_cents`, `pix_qr_code`, `pix_qr_base64`, `pix_expires_at`, `push_notified_at`, `scheduled_for` (N10), `payment_attempt_at`, `address_district` e `address_city` (F3, 10.14); índices parciais `orders_paid_created_idx` e `orders_scheduled_for_idx`; CHECK do ledger com `reward_*`. Prêmios de exemplo (só dev): `scripts/migracoes/migrate-2026-11-12-v4-club-seed.js`. `ingredient_synonyms` fica no banco, sem uso.
 
 ### 10.12 Encomenda com data marcada (N10)
 
@@ -601,7 +601,7 @@ Resposta: `{ settings: { ...campos acima, limits: { scheduling_min_lead_min: [0,
 - Auditoria `pontos_regra_alterada`: `ligado, 1 pt/R$ 1 -> ligado, 2 pt/R$ 1`.
 - `points_get` continua igual (as regras ainda trazem `block_*`, só para os pedidos antigos).
 
-**Banco:** em `orders`, `payment_attempt_at`, `address_district` e `address_city`. A migração `scripts/migrate-2026-11-12-v4-schema.js` foi ampliada e já rodou no dev. Em produção, rodar antes do deploy da v4, como o resto.
+**Banco:** em `orders`, `payment_attempt_at`, `address_district` e `address_city`. A migração `scripts/migracoes/migrate-2026-11-12-v4-schema.js` foi ampliada e já rodou no dev. Em produção, rodar antes do deploy da v4, como o resto.
 
 ### 10.15 Correções da revisão de segurança F5 (`docs/planos/seguranca-v4-f5.md`)
 

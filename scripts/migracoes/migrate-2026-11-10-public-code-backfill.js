@@ -2,10 +2,10 @@
 // Só acrescenta: preenche public_code onde está vazio. O código antigo (coluna code) continua igual,
 // porque é a referência do pedido no Mercado Pago. Idempotente: rodar de novo não muda nada.
 // Evita repetir um DG-#### já usado nos últimos 90 dias, a mesma regra de api/order.js.
-// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migrate-2026-11-10-public-code-backfill.js
-// Uso (produção, só com ordem do Renan): node --env-file=.env scripts/migrate-2026-11-10-public-code-backfill.js
+// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migracoes/migrate-2026-11-10-public-code-backfill.js
+// Uso (produção, só com ordem do Renan): node --env-file=.env scripts/migracoes/migrate-2026-11-10-public-code-backfill.js
 const crypto = require('node:crypto');
-const sql = require('../api/_lib/db');
+const sql = require('../../api/_lib/db');
 
 (async () => {
   const pending = await sql.query(`select id, created_at from orders where public_code is null order by created_at, id`);
