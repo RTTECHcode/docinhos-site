@@ -58,13 +58,16 @@ async function t(name, fn) {
 }
 
 // ---------- Mercado Pago simulado ----------
-const mp = { payments: new Map(), prefs: [], pixKeys: [], prefKeys: [] }; // payments: id -> { status, amount, code, created }
+const mp = { payments: new Map(), prefs: [], pixKeys: [], prefKeys: [], onPixCreate: null, failPix: false }; // payments: id -> { status, amount, code, created }
+// onPixCreate(body): roda DENTRO da chamada de criação do Pix (F5-S-03); failPix: a criação do Pix responde 500.
 const realFetch = global.fetch;
 let seq = 0;
 global.fetch = async (url, opts = {}) => {
   const u = String(url);
   if (u === 'https://api.mercadopago.com/v1/payments' && opts.method === 'POST') {
     const b = JSON.parse(opts.body);
+    if (mp.failPix) return new Response(JSON.stringify({ message: 'falha simulada' }), { status: 500 });
+    if (mp.onPixCreate) await mp.onPixCreate(b);
     mp.pixKeys.push(opts.headers['X-Idempotency-Key']);
     const id = 870000000 + (++seq);
     mp.payments.set(String(id), { status: 'pending', amount: b.transaction_amount, code: b.external_reference, created: new Date().toISOString() });
@@ -183,6 +186,34 @@ const row = async id => (await Q('select payment_status, payment_method, payment
       assert.equal(o2.payment_status, 'approved'); assert.equal(o2.payment_id, cur);
       const n = (await Q(`select count(*)::int n from admin_audit where action = 'estorno_pagamento_antigo' and detail like $1`, ['%(pagamento ' + oldId + ')%']))[0].n;
       assert.equal(n, 1);
+    });
+    // F5-S-03: payment_attempt_at gravado ANTES da chamada ao Mercado Pago.
+    await t('F5-S-03: durante a chamada ao MP a hora já está gravada e a expiração do Pix antigo é ignorada', async () => {
+      const a = await order(body({ payment_choice: 'pix' }));
+      assert.equal(a.status, 201, JSON.stringify(a.body));
+      const oldPix = a.body.payment.id;
+      let inside = null;
+      mp.onPixCreate = async () => {
+        const o = await row(a.body.id);
+        const r = await payments.syncPayment(sql, { id: Number(oldPix), status: 'expired', external_reference: a.body.code, transaction_amount: 20,
+          currency_id: 'BRL', payment_method_id: 'pix', date_created: new Date(Date.now() - 10 * 60000).toISOString() }, { source: 'teste' });
+        inside = { at: o.payment_attempt_at, outcome: r.outcome };
+      };
+      let r;
+      try { r = await retry({ t: a.body.tracking_token }); } finally { mp.onPixCreate = null; }
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(inside && inside.at, 'payment_attempt_at gravado antes da chamada');
+      assert.equal(inside.outcome, 'stale');
+      assert.equal((await row(a.body.id)).payment_status, 'pending');
+    });
+    await t('F5-S-03: MP falha (502) e a hora anterior volta', async () => {
+      const a = await order(body({ payment_choice: 'pix' }));
+      const before = (await row(a.body.id)).payment_attempt_at;
+      mp.failPix = true;
+      let r;
+      try { r = await retry({ t: a.body.tracking_token }); } finally { mp.failPix = false; }
+      assert.equal(r.status, 502, JSON.stringify(r.body));
+      assert.equal(String((await row(a.body.id)).payment_attempt_at), String(before));
     });
     await t('isSuperseded: aprovado vale sempre; sem data ou sem retry não ignora', async () => {
       const at = new Date();

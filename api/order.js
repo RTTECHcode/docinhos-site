@@ -380,7 +380,7 @@ const PROCESSING_STATUSES = ['in_process', 'authorized']; // cartão em análise
 const MSG_RETRY_TOO_MANY = 'Muitas tentativas de pagamento em pouco tempo. Aguarde alguns minutos.';
 const RETRY_COLUMNS = `id, code, public_code, customer_id, customer_name, payment_status, payment_method, payment_id, fulfillment_status,
   created_at, items, delivery_fee_cents, discount_cents, total_cents, club_points, points_redeemed, coupon_id, scheduled_for,
-  (created_at > now() - interval '24 hours') as fresh`;
+  payment_attempt_at, (created_at > now() - interval '24 hours') as fresh`;
 
 // Motivo para não gerar novo pagamento, ou null. o = linha com RETRY_COLUMNS.
 async function retryBlock(sql, o, now = new Date()) {
@@ -467,9 +467,14 @@ async function retryPayment(req, res, sql) {
 
   // Chave de idempotência nova a cada tentativa (a do pedido devolveria o pagamento antigo). A hora é marcada ANTES de
   // chamar o Mercado Pago: aviso não aprovado de pagamento criado antes dela é ignorado (payments.syncPayment).
+  // F5-S-03: a hora é GRAVADA antes da chamada (UPDATE condicional, pedido ainda aberto). Antes era gravada só depois, e o
+  // aviso de expiração do Pix antigo que chegasse durante a chamada devolvia prêmio, pontos e cupom. Se o Mercado Pago
+  // falhar, a hora anterior volta (os avisos do pagamento antigo voltam a valer).
   const startedAt = new Date();
   const suffix = crypto.randomBytes(4).toString('hex');
   const stillOpen = n => `payment_status <> all($${n}::text[]) and fulfillment_status <> 'cancelled'`;
+  const marked = await sql.query(`update orders set payment_attempt_at = $2 where id = $1 and ${stillOpen(3)} returning id`, [o.id, startedAt, PAID_STATUSES]);
+  if (!marked.length) return send(res, 409, { error: 'Este pedido já está pago ou foi cancelado.', code: 'already_paid' });
   let payment;
   try {
     if (choice === 'pix') {
@@ -499,6 +504,9 @@ async function retryPayment(req, res, sql) {
     }
   } catch (err) {
     console.error('retry_payment: falha ao gerar pagamento:', String(err.message || '').replace(/\S+@\S+/g, '<email>').slice(0, 160));
+    // F5-S-03: devolve a hora anterior só se ninguém gravou outra no meio (outra tentativa).
+    await sql.query('update orders set payment_attempt_at = $2 where id = $1 and payment_attempt_at = $3', [o.id, o.payment_attempt_at || null, startedAt])
+      .catch(e => console.error('retry_payment: falha ao devolver payment_attempt_at:', e.message));
     return send(res, 502, { error: 'Não foi possível gerar o pagamento agora. Tente de novo em instantes.', code: 'payment_unavailable' });
   }
   return send(res, 200, { public_code: o.public_code, total_cents: o.total_cents, payment_choice: choice, payment });

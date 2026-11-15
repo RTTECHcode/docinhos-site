@@ -54,13 +54,14 @@ function paymentMethodOf(pay) {
 }
 
 // F3: pagamento criado antes do último retry_payment (folga de 2 s para o relógio do Mercado Pago). Sem data: não é ignorado.
-// F5-S-02: nunca ignora aprovado, estorno (refunded) nem contestação (charged_back), nem o pagamento atual do pedido.
-// Só pendente, recusado, cancelado ou vencido de um pagamento antigo que não é o atual vira 'stale'.
+// F5-S-02: nunca ignora aprovado, estorno (refunded) nem contestação (charged_back).
+// Só pendente, recusado, cancelado ou vencido de pagamento criado antes da tentativa vira 'stale'. F5-S-03: o pagamento
+// "atual" (payment_id) não tem exceção: durante a chamada ao Mercado Pago ele ainda é o Pix antigo, e o aviso de
+// expiração dele não pode devolver as reservas. Se o Mercado Pago falhar, retry_payment devolve a hora anterior.
 const SUPERSEDED_SKEW_MS = 2000;
 const NEVER_STALE = ['approved', 'refunded', 'charged_back'];
 function isSuperseded(pay, order) {
   if (!pay || NEVER_STALE.includes(pay.status) || !order || !order.payment_attempt_at || !pay.date_created) return false;
-  if (order.payment_id != null && String(pay.id) === String(order.payment_id)) return false;
   const created = Date.parse(pay.date_created);
   if (!Number.isFinite(created)) return false;
   return created < new Date(order.payment_attempt_at).getTime() - SUPERSEDED_SKEW_MS;
