@@ -1,5 +1,8 @@
 # Deploy na Netlify (F6)
 
+Hospedagem: Netlify. Domínio oficial: https://docinhosdagigioz.com.br. Nota: a Vercel segue publicando a loja de produção
+até o corte (passo 5); o `vercel.json` fica até lá.
+
 Guia do corte da Vercel para a Netlify. Plano: `docs/planos/plano-v4.md`, seção 5. Quem executa os passos é o Renan:
 nenhum agente cria conta, faz deploy, mexe em DNS ou em produção.
 
@@ -15,7 +18,7 @@ nenhum agente cria conta, faz deploy, mexe em DNS ou em produção.
 | Servidor local | `scripts/dev-server.js` | Lê os cabeçalhos do `netlify.toml`; `APP_ENV=development` vem de `scripts/dev-env.js`. |
 | Testes sem banco | `scripts/test-netlify.js` | Evento da Function simulado (sem `netlify-cli`): corpo cru, base64, query, IP, cookies, cabeçalhos, imagem, webhook 401/200. Confere que `netlify.toml` e `vercel.json` têm os mesmos cabeçalhos. |
 
-O `vercel.json` fica até a F7 (depois do corte). Enquanto os dois existirem, qualquer mudança de cabeçalho ou CSP vai nos dois
+O `vercel.json` fica até o corte. Enquanto os dois existirem, qualquer mudança de cabeçalho ou CSP vai nos dois
 (o `scripts/test-netlify.js` falha se divergirem).
 
 ## 2. Variáveis de ambiente (só os nomes)
@@ -51,7 +54,8 @@ Depois do passo 5 (domínio na Netlify), a variável da Vercel pode sair.
 2. Cadastrar as variáveis da seção 2: produção com os valores de produção e `APP_ENV=production`; deploy preview e branch `v4`
    com o banco dev, o token de teste e `APP_ENV=preview`.
 3. Abrir o deploy da branch `v4` e conferir o roteiro curto (seção 4).
-4. Cadastrar `SITE_URL` na Vercel (seção 2). Depois, aprovar o merge da `v4` na `main` e o push (Vercel e Netlify publicam juntas).
+4. Rodar no banco de produção `scripts/migracoes/migrate-2026-11-12-v4-schema.js` (AINDA NÃO RODOU em produção; só acrescenta,
+   e vai ANTES do código da v4). Cadastrar `SITE_URL` na Vercel (seção 2). Depois, aprovar o merge da `v4` na `main` e o push (Vercel e Netlify publicam juntas).
 5. No registro.br, apontar o domínio para a Netlify (Netlify DNS ou os registros que ela indicar). `www` redireciona para o
    domínio sem `www`. O HTTPS é automático.
 6. No Mercado Pago, trocar a URL do webhook para `https://docinhosdagigioz.com.br/api/mp-webhook` e conferir que a assinatura
@@ -59,7 +63,7 @@ Depois do passo 5 (domínio na Netlify), a variável da Vercel pode sair.
 7. UptimeRobot: trocar a URL para `https://docinhosdagigioz.com.br/api/health`.
 8. Cloudflare Web Analytics: criar o site (grátis) e mandar o token para o A0 colocar.
 9. Depois de 48 h estável: o projeto da Vercel vira só redirecionamento para o domínio (ou é desligado).
-   Na F7 saem o `vercel.json` e o `"start": "vercel dev"`.
+   Nessa hora sai o `vercel.json` (o `"start": "vercel dev"` já saiu na F7).
 
 ## 4. Roteiro curto de teste no deploy da `v4`
 
@@ -80,5 +84,5 @@ Depois do passo 5 (domínio na Netlify), a variável da Vercel pode sair.
 - Node: `NODE_VERSION = "22"` no `netlify.toml` (as Functions seguem a versão do build).
 - Para A4/A5 (seção 5.2 do plano): quando entrar o Cloudflare Web Analytics, a CSP precisa de
   `script-src https://static.cloudflareinsights.com` e `connect-src https://cloudflareinsights.com`, no `netlify.toml` e no
-  `vercel.json` (até a F7). O `scripts/test-netlify.js` compara os dois.
+  `vercel.json` (até o corte). O `scripts/test-netlify.js` compara os dois.
 - Limite de 12 funções: continua valendo (uma Function por arquivo de `api/`, conferido no teste).
