@@ -58,12 +58,14 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F4 A5 antecipada | feito | v4-a5 | 7a5d893; logo 1,7 MB para 9 KB, OG, CLS 0,47 para 0,00, morango/chocolate, N9, U-11 |
 | F3 A4 | feito | v4-a4 | 9e15662; N1-N3, N6-N8, N10, N11, U-01 a U-05, U-08 a U-10, X-01, P-06, P-12; 39 prints |
 | F3 A2 extra | feito | v4-a2 | 20e6207; retry_payment, tracking_url, itens/bairro no rastreio, MIME, points_save; 3 colunas novas (migração rodada só no dev) |
-| F3 A4 extra | em andamento | v4-a4 | tela de retry_payment e rastreio ?o=; Frete e aviso de nova aba |
+| F3 A4 extra | feito | v4-a4 | be37ee2; Gerar novo pagamento (rastreio e checkout), rastreio ?o= com login, F5-S-09, faixa de confiança, aviso de nova aba |
 | F3 A3 | feito | v4-a3 | 5972489; N1, N3-N6, N8, N10, N11, U-06 (som, PWA, push), O-01; 44 prints |
 | F4 A5 revisão | feito | v4-a5 | 6c46ab2; só CSS: toque 44 px, Quando? em 360, pós-pagamento, foco, barra do Clube; prints "depois" interrompidos por falta de memória (A6 cobre na F5) |
-| F5 A1 segurança | em andamento | v4-a1 | revisão do diff bff189f..v4; achados em seguranca-v4-f5.md |
-| F5 A6 QA | em andamento | v4-a6 | etapa 1 regressão de banco; etapa 2 navegador depois do A4 |
-| F6 Netlify | aguardando | — | migração (plano seção 5); deploy só com o Renan |
+| F5 A1 segurança | feito | v4-a1 | 9f17bb2; 0 Crítico/Alto; 2 Médios (F5-S-01, S-02) e 7 Baixos em seguranca-v4-f5.md |
+| F5 A2 correções + F6 Netlify | código pronto | v4-a2 | c824d72; F5-S-01 a S-08, M1-M6; testes sem banco ok; testes de banco esperam o fim do A6 etapa 2 |
+| F5 A6 QA etapa 1 | feito | v4-a6 | 6613581; 20 suítes + 2 novas ok, sem bug; colisão com teste alheio (A6-01) repetida ok |
+| F5 A6 QA etapa 2 | feito | v4-a6 | 8503dcd; loja 38/38 x3, painel ok, 0 erro de console; só Baixos/Info (A6-02 a A6-07) em qa-v4.md |
+| F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
 | F7 Polimento | aguardando | — | limpeza e polimento (plano seção 6) |
 | F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
 
@@ -74,3 +76,6 @@ Domínio docinhosdagigioz.com.br registrado em 14/11/2026 (vence 14/11/2027), ai
 Para a F7 (achados do A5 na F4): placeholder da busca do painel cortado em 360 ao lado de "Ativar som" (A3); faixa O-01 alta demais no celular (A3); cartão "Frete" sozinho na faixa de confiança em 2 colunas (A4); links de nova aba sem aviso (A3/A4).
 
 Dev: shipping_bands ausente (teste interrompido apagou; vale a faixa padrão do código). Conferir na produção antes do deploy se existe ajuste salvo.
+Para a F7 (do A4): aviso de nova aba em privacidade.html e experimental.html (A5); revisar visual do .pay-again (A5); script v4-a4 antigo do U-08 clica no botão antigo "Tentar pagar de novo".
+Dev: sobram 2 pedidos e 1 cliente ZZ-a5 de 13/11 (do A5); apagar na F7.
+Antes do merge na main: Renan cadastra SITE_URL=https://docinhos-site.vercel.app na Vercel (senão o MP volta para o domínio que ainda não aponta). Analytics: CSP precisa de static.cloudflareinsights.com (script-src) e cloudflareinsights.com (connect-src).

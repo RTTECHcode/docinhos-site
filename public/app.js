@@ -788,7 +788,8 @@ async function refreshTrack() {
   });
   for (const o of mine) {
     if (!trackActive(o) || !trackFresh(o.created_at) || (o.public_code && seen.has(o.public_code))) continue;
-    items.push({ code: o.public_code || '', href: '/conta/#pedidos', label: String(o.status_label || ''), sched: String(o.scheduled_label || ''), date: o.created_at });
+    const href = typeof o.tracking_url === 'string' && /^\/pedido\.html\?o=[0-9]{1,12}$/.test(o.tracking_url) ? o.tracking_url : '/conta/#pedidos'; // v4 F3
+    items.push({ code: o.public_code || '', href, label: String(o.status_label || ''), sched: String(o.scheduled_label || ''), date: o.created_at });
   }
   items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
   trackItems = items;
@@ -1465,6 +1466,7 @@ function renderInfo() {
   document.querySelector('#trust-eta-text').textContent = etaText() ? `chega em ${etaText()}` : '';
   document.querySelector('#trust-ship').hidden = !shipText();
   document.querySelector('#trust-ship-text').textContent = shipText() ? `${shipText()} · ${pickupText().toLowerCase()}` : '';
+  balanceTrust();
   // carrinho: prazo e frete
   const parts = [etaText() && `Entrega em ${etaText()}`, shipText() && `frete ${shipText()}`, shipping && pickupText()].filter(Boolean);
   cartInfoEl.hidden = !parts.length || !cart.length;
@@ -1472,6 +1474,13 @@ function renderInfo() {
   // checkout: prazo quando "Quando?" não aparece
   checkoutEtaEl.hidden = !etaText() || !!scheduling;
   checkoutEtaEl.textContent = etaText() ? `${isPickup() ? 'Pronto para retirar' : 'Entrega'} em ${etaText()}, depois da confirmação do pagamento.` : '';
+}
+// Achado do A5 (F4): na grade de 2 colunas do celular, o último cartão visível ficava sozinho. Com número ímpar de cartões, o último ocupa a linha toda.
+function balanceTrust() {
+  const items = [...document.querySelectorAll('#trust > li')];
+  items.forEach(li => li.classList.remove('trust-wide'));
+  const shown = items.filter(li => !li.hidden);
+  if (shown.length % 2) shown[shown.length - 1].classList.add('trust-wide');
 }
 closedStripBtnEl.addEventListener('click', () => {
   if (cart.length) { confirmRmKey = null; renderCart(); openModal('#cart-modal', { opener: closedStripBtnEl }); return; }
@@ -1505,6 +1514,9 @@ const payEls = {
   card: document.querySelector('#pay-mp'),
   support: document.querySelector('#pay-support'),
   retry: document.querySelector('#pay-retry'),
+  again: document.querySelector('#pay-again'),
+  againBtn: document.querySelector('#pay-again-btn'),
+  againStatus: document.querySelector('#pay-again-status'),
   wa: document.querySelector('#pay-wa'),
   help: document.querySelector('#pay-help')
 };
@@ -1605,13 +1617,14 @@ function renderOrderStep(order, { title, text, watchNow } = {}) {
   payEls.thanks.hidden = true;
   payEls.copyStatus.textContent = '';
   payEls.timer.textContent = '';
+  currentOrder = order;
   const failed = !pay && !watchNow; // v4 U-08: pedido registrado, mas o pagamento não foi gerado
-  const canRetry = failed && !!(lastCartCopy && lastCartCopy.length);
+  showPayAgain(failed && !!order.token, order);
   let msg = text;
   if (msg == null) {
     msg = type === 'pix' ? 'Pedido registrado! Esta tela confirma sozinha quando o Pix cair.'
       : type === 'card' ? 'Pedido registrado! Pague com cartão no botão abaixo. Esta tela confirma sozinha quando o pagamento for aprovado.'
-      : 'Pedido registrado, mas não foi possível gerar o pagamento agora.' + (canRetry ? ' Toque em "Tentar pagar de novo" para enviar outra vez' + (WHATSAPP_NUMBER ? ', ou fale com a Gigi pelo WhatsApp com o código do pedido.' : '.') : ' Fale com a Gigi pelo WhatsApp para combinar o pagamento.');
+      : 'Pedido registrado, mas não foi possível gerar o pagamento agora.' + (order.token ? ' Toque em "Gerar novo pagamento" para tentar de novo' + (WHATSAPP_NUMBER ? ', ou fale com a Gigi pelo WhatsApp com o código do pedido.' : '.') : ' Fale com a Gigi pelo WhatsApp para combinar o pagamento.');
   }
   payEls.text.textContent = msg;
   if (type === 'card') payEls.card.href = pay.url;
@@ -1625,7 +1638,6 @@ function renderOrderStep(order, { title, text, watchNow } = {}) {
     if (pay.qr_code_base64) { payEls.qr.src = 'data:image/png;base64,' + pay.qr_code_base64; payEls.qrBox.hidden = false; }
     else { payEls.qr.removeAttribute('src'); payEls.qrBox.hidden = true; }
   }
-  if (canRetry) { payEls.retry.textContent = 'Tentar pagar de novo'; payEls.retry.hidden = false; }
   if (failed && WHATSAPP_NUMBER) {
     payEls.help.hidden = false;
     payEls.help.href = waLink(`Olá! Fiz o pedido ${order.publicCode || order.code} pelo site e o pagamento não foi gerado. Pode me ajudar?`);
@@ -1635,7 +1647,7 @@ function renderOrderStep(order, { title, text, watchNow } = {}) {
   checkoutTitleEl.textContent = title || (type === 'pix' ? 'Falta só pagar o Pix' : type === 'card' ? 'Pagamento' : 'Pedido registrado');
   const panel = paymentStepEl.closest('.modal-panel');
   if (panel) panel.scrollTop = 0;
-  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : !payEls.retry.hidden ? payEls.retry : payEls.help.hidden ? payEls.trackLink : payEls.help).focus({ preventScroll: true });
+  (type === 'pix' ? payEls.copyBtn : type === 'card' ? payEls.card : !payEls.again.hidden ? payEls.againBtn : payEls.help.hidden ? payEls.trackLink : payEls.help).focus({ preventScroll: true });
   if (type || watchNow) startPayWatch(order, pay, !!watchNow);
 }
 
@@ -1679,6 +1691,7 @@ function startPayWatch(order, pay, immediate) {
 function onPayApproved(order, postPayment) {
   stopPayWatch();
   markLastOrder(order.token, { status: 'approved' });
+  showPayAgain(false);
   payEls.pixBox.hidden = true;
   payEls.card.hidden = payEls.support.hidden = true;
   payEls.retry.hidden = true;
@@ -1701,12 +1714,13 @@ function onPayEnded(order, msg) {
   payEls.text.textContent = 'Se já pagou, fale com a Gigi pelo WhatsApp informando o número do pedido.';
   checkoutTitleEl.textContent = 'Pagamento não concluído';
   payEls.retry.textContent = 'Refazer pedido';
-  payEls.retry.hidden = !(lastCartCopy && lastCartCopy.length);
+  showPayAgain(!!order.token, order);
+  payEls.retry.hidden = !!order.token || !(lastCartCopy && lastCartCopy.length); // com novo pagamento possível, refazer só se o servidor recusar
   if (WHATSAPP_NUMBER) {
     payEls.help.hidden = false;
     payEls.help.href = waLink(`Olá! Tive um problema com o pagamento do pedido ${order.publicCode || order.code}. Pode me ajudar?`);
   }
-  (payEls.retry.hidden ? payEls.help : payEls.retry).focus({ preventScroll: true });
+  (!payEls.again.hidden ? payEls.againBtn : payEls.retry.hidden ? payEls.help : payEls.retry).focus({ preventScroll: true });
 }
 
 // Refazer: devolve os itens ao carrinho e volta ao formulário
@@ -1747,10 +1761,87 @@ async function resumePix() {
     if (modalStack.length) return; // a pessoa já abriu outra coisa
     openModal('#checkout-modal', { opener: document.body });
     renderOrderStep({ publicCode: d.public_code || last.public_code, token: last.token, payment: pay, summary: last.summary,
-      total: Number.isInteger(d.total_cents) ? d.total_cents : undefined, scheduledLabel: d.scheduled_label || last.scheduled_label || null });
+      total: Number.isInteger(d.total_cents) ? d.total_cents : undefined, scheduledLabel: d.scheduled_label || last.scheduled_label || null, paymentChoice: 'pix' });
     toast('Seu Pix ainda está esperando o pagamento.', 4000);
   } catch { /* sem rede: o "Acompanhe" continua levando ao pedido */ }
 }
+
+/* v4 F3: "Gerar novo pagamento" do mesmo pedido (POST /api/order?a=retry_payment com { t } e payment_choice). O servidor não
+   recalcula nada; pode recusar com 409 (pedido novo necessário, cartão em análise...) ou 429. */
+let currentOrder = null;
+const RETRY_MSGS = {
+  already_paid: 'Este pedido já está pago. Não precisa pagar de novo.',
+  order_cancelled: 'Este pedido foi cancelado. Se quiser, faça um pedido novo.',
+  retry_expired: 'Passou o prazo de 24 horas para pagar este pedido. Faça um pedido novo.',
+  payment_in_process: 'O pagamento com cartão ainda está em análise. Espere a resposta antes de tentar de novo, para não cobrar duas vezes.',
+  schedule_passed: 'O horário agendado deste pedido já passou. Faça um pedido novo com outro horário.',
+  reservation_released: 'O prêmio do Clube ou o cupom deste pedido já foi liberado. Faça um pedido novo.',
+  slot_full: 'O horário agendado lotou enquanto o pagamento estava pendente. Faça um pedido novo com outro horário.',
+  rate_limited: 'Muitas tentativas em pouco tempo. Espere alguns minutos e tente de novo.',
+  login_required: 'Entre na sua conta para pagar este pedido.',
+  order_not_found: 'Não encontramos este pedido.',
+  payment_unavailable: 'O pagamento on-line não respondeu agora. Tente de novo em instantes ou fale com a Gigi pelo WhatsApp.'
+};
+const RETRY_NEW_ORDER = new Set(['order_cancelled', 'retry_expired', 'schedule_passed', 'reservation_released', 'slot_full']);
+function setAgainStatus(msg, kind) {
+  payEls.againStatus.textContent = msg;
+  payEls.againStatus.className = 'pay-again-status' + (kind ? ' ' + kind : '');
+}
+function showPayAgain(on, order) {
+  payEls.again.hidden = !on;
+  payEls.againBtn.disabled = false;
+  payEls.againBtn.textContent = 'Gerar novo pagamento';
+  setAgainStatus('', '');
+  if (on) {
+    const choice = order && order.paymentChoice === 'card' ? 'card' : 'pix';
+    const r = paymentStepEl.querySelector(`input[name="again_choice"][value="${choice}"]`);
+    if (r) r.checked = true;
+  }
+}
+payEls.againBtn.addEventListener('click', async () => {
+  const order = currentOrder;
+  if (!order || !order.token || payEls.againBtn.disabled) return;
+  const pick = paymentStepEl.querySelector('input[name="again_choice"]:checked');
+  const choice = pick && pick.value === 'card' ? 'card' : 'pix';
+  payEls.againBtn.disabled = true;
+  payEls.againBtn.textContent = 'Gerando...';
+  setAgainStatus('', '');
+  let r, d = {};
+  try {
+    r = await fetch('/api/order?a=retry_payment', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: order.token, payment_choice: choice }) });
+    try { d = await r.json(); } catch { /* corpo não-JSON */ }
+  } catch {
+    payEls.againBtn.disabled = false; payEls.againBtn.textContent = 'Gerar novo pagamento';
+    setAgainStatus('Sem conexão com o servidor. Confira a internet e tente de novo.', 'warn');
+    return;
+  }
+  const payment = r.ok ? normalizePayment(d.payment) : null;
+  if (payment) {
+    if (payment.type === 'card') {
+      markLastOrder(order.token, { status: 'awaiting_payment', payment_choice: 'card', paymentUrl: payment.url });
+      setAgainStatus('Abrindo o pagamento com cartão...', '');
+      location.href = payment.url;
+      return;
+    }
+    markLastOrder(order.token, { status: 'awaiting_payment', payment_choice: 'pix', pix_expires_at: Number.isFinite(Date.parse(payment.expires_at)) ? new Date(Date.parse(payment.expires_at)).toISOString() : new Date(Date.now() + PIX_DEFAULT_MS).toISOString(), pix_dismissed: false });
+    renderOrderStep({ ...order, payment, paymentChoice: 'pix', total: Number.isInteger(d.total_cents) ? d.total_cents : order.total });
+    toast('Novo Pix gerado! Agora é só pagar.', 4000);
+    return;
+  }
+  payEls.againBtn.disabled = false;
+  payEls.againBtn.textContent = 'Gerar novo pagamento';
+  const code = d && d.code;
+  const msg = (r.ok && 'Não foi possível gerar o pagamento agora. Tente de novo.') || RETRY_MSGS[code] || (r.status === 429 ? RETRY_MSGS.rate_limited : (d && d.error) || 'Não foi possível gerar o pagamento agora. Tente de novo.');
+  setAgainStatus(msg, 'warn');
+  if (code === 'already_paid') { payEls.again.hidden = true; startPayWatch(order, null, true); return; }
+  if (RETRY_NEW_ORDER.has(code)) {
+    payEls.again.hidden = true;
+    setPayStatus(msg, 'warn');
+    payEls.retry.textContent = 'Refazer pedido';
+    payEls.retry.hidden = !(lastCartCopy && lastCartCopy.length);
+    (payEls.retry.hidden ? payEls.trackLink : payEls.retry).focus({ preventScroll: true });
+  }
+});
 
 /* v4 N8: depois do pagamento aprovado, convite para avaliar no Google e seguir no Instagram. Só aparece se o servidor
    mandar post_payment e uma vez por pedido (marcado no aparelho ao fechar ou ao tocar num dos links). */
@@ -1973,7 +2064,7 @@ checkoutFormEl.addEventListener('submit', async e => {
     saveLastOrder({ public_code: data.public_code, token: data.tracking_token, status: payment ? 'awaiting_payment' : 'registered', summary, payment_choice: order.payment_choice, scheduled_label: srv.scheduled_label || null,
       ...(card ? { paymentUrl: payment.url, whatsappText } : {}), ...(pixUntil ? { pix_expires_at: pixUntil } : {}) });
     slotCache.clear();
-    renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary, scheduledLabel: srv.scheduled_label || null });
+    renderOrderStep({ code: data.code, publicCode: data.public_code, token: data.tracking_token, whatsappText, payment, summary, scheduledLabel: srv.scheduled_label || null, paymentChoice: order.payment_choice });
     toast(payment ? 'Pedido registrado! Agora é só pagar.' : 'Pedido registrado!');
     if (account) loadAccount(); // saldo mudou (pontos reservados)
   } catch {
@@ -2009,7 +2100,7 @@ function handlePaymentReturn() {
   };
   openModal('#checkout-modal', { opener: document.body });
   const retryPay = status === 'erro' && typeof last.paymentUrl === 'string' ? normalizePayment({ type: 'card', url: last.paymentUrl }) : null;
-  renderOrderStep({ publicCode: last.public_code, token: last.token, whatsappText: typeof last.whatsappText === 'string' ? last.whatsappText : '', payment: retryPay, summary: last.summary },
+  renderOrderStep({ publicCode: last.public_code, token: last.token, whatsappText: typeof last.whatsappText === 'string' ? last.whatsappText : '', payment: retryPay, summary: last.summary, paymentChoice: last.payment_choice },
     { title: status === 'erro' ? 'Pagamento não concluído' : 'Pedido registrado', text: texts[status], watchNow: status !== 'erro' });
 }
 
