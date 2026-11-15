@@ -71,7 +71,11 @@
       bar = el('div', { id: 'webhook-warn', class: 'a5-warn wh-warn', role: 'alert' });
       $('#view').before(bar);
     }
-    if (bar.textContent !== text) bar.textContent = text;
+    // O-01 compacto: no celular o detalhe da última tentativa some da vista (o texto completo fica em title).
+    if (bar.dataset.text !== text) {
+      bar.dataset.text = text; bar.title = text;
+      bar.replaceChildren('O Mercado Pago foi recusado ao avisar pagamentos: confira a chave do webhook.', el('span', { class: 'wh-when', text: when }), el('span', { class: 'wh-when', text: ' Enquanto isso, use "Conferir pagamento" no pedido.' }));
+    }
   }
 
   // ---------- botões de som ----------
@@ -91,9 +95,14 @@
     const b = el('button', { class: 'btn small snd-btn ' + (extraClass || ''), type: 'button', title: 'Som quando chegar pedido pago' });
     b.addEventListener('click', async () => {
       if (st.soundOn && !st.blocked) { st.soundOn = false; lsSet(false); paintButtons(); DG.toast('Som desligado neste aparelho.'); return; }
-      st.soundOn = true; lsSet(true);
+      // A6-05: otimista. O botão já mostra "Som ligado" no clique; se o navegador bloquear, volta ao estado anterior e avisa.
+      const prevBlocked = st.blocked;
+      st.soundOn = true; st.blocked = false; lsSet(true); paintButtons();
       if (await playSound()) DG.toast('Som ligado. Deixe o painel aberto para ouvir os pedidos pagos.');
-      else DG.toast('O navegador bloqueou o som. Toque de novo ou libere o som deste site.', true);
+      else {
+        st.soundOn = false; st.blocked = prevBlocked; lsSet(false); paintButtons();
+        DG.toast('O navegador bloqueou o som. Toque de novo ou libere o som deste site.', true);
+      }
     });
     buttons.add(b);
     paintButtons();

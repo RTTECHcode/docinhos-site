@@ -172,9 +172,10 @@
         badges(o),
         el('span', { class: 'muted small', text: o.status_key === 'payment_failed' ? 'O cliente pode tentar pagar de novo.' : '' })),
       el('div', { class: 'ord-actions' },
-        act ? el('button', { class: 'btn primary', type: 'button', text: act.label, disabled: busy, on: { click: () => advance(o.id, act) } }) : null,
-        canCheckPay(o) ? el('button', { class: 'btn', type: 'button', text: 'Conferir pagamento', disabled: busy, on: { click: () => checkPayment(o.id) } }) : null,
-        el('a', { class: 'btn', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer', text: 'Chamar cliente no WhatsApp' }),
+        // A6-03: com pagamento pendente, o destaque é "Conferir pagamento"; "Aceitar" fica secundário (e continua pedindo confirmação).
+        canCheckPay(o) ? el('button', { class: 'btn primary', type: 'button', text: 'Conferir pagamento', disabled: busy, on: { click: () => checkPayment(o.id) } }) : null,
+        act ? el('button', { class: 'btn' + (canCheckPay(o) ? '' : ' primary'), type: 'button', text: act.label, disabled: busy, on: { click: () => advance(o.id, act) } }) : null,
+        el('a', { class: 'btn', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer' }, 'Chamar cliente no WhatsApp', el('span', { class: 'sr-only', text: ' (abre em nova aba)' })),
         el('button', { class: 'btn danger ord-cancel', type: 'button', text: 'Cancelar pedido', disabled: busy, on: { click: () => { const c = byId(o.id); if (c) cancelOrder(c); } } })));
   }
 
@@ -268,7 +269,7 @@
         DG.orderTotals(o),
         el('h3', { class: 'section-title', text: 'Andamento' }), statusBox,
         canCheckPay(o) ? el('button', { class: 'btn block', type: 'button', text: 'Conferir pagamento', on: { click: async function () { this.disabled = true; await checkPayment(o.id); const c = byId(o.id) || o; Object.assign(o, c); this.disabled = false; if (!canCheckPay(c)) { this.hidden = true; } paintStatus(); } } }) : null,
-        el('a', { class: 'btn primary block', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer', text: 'Chamar cliente no WhatsApp' }),
+        el('a', { class: 'btn primary block', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer' }, 'Chamar cliente no WhatsApp', el('span', { class: 'sr-only', text: ' (abre em nova aba)' })),
         el('button', { class: 'btn block', type: 'button', text: 'Fechar', on: { click: close } }));
     });
   }
@@ -279,7 +280,7 @@
     stop,
     async render(view) {
       stop();
-      const searchInput = el('input', { class: 'search', type: 'search', placeholder: 'Buscar por código ou nome', maxlength: 60, value: st.search, 'aria-label': 'Buscar pedido' });
+      const searchInput = el('input', { class: 'search', type: 'search', placeholder: 'Código ou nome', maxlength: 60, value: st.search, 'aria-label': 'Buscar pedido por código ou nome' });
       let debounce = null;
       searchInput.addEventListener('input', () => {
         clearTimeout(debounce);

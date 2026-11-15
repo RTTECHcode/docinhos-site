@@ -131,7 +131,7 @@
             el('div', { class: 'row between' }, el('strong', { class: 'wrap grow', text: t.name }), el('span', { class: 'muted small', text: t.phone })),
             el('p', { class: 'cp-msg wrap', text: t.message }),
             el('div', { class: 'row wrap-row' },
-              el('a', { class: 'btn small primary', href: waLink(t.phone, t.message), target: '_blank', rel: 'noopener noreferrer', text: 'Abrir no WhatsApp', 'aria-label': 'Abrir conversa com ' + t.name + ' no WhatsApp' }),
+              el('a', { class: 'btn small primary', href: waLink(t.phone, t.message), target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Abrir conversa com ' + t.name + ' no WhatsApp (abre em nova aba)' }, 'Abrir no WhatsApp'),
               copy),
             el('label', { class: 'a5-check' }, mark, el('span', { text: 'Mensagem enviada' })),
             when);

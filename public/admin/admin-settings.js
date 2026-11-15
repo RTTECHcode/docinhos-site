@@ -365,7 +365,7 @@
       const r = await DG.api('review_settings').catch(() => null);
       if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar o link de avaliação.' })); return; }
       const v = r.review;
-      const link = (url, off) => (url ? el('a', { class: 'wrap rv-link', href: url, target: '_blank', rel: 'noopener noreferrer', text: url }) : el('span', { class: 'muted', text: off }));
+      const link = (url, off) => (url ? el('a', { class: 'wrap rv-link', href: url, target: '_blank', rel: 'noopener noreferrer' }, url, el('span', { class: 'sr-only', text: ' (abre em nova aba)' })) : el('span', { class: 'muted', text: off }));
       box.replaceChildren(
         el('dl', { class: 'kv' },
           el('dt', { text: 'Google' }), el('dd', {}, link(v.google_review_url, 'Desligado (o cliente não vê o pedido de avaliação)')),
