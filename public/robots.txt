@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /experimental.html
+
+Sitemap: https://docinhosdagigioz.com.br/sitemap.xml

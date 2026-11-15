@@ -364,7 +364,7 @@ function openProduct(id, opener) {
         ${sizes.map(s => `
           <div class="comp-item${s.unavailable ? ' is-unavailable' : ''}">
             <span class="comp-left">${esc(s.name)}${s.priceCents ? `<span class="comp-price">+ ${brl(s.priceCents)}</span>` : ''}${s.unavailable ? '<span class="unavail-tag">Indisponível</span>' : ''}</span>
-            <span class="comp-qty"><button type="button" data-size="${s.id}" aria-label="${s.unavailable ? `${esc(s.name)} indisponível` : `Escolher ${esc(s.name)}`}" ${s.unavailable || (firstSize && s.id === firstSize.id) ? 'disabled' : ''}>${firstSize && s.id === firstSize.id ? '✓' : '+'}</button></span>
+            <span class="comp-qty"><button type="button" data-size="${s.id}" aria-label="${s.unavailable ? `${esc(s.name)} indisponível` : `Escolher ${esc(s.name)}`}" ${s.unavailable ? 'disabled' : `aria-pressed="${firstSize && s.id === firstSize.id ? 'true' : 'false'}"`}>${firstSize && s.id === firstSize.id ? '✓' : '+'}</button></span>
           </div>`).join('')}
         ${firstSize ? '' : '<p class="group-error" role="alert">Todos os tamanhos estão indisponíveis no momento.</p>'}
       </div>` : ''}
@@ -395,9 +395,11 @@ function openProduct(id, opener) {
             </span>
           </div>`).join('')}
       </div>` : ''}
+    <div class="pm-foot">
     <div class="pm-total-row"><span>Total</span><span id="pm-total"></span></div>
     ${paused ? '<p class="pm-paused-note" id="pm-paused-note">Volto logo! Este doce está pausado agora e não pode ser pedido. Dá uma olhada nos outros do cardápio.</p>' : ''}
-    <button type="button" class="button primary full" id="pm-add" ${paused ? 'disabled aria-describedby="pm-paused-note"' : sizes.length && !firstSize ? 'disabled' : ''}>${paused ? 'Indisponível no momento' : 'Adicionar ao carrinho'}</button>`;
+    <button type="button" class="button primary full" id="pm-add" ${paused ? 'disabled aria-describedby="pm-paused-note"' : sizes.length && !firstSize ? 'disabled' : ''}>${paused ? 'Indisponível no momento' : 'Adicionar'}</button>
+    </div>`;
   updatePmTotal();
   openModal('#product-modal', { opener });
 }
@@ -433,6 +435,8 @@ function pmTotalCents() {
 function updatePmTotal() {
   const el = document.querySelector('#pm-total');
   if (el && activeProduct) el.textContent = brl(pmTotalCents());
+  const add = document.querySelector('#pm-add');
+  if (add && activeProduct && !activeProduct.paused) add.textContent = `Adicionar – ${brl(pmTotalCents())}`;
 }
 
 document.addEventListener('click', e => {
@@ -440,9 +444,9 @@ document.addEventListener('click', e => {
   const comps = activeProduct.complements || [];
   const sizeBtn = e.target.closest('[data-size]');
   if (sizeBtn) {
-    if (sizeBtn.disabled) return;
+    if (sizeBtn.disabled || sizeBtn.getAttribute('aria-pressed') === 'true') return;
     sel.size = comps.find(c => c.id === Number(sizeBtn.dataset.size));
-    document.querySelectorAll('[data-size]').forEach(b => { b.textContent = b === sizeBtn ? '✓' : '+'; b.disabled = b === sizeBtn || !!b.closest('.is-unavailable'); });
+    document.querySelectorAll('[data-size]').forEach(b => { if (b.disabled) return; b.textContent = b === sizeBtn ? '✓' : '+'; b.setAttribute('aria-pressed', String(b === sizeBtn)); });
     updatePmTotal();
     return;
   }
@@ -1334,8 +1338,6 @@ async function checkCoupon(raw) {
     const body = { code, items: itemsPayload() };
     const rw = rewardsPayload();
     if (rw.length) body.rewards = rw;
-    const ph = digitsOf(field('phone').value);
-    if (!account && ph.length >= 10) body.phone = ph; // limite por cliente (logado usa o telefone da conta)
     const r = await fetch('/api/customer?a=coupon_check', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let d = {};
     try { d = await r.json(); } catch { /* corpo não-JSON */ }

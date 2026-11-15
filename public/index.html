@@ -5,27 +5,46 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Docinhos da Gigi — Doces artesanais em Osasco, peça online</title>
 <meta name="description" content="Doces artesanais em Osasco/SP: copos da felicidade, geladinhos gourmet, açaí, brigadeiros e sobremesas. Peça pelo site, pague com Pix ou cartão e receba em casa ou retire na loja.">
-<!-- URL provisória: trocar quando houver domínio (canonical, og:url e og:image abaixo) -->
-<link rel="canonical" href="https://docinhos-site.vercel.app/">
+<link rel="canonical" href="https://docinhosdagigioz.com.br/">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="pt_BR">
 <meta property="og:site_name" content="Docinhos da Gigi">
 <meta property="og:title" content="Docinhos da Gigi — Doces artesanais em Osasco">
 <meta property="og:description" content="Doces artesanais em Osasco/SP: copos da felicidade, geladinhos gourmet, açaí, brigadeiros e sobremesas. Peça pelo site, pague com Pix ou cartão e receba em casa ou retire na loja.">
-<meta property="og:url" content="https://docinhos-site.vercel.app/">
-<meta property="og:image" content="https://docinhos-site.vercel.app/images/branding/compartilhar.jpg">
+<meta property="og:url" content="https://docinhosdagigioz.com.br/">
+<meta property="og:image" content="https://docinhosdagigioz.com.br/images/branding/compartilhar.jpg">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Logo da Docinhos da Gigi ao lado de um Copo da Felicidade">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#3b1a12">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preload" href="/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/images/branding/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css">
+<!-- v4 P-08: dados estruturados (JSON, não executa). Única exceção à regra de script inline; sem horário fixo porque o site só mostra o horário do dia pelo painel. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Bakery",
+  "name": "Docinhos da Gigi",
+  "url": "https://docinhosdagigioz.com.br/",
+  "image": "https://docinhosdagigioz.com.br/images/branding/compartilhar.jpg",
+  "telephone": "+5511987882303",
+  "servesCuisine": "Doces artesanais",
+  "address": {
+    "@type": "PostalAddress",
+    "streetAddress": "Manoel Hare Peralta, 101",
+    "addressLocality": "Osasco",
+    "addressRegion": "SP",
+    "addressCountry": "BR"
+  },
+  "areaServed": { "@type": "City", "name": "Osasco", "containedInPlace": { "@type": "State", "name": "São Paulo" } }
+}
+</script>
 </head>
 <body>
 <div class="topbar" id="topbar">
@@ -215,7 +234,7 @@
       <!-- v4 F3: novo pagamento do mesmo pedido (POST /api/order?a=retry_payment). Não recalcula nada: total e reservas são os do pedido. -->
       <div id="pay-again" class="pay-again" hidden>
         <fieldset class="pay-again-choice">
-          <legend>Gerar novo pagamento</legend>
+          <legend>Como quer pagar de novo?</legend>
           <label class="radio"><input type="radio" name="again_choice" value="pix" checked> Pix</label>
           <label class="radio"><input type="radio" name="again_choice" value="card"> Cartão</label>
         </fieldset>
@@ -256,6 +275,7 @@
 </div>
 
 <script src="/config.js"></script>
+<script src="/analytics.js" defer></script>
 <script src="/whatsapp.js" defer></script>
 <script src="/app.js" defer></script>
 </body>
