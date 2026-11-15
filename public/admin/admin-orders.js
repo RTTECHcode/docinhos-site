@@ -175,7 +175,7 @@
         // A6-03: com pagamento pendente, o destaque é "Conferir pagamento"; "Aceitar" fica secundário (e continua pedindo confirmação).
         canCheckPay(o) ? el('button', { class: 'btn primary', type: 'button', text: 'Conferir pagamento', disabled: busy, on: { click: () => checkPayment(o.id) } }) : null,
         act ? el('button', { class: 'btn' + (canCheckPay(o) ? '' : ' primary'), type: 'button', text: act.label, disabled: busy, on: { click: () => advance(o.id, act) } }) : null,
-        el('a', { class: 'btn', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer', text: 'Chamar cliente no WhatsApp' }),
+        el('a', { class: 'btn', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer' }, 'Chamar cliente no WhatsApp', el('span', { class: 'sr-only', text: ' (abre em nova aba)' })),
         el('button', { class: 'btn danger ord-cancel', type: 'button', text: 'Cancelar pedido', disabled: busy, on: { click: () => { const c = byId(o.id); if (c) cancelOrder(c); } } })));
   }
 
@@ -269,7 +269,7 @@
         DG.orderTotals(o),
         el('h3', { class: 'section-title', text: 'Andamento' }), statusBox,
         canCheckPay(o) ? el('button', { class: 'btn block', type: 'button', text: 'Conferir pagamento', on: { click: async function () { this.disabled = true; await checkPayment(o.id); const c = byId(o.id) || o; Object.assign(o, c); this.disabled = false; if (!canCheckPay(c)) { this.hidden = true; } paintStatus(); } } }) : null,
-        el('a', { class: 'btn primary block', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer', text: 'Chamar cliente no WhatsApp' }),
+        el('a', { class: 'btn primary block', href: whatsLink(o.customer_phone, o.customer_name, codeOf(o)), target: '_blank', rel: 'noopener noreferrer' }, 'Chamar cliente no WhatsApp', el('span', { class: 'sr-only', text: ' (abre em nova aba)' })),
         el('button', { class: 'btn block', type: 'button', text: 'Fechar', on: { click: close } }));
     });
   }
