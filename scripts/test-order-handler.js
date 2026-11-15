@@ -394,7 +394,7 @@ const balanceOf = async id => (await loyalty.getBalance(sql, id)).balance;
     const nom = net.calls.filter(c => c.url.startsWith('https://nominatim.openstreetmap.org/'));
     assert.ok(nom.length > 0);
     for (const c of nom) {
-      assert.equal(c.init.headers['User-Agent'], 'DocinhosDaGigi/1.0 (+https://docinhos-site.vercel.app)');
+      assert.equal(c.init.headers['User-Agent'], 'DocinhosDaGigi/1.0 (+https://docinhosdagigioz.com.br)');
       assert.ok(!/@/.test(c.init.headers['User-Agent']));
       assert.match(c.url, /countrycodes=br/);
     }

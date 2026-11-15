@@ -13,8 +13,9 @@ const { phoneKey } = require('./_lib/text');
 const { hitExceeded } = require('./_lib/rate-limit');
 const payments = require('./_lib/payments');
 
-// A-05 (v4): endereço do site num ponto só (variável SITE_URL, padrão https://docinhos-site.vercel.app).
+// A-05 (v4): endereço do site num ponto só (variável SITE_URL, padrão https://docinhosdagigioz.com.br desde a F6 M4).
 const SITE_URL = require('./_lib/site').siteUrl();
+const { SITE_DOMAIN } = require('./_lib/site');
 const MP_PREFERENCES_URL = 'https://api.mercadopago.com/checkout/preferences';
 const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
 // ?source_news=webhooks: o Mercado Pago manda só o formato Webhooks (assinado, com data.id), sem o IPN antigo
@@ -52,8 +53,9 @@ const MSG_REWARD_MIN = 'Para trocar pontos por um prêmio, o pedido precisa ter 
 // - Pix: gerado direto no site via POST /v1/payments (sem preference), válido por 30 min
 //   (mínimo aceito pela API do Mercado Pago).
 // - A API exige payer.email no Pix e não coletamos e-mail do cliente. Usamos um e-mail sintético
-//   por pedido (pedido-<codigo>@docinhos-site.vercel.app): tem formato válido, não pertence a ninguém
-//   e não é usado para contato (o aviso ao cliente é feito pelo WhatsApp).
+//   por pedido (pedido-<codigo>@docinhosdagigioz.com.br, F6 M4): tem formato válido, fica no domínio da loja (antes era
+//   um subdomínio da Vercel, que outro projeto poderia assumir depois do corte) e não é usado para contato (o aviso ao
+//   cliente é feito pelo WhatsApp).
 const MAX_INSTALLMENTS = 3;
 const PREFERENCE_TTL_MS = 2 * 60 * 60 * 1000;
 const PIX_TTL_MS = 30 * 60 * 1000;
@@ -294,7 +296,7 @@ async function createPreference(token, order, prefItems, idempotencyKey = `pref-
 }
 
 function pixPayerEmail(code) {
-  return `pedido-${String(code).toLowerCase()}@docinhos-site.vercel.app`;
+  return `pedido-${String(code).toLowerCase()}@${SITE_DOMAIN}`;
 }
 
 function buildPixBody(order, customerName, now = new Date()) {

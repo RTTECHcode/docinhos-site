@@ -1,9 +1,10 @@
 'use strict';
-// A-05 (v4): endereço público do site. Lê SITE_URL do ambiente; sem a variável, usa o endereço de produção de sempre
-// (nada muda em produção enquanto a variável não existir). Sem barra no fim.
+// A-05 (v4): endereço público do site. Lê SITE_URL do ambiente; sem a variável, usa o endereço de produção. Sem barra no fim.
 // Só https:// (http:// apenas para localhost/127.0.0.1 no dev). Valor inválido = fallback (nunca quebra o pedido).
-// Quando o domínio docinhosdagigioz.com.br estiver na Vercel, basta criar SITE_URL=https://docinhosdagigioz.com.br.
-const DEFAULT_SITE_URL = 'https://docinhos-site.vercel.app';
+// F6 M4: o padrão de produção passa a ser o domínio próprio (Netlify). Enquanto a Vercel estiver no ar sem o domínio,
+// ela precisa de SITE_URL=https://docinhos-site.vercel.app (docs/planos/deploy-netlify.md).
+const DEFAULT_SITE_URL = 'https://docinhosdagigioz.com.br';
+const SITE_DOMAIN = new URL(DEFAULT_SITE_URL).hostname;
 
 function siteUrl(env = process.env) {
   const v = String(env.SITE_URL || '').trim().replace(/\/+$/, '');
@@ -16,4 +17,4 @@ function siteUrl(env = process.env) {
   return v;
 }
 
-module.exports = { DEFAULT_SITE_URL, siteUrl };
+module.exports = { DEFAULT_SITE_URL, SITE_DOMAIN, siteUrl };

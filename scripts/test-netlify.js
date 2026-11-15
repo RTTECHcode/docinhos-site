@@ -33,6 +33,20 @@ async function t(name, fn) {
     for (const f of files) assert.ok(!fs.readFileSync(f, 'utf8').includes('VERCEL_ENV'), f);
   });
 
+  console.log('M4: endereço do site');
+  await t('SITE_URL padrão = domínio próprio; variável válida vence; inválida cai no padrão', () => {
+    const site = require('../api/_lib/site');
+    assert.equal(site.DEFAULT_SITE_URL, 'https://docinhosdagigioz.com.br');
+    assert.equal(site.siteUrl({}), 'https://docinhosdagigioz.com.br');
+    assert.equal(site.siteUrl({ SITE_URL: 'https://docinhos-site.vercel.app/' }), 'https://docinhos-site.vercel.app');
+    assert.equal(site.siteUrl({ SITE_URL: 'http://evil.example.com' }), 'https://docinhosdagigioz.com.br');
+    assert.equal(site.siteUrl({ SITE_URL: 'http://localhost:3402' }), 'http://localhost:3402');
+  });
+  await t('e-mail sintético do Pix e USER_AGENT no domínio da loja', () => {
+    assert.equal(require('../api/order')._internal.pixPayerEmail('DG0123'), 'pedido-dg0123@docinhosdagigioz.com.br');
+    assert.equal(require('../api/_lib/shipping').USER_AGENT, 'DocinhosDaGigi/1.0 (+https://docinhosdagigioz.com.br)');
+  });
+
   console.log(`\n${pass} ok, ${fail} falha(s)`);
   if (fail) process.exitCode = 1;
 })();

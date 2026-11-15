@@ -474,7 +474,7 @@ Desligado sem as variáveis `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJ
 
 ### 10.10 Endereço do site (A-05)
 
-Variável `SITE_URL` (só `https://`; `http://localhost` no dev). Sem ela: `https://docinhos-site.vercel.app`. Usada nos links de volta do Mercado Pago, no webhook e na mensagem do cupom.
+Variável `SITE_URL` (só `https://`; `http://localhost` no dev). Sem ela: `https://docinhosdagigioz.com.br` (F6 M4; antes `https://docinhos-site.vercel.app`). Usada nos links de volta do Mercado Pago, no webhook e na mensagem do cupom.
 
 ### 10.11 Banco (v4)
 
