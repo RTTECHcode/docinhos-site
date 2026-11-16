@@ -505,7 +505,7 @@ async function catalogTests() {
     const find = m => m.body.categories.flatMap(c => c.products).find(p => p.id === ctx.prod);
     let m = await menuCall();
     assert.equal(m.code, 200); assert.ok(find(m).complements.some(c => c.id === ctx.comp));
-    assert.deepEqual(Object.keys(m.body.settings).sort(), ['deliveryFeeCents', 'storeAddress', 'storePaused', 'storePausedMessage']);
+    assert.deepEqual(Object.keys(m.body.settings).sort(), ['deliveryFeeCents', 'instagram_url', 'storeAddress', 'storePaused', 'storePausedMessage']);
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: ctx.comp, paused: true })).status, 200);
     m = await menuCall(); const pausedLink = find(m).complements.find(c => c.id === ctx.comp); assert.ok(pausedLink && pausedLink.unavailable === true, 'D5: vínculo pausado continua no cardápio, marcado como indisponível');
     assert.equal((await post(S.adm, 'link_toggle', { product_id: ctx.prod, complement_id: ctx.comp, paused: false })).status, 200);
