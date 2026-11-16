@@ -5,7 +5,7 @@ Para: Renan. Escrito pelo A0 (orquestrador) em 15/11/2026.
 ## Resumo em 1 minuto
 
 A v4 está pronta e testada na branch `v4`. Nada foi para a loja de verdade.
-O site de teste (preview) mostra tudo funcionando com o banco de teste: PREVIEW_URL_AQUI
+O site de teste (preview) mostra tudo funcionando com o banco de teste: https://docinhos-site-git-v4-renantmgame-7908s-projects.vercel.app (abra logado na Vercel; o preview é protegido). Painel da publicação: https://vercel.com/renantmgame-7908s-projects/docinhos-site/6HLcK89zEBdsaZuK72rgRMzvVn4L
 
 Antes de publicar na loja de verdade, falta 1 coisa que só você pode fazer: o passo 3 abaixo (`SITE_URL` na Vercel). Sem ela, os pagamentos não confirmam. A migração do banco de produção (passo 2) você já rodou em 15/11: 28 itens "Pronto".
 
