@@ -72,7 +72,7 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F7 limpeza worktrees | bloqueado | — | 22 antigas limpas e contidas na main; a10-account removida pela metade (Permission denied, OneDrive); prune negado pelo classificador; decisão do Renan |
 | F7 limpeza final | feito | v4-a7 | fc59d8f; npm test/test:puro, scripts/migracoes (v4-schema AINDA NÃO rodou em produção), README Netlify, A-04, O-03 (dry-run), Instagram da API |
 | F7 regressão final | em andamento | v4-a6b | Sonnet; npm test completo + fumaça no navegador |
-| F8 | aguardando | — | relatorio-v4.md com passo a passo do Renan |
+| F8 | andamento | v4 | relatorio-v4.md escrito; falta URL do preview |
 
 Pendências do A5 para a F3: A4 aplica morango/chocolate no Quem somos, faixa de confiança, P-06, P-12. Fora da faixa de todos (vão para o A4 na F3): vercel.json e raiz de public/ (P-04 cache do menu, P-05 cache de estáticos, P-07 fontes locais + CSP, P-09 robots/sitemap, P-10 404, manifest da loja).
 
@@ -83,7 +83,7 @@ Para a F7 (achados do A5 na F4): placeholder da busca do painel cortado em 360 a
 Dev: shipping_bands ausente (teste interrompido apagou; vale a faixa padrão do código). Conferir na produção antes do deploy se existe ajuste salvo.
 Para a F7 (do A4): aviso de nova aba em privacidade.html e experimental.html (A5); revisar visual do .pay-again (A5); script v4-a4 antigo do U-08 clica no botão antigo "Tentar pagar de novo".
 Dev: sobram 2 pedidos e 1 cliente ZZ-a5 de 13/11 (do A5); apagar na F7.
-Antes do merge na main: Renan cadastra SITE_URL=https://docinhos-site.vercel.app na Vercel (senão o MP volta para o domínio que ainda não aponta). Analytics: CSP precisa de static.cloudflareinsights.com (script-src) e cloudflareinsights.com (connect-src).
+Migração v4 RODADA na produção pelo Renan em 15/11 (28 itens ok); limpar-ip-antigo --aplicar rodado (0 linhas). Antes do merge na main: Renan cadastra SITE_URL=https://docinhos-site.vercel.app na Vercel (senão o MP volta para o domínio que ainda não aponta). Analytics: CSP precisa de static.cloudflareinsights.com (script-src) e cloudflareinsights.com (connect-src).
 Relatório: depois do merge na main, a Vercel publica canonical/og apontando para o domínio; apontar o DNS logo. Imagens de /images com cache de 30 dias (trocar foto estática = nome novo). Cardápio com cache de 60 s.
 Números (preço, total, pontos, contadores, timer) em Fredoka 600, aprovado pelo Renan em 15/11 a pedido da Gigi; títulos seguem na Bagel Fat One (v4-a5).
 Interferência: às 05:06-05:10 UTC de 15/11 algum test-admin-painel alheio fechou a loja do dev até 05:08 e não restaurou; o A2 restaurou o store_state.
