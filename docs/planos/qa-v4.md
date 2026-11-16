@@ -100,3 +100,43 @@ Prints do painel (`v4-a6-painel-<passo>-<vw>.png`, 41): login, kanban, kanban-a-
 Prints "depois" do A5 (execução separada, servidor da v4-a6 na porta 3405): `v4-a5-f4b.js depois all skip` e `depois all audit`, 62 arquivos `v4-a5-f4b-depois-*-{360,390,1366}.png`, auditoria em `v4-a5-tmp/f4b-audit-depois-all.json`. Comparado com o "antes": alvos pequenos de 4 para 0, foco sem contorno de 3 para 0, nenhum estouro horizontal. Só sobra 1 contraste baixo, o texto em curva "acompanhe" (SVG `textPath`) do checkout, 3,94:1, que já existia no "antes".
 
 Fim da Etapa 2: `v4-a6-setup.js clean` sem sobras (pedidos, clientes, produtos, admin e cupons ZZ-v4-a6 = 0; nenhuma sessão órfã; mimos ZZ = 0). Ajustes, horários (00:00-23:59) e estado da loja iguais ao snapshot. Servidor 3406 encerrado, nenhum Edge aberto. Sobras do A5 (2 pedidos e 1 cliente `ZZ-a5` de 13/11) não são minhas e ficaram.
+
+## Regressão final (F7)
+
+Branch v4-a6b (de v4 d406bc7), servidor na porta 3406, dados ZZ-v4-a6 (apagados no fim, sobras 0). Execução em 16/11.
+
+### Testes (`npm test -- --continuar`)
+
+24 testes. 23 passaram na primeira rodada. 1 falhou: `test-admin`, caso "vínculo: vincular com max_quantity e grupo..." (linha 508). Repetido sozinho: falhou de novo (não é intermitente).
+
+Causa: teste velho. A mudança A6-02 (Instagram vindo da API) fez `/api/menu` devolver `settings.instagram_url`, e o teste comparava a lista exata de chaves sem ela. Não é bug do código. Corrigi o teste (`instagram_url` na lista). `test-admin` sozinho: 64 passaram, 0 falharam. O `test-qa-points` marcou 137364 s no resumo porque a sessão ficou suspensa entre as rodadas, não é lentidão do teste. Nenhum teste apontava para o caminho antigo dos `migrate-*`.
+
+### Fumaça no navegador (360x740 e 1366x800, validada pelo DOM e console; 27/27 verificações em cada tamanho)
+
+| Item | Resultado |
+|---|---|
+| Preço do cardápio | Fredoka 600 |
+| Títulos (h2, nome no modal) | Bagel Fat One. O nome do doce no card da lista usa Manrope 800 por desenho do CSS |
+| Fontes | carregadas do próprio site; 0 requisições a fonts.googleapis/gstatic |
+| CSP | 0 violações (o dev-server aplica a CSP do netlify.toml); 0 erros de console |
+| Modal do produto | rodapé sticky com botão visível; total em Fredoka 600 |
+| Carrinho e checkout até o Pix (MP moqueado) | ok; o pedido não envia preço, total, desconto nem frete |
+| pedido.html `?t=` e `?o=` | `?t=` mostra status e itens; `?o=` sem sessão pede login |
+| Quem somos | ilustrações carregam; Instagram some com settings vazio e aparece quando `/api/menu` traz a URL (moque) |
+| 404.html, robots.txt, sitemap.xml | ok (`/404.html` renderiza; robots `text/plain`; sitemap `application/xml`) |
+| Painel | login ZZ, kanban com 4 colunas, som liga, "Enquadrar foto" abre (zoom pelo teclado) e Cancelar fecha sem enviar, relatório de vendas |
+| CSV de vendas | BOM UTF-8 (ef bb bf) e cabeçalho `"Dia";"Pedidos pagos";"Bruto (R$)";"Frete (R$)";"Descontos (R$)";"Líquido (R$)"` |
+
+Dados de clientes reais foram filtrados no navegador (só linhas ZZ). Ações que gravam ajuste, fecham a loja ou enviam foto ficaram bloqueadas no script. Scripts: `v4-a6-f7.js`, resultados em `v4-a6-f7-result-{360,1366}.json` (pasta gigi-tools).
+
+### Achados
+
+| ID | Severidade | Responsável | Achado |
+|---|---|---|---|
+| F7-01 | Baixo (teste) | A6 | Teste velho de `/api/menu` sem `instagram_url`. Corrigido em `scripts/test-admin.js`. |
+| F7-02 | Info | - | O `scripts/dev-server.js` não serve `404.html` em rota inexistente (devolve "Not found"). Em produção a Vercel/Netlify servem a página. Só afeta quem testa 404 local. |
+| F7-03 | Info | - | O snapshot de settings/horários/estado foi comparado no fim: iguais, nada para restaurar. |
+
+Nenhuma falha Crítica, Alta ou Média.
+
+PRONTO PARA PREVIEW: sim
