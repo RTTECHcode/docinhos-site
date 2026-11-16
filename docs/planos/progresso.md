@@ -71,7 +71,7 @@ Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras
 | F7 A5 visual | feito (7d99226) | v4-a5 | 81cbd6c; contém v4-a4 e v4-a2; fontes locais (CSP sem Google), nova aba, .pay-again, contraste 5,84 |
 | F7 limpeza worktrees | bloqueado | — | 22 antigas limpas e contidas na main; a10-account removida pela metade (Permission denied, OneDrive); prune negado pelo classificador; decisão do Renan |
 | F7 limpeza final | feito | v4-a7 | fc59d8f; npm test/test:puro, scripts/migracoes (v4-schema AINDA NÃO rodou em produção), README Netlify, A-04, O-03 (dry-run), Instagram da API |
-| F7 regressão final | em andamento | v4-a6b | Sonnet; npm test completo + fumaça no navegador |
+| F7 regressão final | feito | v4-a6b | 0b57ffb; 24 suítes ok (test-admin velho corrigido), navegador 27/27 em 360 e 1366, 0 Crítico/Alto/Médio |
 | F8 | andamento | v4 | relatorio-v4.md escrito; falta URL do preview |
 
 Pendências do A5 para a F3: A4 aplica morango/chocolate no Quem somos, faixa de confiança, P-06, P-12. Fora da faixa de todos (vão para o A4 na F3): vercel.json e raiz de public/ (P-04 cache do menu, P-05 cache de estáticos, P-07 fontes locais + CSP, P-09 robots/sitemap, P-10 404, manifest da loja).
