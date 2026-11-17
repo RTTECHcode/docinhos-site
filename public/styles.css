@@ -1044,3 +1044,28 @@ body:has(#cart-fab:not([hidden])) .track-fab { bottom: calc(14px + 52px + 12px +
 .pm-foot .pm-total-row { margin: 0 0 10px; padding-top: 10px; }
 /* números em Fredoka: contador de pontos na barra do topo */
 .topbar-btn.points span:first-child { font-family: var(--numeric); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* v5: botão do Instagram ao lado do "Pedir pelo WhatsApp" (hero). Degradê nas cores do Instagram, escurecido para o texto
+   branco passar no contraste (AA). Celular estreito: vira um círculo só com o ícone, na mesma linha do WhatsApp.
+   Aparece com um "pop" quando o link chega do /api/menu (sem animação com prefers-reduced-motion). */
+.hero .button.ig, .button.ig {
+  gap: 8px; padding: 0 24px; color: #fff;
+  background: linear-gradient(135deg, #b8296b 0%, #c2185b 40%, #7b2fa8 100%);
+  box-shadow: 0 4px 0 #4b1f73, 0 14px 22px -10px rgba(0, 0, 0, .6);
+}
+.button.ig[hidden] { display: none; }
+.button.ig svg { flex: none; }
+@media (hover: hover) { .hero .button.ig:hover, .button.ig:hover { background: linear-gradient(135deg, #a3225e 0%, #ad1450 40%, #6a2696 100%); } }
+.hero .button.ig:active, .button.ig:active { box-shadow: 0 1px 0 #4b1f73; }
+.button.ig:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+@media (max-width: 419px) {
+  .hero-actions { flex-wrap: nowrap; gap: 10px; }
+  .hero-actions .button.wa { padding: 0 20px; }
+  .button.ig { width: 52px; padding: 0; flex: none; }
+  .button.ig .ig-label { display: none; }
+}
+@keyframes ig-pop { 0% { transform: scale(.4) rotate(-20deg); opacity: 0; } 70% { transform: scale(1.12) rotate(6deg); opacity: 1; } 100% { transform: scale(1) rotate(0); } }
+@media (prefers-reduced-motion: no-preference) {
+  .button.ig:not([hidden]) { animation: ig-pop .5s cubic-bezier(.3, 1.4, .5, 1) both; }
+  .button.ig:not([hidden]) svg { transform-origin: 50% 50%; animation: cat-balanca 2.8s ease-in-out 1s 2; }
+}
