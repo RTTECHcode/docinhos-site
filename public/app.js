@@ -228,14 +228,25 @@ let activeCat = null;
 let navLockUntil = 0;
 const scrollBehavior = () => (REDUCED.matches ? 'auto' : 'smooth');
 
-// V3: a categoria "Para família" ganha o ícone do brigadeiro (identificada pelo nome, sem acento e em minúsculas)
-const isFamilyCat = c => String(c.name || '').normalize('NFD').replace(/[^a-zA-Z ]/g, '').trim().toLowerCase() === 'para familia';
-const brigIcon = c => isFamilyCat(c) ? '<span class="cat-brig" aria-hidden="true"></span>' : '';
+// v5: ícone ilustrado e animado de cada categoria (escolhido no painel; o /api/menu manda { key, src, anim } ou null).
+// Só aceita arquivo de /images/icones/ e animação conhecida. Decorativo: alt vazio. Substitui o brigadeiro fixo do "Para família" (V3).
+const CAT_ANIMS = new Set(['pula', 'balanca', 'flutua', 'pulsa', 'gira']);
+const catIconOf = c => {
+  const i = c && c.icon;
+  return i && /^\/images\/icones\/[a-z]+\.svg$/.test(String(i.src || '')) ? i : null;
+};
+const catIcon = (c, idx) => {
+  const i = catIconOf(c);
+  if (!i) return '';
+  const anim = CAT_ANIMS.has(i.anim) ? i.anim : 'balanca';
+  // atraso diferente por categoria (d0 a d3): os ícones não mexem todos juntos
+  return `<img class="cat-ico anim-${anim} d${idx % 4}" src="${i.src}" alt="" width="26" height="26" decoding="async">`;
+};
 function renderCats() {
-  catsEl.innerHTML = menu.map(c =>
-    `<a class="cat-chip${isFamilyCat(c) ? ' has-brig' : ''}" href="#cat-${c.id}" data-cat="${c.id}">${esc(c.name)}</a>`).join('');
-  catList.innerHTML = menu.map(c =>
-    `<li><a class="cat-item" href="#cat-${c.id}" data-cat="${c.id}">${brigIcon(c)}<span>${esc(c.name)}</span><span class="cat-count">${c.products.length}</span></a></li>`).join('');
+  catsEl.innerHTML = menu.map((c, i) =>
+    `<a class="cat-chip${catIconOf(c) ? ' has-ico' : ''}" href="#cat-${c.id}" data-cat="${c.id}">${catIcon(c, i)}${esc(c.name)}</a>`).join('');
+  catList.innerHTML = menu.map((c, i) =>
+    `<li><a class="cat-item" href="#cat-${c.id}" data-cat="${c.id}">${catIcon(c, i)}<span>${esc(c.name)}</span><span class="cat-count">${c.products.length}</span></a></li>`).join('');
   catFab.hidden = menu.length === 0;
   if (menu.length) setActiveCat(menu[0].id);
 }
@@ -302,9 +313,9 @@ document.addEventListener('click', e => {
 
 function renderMenu() {
   let imgN = 0; // P-06: as primeiras fotos (acima da dobra) carregam já; as outras, sob demanda
-  menuEl.innerHTML = menu.map(c => `
+  menuEl.innerHTML = menu.map((c, ci) => `
     <section class="category" id="cat-${c.id}">
-      <h2>${brigIcon(c)}${esc(c.name)}</h2>
+      <h2>${catIcon(c, ci)}${esc(c.name)}</h2>
       <div class="grid">${c.products.map(p => `
         <button type="button" class="card${p.unavailable ? ' is-unavailable' : ''}${p.paused ? ' is-paused' : ''}" ${p.unavailable && !p.paused ? 'disabled aria-disabled="true"' : `data-pid="${p.id}"`}>
           ${p.imagePath ? `<img src="${esc(encodeURI(p.imagePath))}" alt="" width="104" height="104" ${imgN++ < 4 ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">` : '<span class="placeholder" aria-hidden="true"></span>'}

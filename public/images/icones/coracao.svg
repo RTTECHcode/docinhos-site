@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Coração">
+  <path d="M32 56C14 44 7 34 7 24a12 12 0 0 1 25-5 12 12 0 0 1 25 5c0 10-7 20-25 32Z" fill="#c93a51" stroke="#9c2a40" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M15 22c1-4 4-6 8-6" fill="none" stroke="#ff7ab3" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="14.5" cy="28" r="1.8" fill="#fff" opacity=".6"/>
+</svg>

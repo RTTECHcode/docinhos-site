@@ -6,13 +6,14 @@ const club = require('./_lib/club'); // v4 N3: prêmios do Clube (vitrine)
 const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data marcada
 const showcase = require('./_lib/showcase'); // v4 N11: selo "Mais pedido" e prazo de entrega
 const { publicInstagramUrl } = require('./_lib/gifts'); // A6-02: link do Instagram (validado)
+const { iconInfo } = require('./_lib/category-icons'); // v5: ícone ilustrado da categoria
 // Produto sem preço e sem tamanho disponível: aparece, mas não pode ir para o carrinho (o pedido recusaria no fim).
 const NO_PRICE_LABEL = 'Consulte pelo WhatsApp';
 module.exports = async (req, res) => {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Método não permitido' });
   try {
     const rows = await sql`
-      select c.id category_id, c.name category_name, c.sort_order category_order,
+      select c.id category_id, c.name category_name, c.sort_order category_order, c.icon category_icon,
              p.id, p.name, p.description, p.price_cents, p.image_path, p.sort_order, p.paused
       from categories c join products p on p.category_id = c.id
       where c.active and p.active order by c.sort_order, p.sort_order, p.name
@@ -57,7 +58,7 @@ module.exports = async (req, res) => {
     const categories = [];
     for (const row of rows) {
       let category = categories.find(item => item.id === row.category_id);
-      if (!category) { category = { id: row.category_id, name: row.category_name, products: [] }; categories.push(category); }
+      if (!category) { category = { id: row.category_id, name: row.category_name, icon: iconInfo(row.category_icon), products: [] }; categories.push(category); }
       const product = { id: row.id, name: row.name, description: row.description, priceCents: row.price_cents, imagePath: row.image_path, complements: byProduct[row.id] || [], groups: groupsByProduct[row.id] || [], best_seller: best.has(row.id) };
       // D6 (v3): pausado = só a flag (a etiqueta é fixa, definida pela loja no front). Aparece, mas não pode ser pedido.
       if (row.paused) { product.unavailable = true; product.paused = true; }

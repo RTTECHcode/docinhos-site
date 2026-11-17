@@ -65,17 +65,35 @@
       el('button', { class: 'btn primary block', type: 'button', text: 'Novo produto', on: { click: () => DG.openProduct(null, catalog, st.catFilter ? Number(st.catFilter) : null, afterEdit) } }));
   }
 
-  function editCategory(c, reload) {
+  // v5: ícones que a categoria pode ter (vêm do catalog: { key, label, src, anim }).
+  const iconOf = (catalog, key) => (catalog.category_icons || []).find(i => i.key === key) || null;
+  const iconImg = (icon, size) => icon ? el('img', { class: 'cat-ico', src: icon.src, alt: '', width: size, height: size }) : null;
+
+  // v5: grade de ícones; "Sem ícone" limpa. Mostra o ícone animado na hora em que é escolhido.
+  function iconPicker(catalog, state) {
+    const icons = catalog.category_icons || [];
+    const grid = el('div', { class: 'icon-pick', role: 'group', 'aria-label': 'Ícone da categoria' });
+    const paint = () => grid.replaceChildren(
+      ...[{ key: null, label: 'Sem ícone' }, ...icons].map(i => el('button', {
+        type: 'button', class: 'icon-opt' + (i.key ? ' anim-' + i.anim : ''), 'aria-pressed': String(state.icon === i.key), title: i.label,
+        on: { click: () => { state.icon = i.key; paint(); } }
+      }, i.key ? iconImg(i, 36) : el('span', { class: 'icon-none', 'aria-hidden': 'true', text: '–' }), el('span', { class: 'small', text: i.label }))));
+    paint();
+    return grid;
+  }
+
+  function editCategory(c, reload, catalog) {
     DG.sheet(c ? 'Editar categoria' : 'Nova categoria', (body, close) => {
       const name = el('input', { type: 'text', maxlength: 60, value: c ? c.name : '' });
       const order = el('input', { type: 'number', inputmode: 'numeric', min: 0, value: String(c ? c.sort_order : 0) });
-      const state = { active: c ? c.active : true };
+      const state = { active: c ? c.active : true, icon: c && iconOf(catalog, c.icon) ? c.icon : null };
       body.append(
         el('label', { class: 'field' }, el('span', { text: 'Nome' }), name),
+        el('div', { class: 'field' }, el('span', { text: 'Ícone (aparece animado na loja)' }), iconPicker(catalog, state)),
         el('label', { class: 'field' }, el('span', { text: 'Ordem (menor aparece primeiro)' }), order),
         el('div', { class: 'card row between' }, el('strong', { text: 'Visível no cardápio' }), DG.switchEl(state.active, 'Categoria visível', async next => { state.active = next; return true; })),
         el('button', { class: 'btn primary block', type: 'button', text: 'Salvar', on: { click: async () => {
-          const payload = { name: name.value, sort_order: Number(order.value) || 0, active: state.active };
+          const payload = { name: name.value, sort_order: Number(order.value) || 0, active: state.active, icon: state.icon };
           if (c) payload.id = c.id;
           if (await DG.run(() => DG.api('category_save', { body: payload }), 'Categoria salva.')) { close(); reload(); }
         } } }));
@@ -86,10 +104,11 @@
     box.replaceChildren(...catalog.categories.map(c => {
       const count = catalog.products.filter(p => p.category_id === c.id).length;
       return el('div', { class: 'card' }, el('div', { class: 'row' },
-        el('button', { class: 'item-btn grow', type: 'button', on: { click: () => editCategory(c, reload) } },
+        iconImg(iconOf(catalog, c.icon), 32),
+        el('button', { class: 'item-btn grow', type: 'button', on: { click: () => editCategory(c, reload, catalog) } },
           el('strong', { class: 'wrap', text: c.name }), el('p', { class: 'muted small', text: count + ' produto(s) - ordem ' + c.sort_order + (c.active ? '' : ' - pausada') })),
         DG.switchEl(c.active, 'Categoria ' + c.name + ' visível', async next => !!(await DG.run(() => DG.api('category_save', { body: { id: c.id, active: next } }))) && ((c.active = next), true))));
-    }), el('button', { class: 'btn primary block', type: 'button', text: 'Nova categoria', on: { click: () => editCategory(null, reload) } }));
+    }), el('button', { class: 'btn primary block', type: 'button', text: 'Nova categoria', on: { click: () => editCategory(null, reload, catalog) } }));
   }
 
   function editComplement(c, reload) {

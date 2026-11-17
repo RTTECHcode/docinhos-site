@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Cupcake">
+  <path d="M14 34h36l-5 24H19Z" fill="#c93a51" stroke="#9c2a40" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M21 36l2.5 21M28 36l1 21M36 36l-1 21M43 36l-2.5 21" stroke="#9c2a40" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M11 34c-2-6 3-11 8-10-1-7 6-12 13-10 7-2 14 3 13 10 5-1 10 4 8 10Z" fill="#fff4ec" stroke="#9c2a40" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M19 28c3 2 7 2 10 0M33 22c3 2 6 2 9 0" fill="none" stroke="#ff7ab3" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="32" cy="10" r="4.5" fill="#c93a51" stroke="#9c2a40" stroke-width="2"/>
+  <path d="M33 5.5c1-2.5 3-3.5 5-3" fill="none" stroke="#1f9d55" stroke-width="2" stroke-linecap="round"/>
+  <g stroke-width="2.2" stroke-linecap="round"><path d="M17 31l2 1" stroke="#ff7ab3"/><path d="M45 29l2-1" stroke="#ffb347"/><path d="M38 31h2" stroke="#7b2d8e"/><path d="M24 21l1-2" stroke="#1f9d55"/></g>
+</svg>
