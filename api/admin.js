@@ -48,6 +48,7 @@ const DEFAULT_SETTINGS = {
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 const bad = message => { throw new HttpError(400, message); };
 const { hasControlChars } = require('./_lib/validate');
+const categoryIcons = require('./_lib/category-icons'); // v5: ícone ilustrado da categoria
 const getSql = () => require('./_lib/db'); // carregado sob demanda: funções puras testáveis sem DATABASE_URL
 const q = (text, params = []) => getSql().query(text, params);
 
@@ -502,7 +503,8 @@ const PRODUCT_SPEC = {
   price_cents: v => vCents(v, 'Preço', true), category_id: v => vId(v, 'Categoria'),
   sort_order: v => vInt(v, 0, 100000, 'Ordem'), active: v => vBool(v, 'Ativo')
 };
-const CATEGORY_SPEC = { name: v => vStr(v, 1, 60, 'Nome'), sort_order: v => vInt(v, 0, 100000, 'Ordem'), active: v => vBool(v, 'Ativo') };
+const vIcon = v => { try { return categoryIcons.parseIcon(v); } catch (e) { return bad(e.message); } };
+const CATEGORY_SPEC = { name: v => vStr(v, 1, 60, 'Nome'), sort_order: v => vInt(v, 0, 100000, 'Ordem'), active: v => vBool(v, 'Ativo'), icon: vIcon };
 const COMPLEMENT_SPEC = {
   name: v => vStr(v, 1, 80, 'Nome'), price_cents: v => vCents(v, 'Preço'),
   kind: v => vEnum(v, ['size', 'additional'], 'Tipo'), active: v => vBool(v, 'Ativo')
@@ -529,7 +531,7 @@ A.me = { m: 'GET', fn: async ({ user }) => ({ user: { username: user.username, r
 
 A.catalog = { m: 'GET', fn: async () => {
   const [categories, products, complements, links, groups, pinned, settings] = await Promise.all([
-    q('select id, name, sort_order, active from categories order by sort_order, id'),
+    q('select id, name, sort_order, active, icon from categories order by sort_order, id'),
     q('select id, category_id, name, description, price_cents, image_path, active, sort_order, paused from products order by sort_order, name'),
     q(`select c.id, c.name, c.price_cents, c.kind, c.active,
               (select count(*) from product_complements pc where pc.complement_id = c.id)::int as uses
@@ -538,7 +540,9 @@ A.catalog = { m: 'GET', fn: async () => {
     q('select id, product_id, key, label, min_choices, max_choices, sort_order from product_groups order by product_id, sort_order, id'),
     getPinned(), getSettings()
   ]);
-  return { categories, products, complements, links, groups, pinned, settings: publicSettings(settings), storeState: await storeHours.getStoreState(getSql()) };
+  // v5: category_icons = ícones que o painel pode escolher ({ key, label, src, anim }).
+  const category_icons = categoryIcons.CATEGORY_ICONS.map(i => ({ ...categoryIcons.iconInfo(i.key), label: i.label }));
+  return { categories, products, complements, links, groups, pinned, settings: publicSettings(settings), storeState: await storeHours.getStoreState(getSql()), category_icons };
 } };
 
 A.category_save = { m: 'POST', fn: async ({ body, user }) => {

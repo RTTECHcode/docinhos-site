@@ -6,7 +6,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const PUROS = ['test-netlify', 'test-v4-f5-pure', 'test-v4-qa-status', 'test-order-pricing', 'test-dev-server-mime', 'test-mp-webhook'];
+const PUROS = ['test-netlify', 'test-v5-icones', 'test-v4-f5-pure', 'test-v4-qa-status', 'test-order-pricing', 'test-dev-server-mime', 'test-mp-webhook'];
 
 const args = process.argv.slice(2);
 const continuar = args.includes('--continuar');

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sorvete">
+  <path d="M19 30h26L32 60Z" fill="#ffc46b" stroke="#c8902a" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M24 34l10 10M30 32l8 8M41 34 31 44M35 32l-8 8" stroke="#c8902a" stroke-width="1.6" stroke-linecap="round"/>
+  <circle cx="24" cy="25" r="9" fill="#ff7ab3" stroke="#9c2a40" stroke-width="2.5"/>
+  <circle cx="40" cy="25" r="9" fill="#fff4ec" stroke="#9c2a40" stroke-width="2.5"/>
+  <circle cx="32" cy="15" r="9" fill="#4a1f12" stroke="#3b1a12" stroke-width="2.5"/>
+  <path d="M16 29c3 3 6 3 8 1M41 31c2 2 5 1 7-2" fill="none" stroke="#9c2a40" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="32" cy="5" r="3.5" fill="#c93a51" stroke="#9c2a40" stroke-width="1.8"/>
+  <circle cx="28.5" cy="12" r="1.8" fill="#fff" opacity=".35"/>
+</svg>

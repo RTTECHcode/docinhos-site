@@ -445,3 +445,7 @@ alter table orders add column if not exists address_district text;
 alter table orders add column if not exists address_city text;
 -- Chaves opcionais em settings: 'google_review_url' (ausente = link padrão, vazia = bloco de avaliação desligado, só https://)
 -- e 'instagram_url' (ausente ou vazia = sem botão do Instagram no pós-pagamento, só https://).
+
+-- v5: ícone ilustrado da categoria (chave da lista em api/_lib/category-icons.js, arquivo public/images/icones/CHAVE.svg).
+-- Nulo = categoria sem ícone.
+alter table categories add column if not exists icon text;

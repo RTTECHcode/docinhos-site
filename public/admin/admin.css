@@ -450,3 +450,25 @@ div:has(> .empty-state:only-child) + .btn.block { margin-top: 12px; }
   .wh-warn { padding: 6px 10px; font-size: 12.5px; line-height: 1.3; margin-top: 6px; }
   .wh-warn .wh-when { display: none; }
 }
+
+/* v5: ícone da categoria (grade no editor e miniatura na lista). O escolhido mexe como na loja. */
+.cat-ico { flex: none; display: inline-block; transform-origin: 50% 85%; }
+.icon-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; }
+.icon-opt {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 76px; padding: 8px 4px;
+  border: 1.5px solid var(--line); border-radius: 14px; background: #fff; font-weight: 700; line-height: 1.15; text-align: center;
+}
+.icon-opt[aria-pressed="true"] { border-color: var(--brand-deep); background: var(--brand-soft); box-shadow: 0 0 0 2px var(--brand) inset; }
+.icon-none { display: grid; place-items: center; width: 36px; height: 36px; font-size: 22px; color: var(--muted, #8a7a74); }
+@keyframes cat-pula { 0%, 60%, 100% { transform: translateY(0); } 20% { transform: translateY(-4px); } }
+@keyframes cat-balanca { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
+@keyframes cat-flutua { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes cat-pulsa { 0%, 50%, 100% { transform: scale(1); } 15% { transform: scale(1.14); } }
+@keyframes cat-gira { 0%, 70%, 100% { transform: rotate(0); } 85% { transform: rotate(18deg); } }
+@media (prefers-reduced-motion: no-preference) {
+  .icon-opt[aria-pressed="true"].anim-pula .cat-ico { animation: cat-pula 1.2s ease-in-out infinite; }
+  .icon-opt[aria-pressed="true"].anim-balanca .cat-ico { animation: cat-balanca 1.4s ease-in-out infinite; }
+  .icon-opt[aria-pressed="true"].anim-flutua .cat-ico { animation: cat-flutua 1.6s ease-in-out infinite; }
+  .icon-opt[aria-pressed="true"].anim-pulsa .cat-ico { animation: cat-pulsa 1.2s ease-in-out infinite; }
+  .icon-opt[aria-pressed="true"].anim-gira .cat-ico { animation: cat-gira 1.6s ease-in-out infinite; }
+}
