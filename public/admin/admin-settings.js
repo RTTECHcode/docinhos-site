@@ -372,7 +372,7 @@
           el('dt', { text: 'Instagram' }), el('dd', {}, link(v.instagram_url, 'Sem botão do Instagram'))),
         v.google_review_url && v.review_url_is_default ? el('p', { class: 'muted small wrap', text: 'Usando o link padrão (busca da loja no Google Maps). Se tiver o link direto "Pedir avaliações" do Perfil da Empresa no Google, cole aqui.' }) : null,
         el('p', { class: 'muted small wrap', text: 'Quando o cliente contar que avaliou, use "Cliente avaliou: dar mimo" no pedido ou em Mais > Relatórios > Clientes.' }),
-        isAdmin() ? el('button', { class: 'btn block', type: 'button', text: 'Editar links', on: { click: () => reviewSheet(v, load) } }) : el('p', { class: 'muted small', text: 'Só o administrador edita estes links.' }));
+        isAdmin() ? el('button', { class: 'btn block', type: 'button', text: 'Editar links do Google e Instagram', on: { click: () => reviewSheet(v, load) } }) : el('p', { class: 'muted small', text: 'Só o administrador edita estes links.' }));
     };
     load();
     return box;
@@ -456,7 +456,7 @@
         el('h2', { class: 'section-title', text: 'Frete' }), shippingCard(),
         el('h2', { class: 'section-title', text: 'Encomendas e prazo de entrega' }), orderSettingsCard(),
         el('h2', { class: 'section-title', text: 'Clube de pontos' }), pointsCard(),
-        el('h2', { class: 'section-title', text: 'Avaliação no Google' }), reviewCard(),
+        el('h2', { class: 'section-title', text: 'Links do Google e do Instagram' }), reviewCard(),
         el('h2', { class: 'section-title', text: 'Loja' }), DG.storeCard(catalog),
         el('h2', { class: 'section-title', text: 'Segurança' }), securityCard());
     }
