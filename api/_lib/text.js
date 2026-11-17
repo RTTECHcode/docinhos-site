@@ -14,4 +14,16 @@ function stem(w) {
   return w;
 }
 
-module.exports = { norm, words, stem };
+// Chave de telefone para unir pedido de visitante e conta: só dígitos, sem o 55 do país (10 ou 11 dígitos).
+// Vale para "(11) 91234-5678", "11912345678" e "+5511912345678".
+function phoneKey(raw) {
+  const d = String(raw == null ? '' : raw).replace(/\D/g, '');
+  return /^55\d{10,11}$/.test(d) ? d.slice(2) : d;
+}
+// Mesma regra, em SQL, para uma coluna de telefone (ex.: phoneKeySql('o.customer_phone')).
+const phoneKeySql = col => {
+  const digits = `regexp_replace(${col}, '[^0-9]', '', 'g')`;
+  return `(case when ${digits} ~ '^55[0-9]{10,11}$' then substr(${digits}, 3) else ${digits} end)`;
+};
+
+module.exports = { norm, words, stem, phoneKey, phoneKeySql };

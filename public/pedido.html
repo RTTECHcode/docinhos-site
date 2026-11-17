@@ -5,34 +5,91 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Acompanhar pedido — Docinhos da Gigi</title>
 <meta name="description" content="Acompanhe o andamento do seu pedido da Docinhos da Gigi.">
+<link rel="canonical" href="https://docinhosdagigioz.com.br/pedido.html">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:site_name" content="Docinhos da Gigi">
+<meta property="og:title" content="Acompanhar pedido — Docinhos da Gigi">
+<meta property="og:description" content="Acompanhe o andamento do seu pedido da Docinhos da Gigi.">
+<meta property="og:url" content="https://docinhosdagigioz.com.br/pedido.html">
+<meta property="og:image" content="https://docinhosdagigioz.com.br/images/branding/compartilhar.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Logo da Docinhos da Gigi ao lado de um Copo da Felicidade">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#3b1a12">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preload" href="/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/images/branding/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css">
 <meta name="robots" content="noindex">
 </head>
 <body class="about-page">
 <header class="hero about-hero">
   <a class="hero-link" href="/#cardapio">&larr; Cardápio</a>
-  <div class="hero-badge"><img src="/images/branding/logo.jpg" alt="Docinhos da Gigi" class="hero-logo"></div>
+  <div class="hero-badge"><img src="/images/branding/logo.webp" alt="Docinhos da Gigi" class="hero-logo" width="110" height="110"></div>
   <p class="hero-name">Docinhos da Gigi</p>
   <h1>Seu pedido</h1>
 </header>
 
 <main class="about order-track" id="track">
+  <!-- v4 U-01/U-09: Pix pendente (código de /api/order-status, só enquanto pendente e não vencido). Fora da região aria-live: o contador muda a cada segundo. -->
+  <section class="about-section track-pix" id="t-pix" aria-labelledby="t-pix-title" hidden>
+    <h2 id="t-pix-title">Falta só pagar o Pix</h2>
+    <div class="pix-box">
+      <p class="pix-amount" id="t-pix-amount-row" hidden><span>Valor do Pix</span> <strong id="t-pix-amount"></strong></p>
+      <button type="button" id="t-pix-copy" class="button full">Copiar código Pix</button>
+      <p id="t-pix-copy-status" class="pix-copy-status" role="status" aria-live="polite"></p>
+      <p class="pix-instr">Abra o app do seu banco &gt; Pix &gt; Pix Copia e Cola e cole o código.</p>
+      <p id="t-pix-timer" class="pix-timer"></p>
+      <label class="pix-label" for="t-pix-code">Código Pix Copia e Cola</label>
+      <textarea id="t-pix-code" class="pix-code" readonly rows="3" spellcheck="false"></textarea>
+      <details id="t-pix-qr-box" class="pix-qr-box">
+        <summary>Pagar por outro aparelho (QR Code)</summary>
+        <img id="t-pix-qr" class="pix-qr" alt="QR Code do Pix" width="220" height="220">
+      </details>
+    </div>
+  </section>
   <section class="about-section" aria-labelledby="pedido-titulo" aria-live="polite">
     <h2 id="pedido-titulo">Pedido <span id="t-code">...</span></h2>
     <p id="t-pay-banner" class="track-msg pay-banner" role="status" aria-live="polite" hidden></p>
     <p id="t-msg" class="track-msg">Carregando o seu pedido...</p>
     <ol id="t-timeline" class="timeline" hidden></ol>
     <dl id="t-info" class="track-info" hidden>
-      <div><dt>Pagamento</dt><dd id="t-pay"></dd></div>
+      <div><dt>Situação</dt><dd id="t-pay"></dd></div>
+      <div id="t-sched-row" hidden><dt>Agendado para</dt><dd id="t-sched"></dd></div>
+      <div id="t-items-row" hidden><dt>Itens</dt><dd><ul id="t-items" class="track-items"></ul></dd></div>
+      <div id="t-addr-row" hidden><dt id="t-addr-label">Entrega em</dt><dd id="t-addr"></dd></div>
       <div><dt>Total</dt><dd id="t-total"></dd></div>
       <div><dt>Recebido em</dt><dd id="t-created"></dd></div>
     </dl>
     <p class="track-note" id="t-note" hidden>Esta página atualiza sozinha.</p>
+    <div class="login-need" id="t-login" hidden><a class="button" id="t-login-link" href="/conta/#entrar">Entrar na minha conta</a></div>
+  </section>
+  <!-- v4 F3: novo pagamento do mesmo pedido (POST /api/order?a=retry_payment com { t } ou { o }). Total e reservas continuam os do pedido. -->
+  <section class="about-section" id="t-again" aria-labelledby="t-again-title" hidden>
+    <h2 id="t-again-title">Gerar novo pagamento</h2>
+    <p id="t-again-text" class="track-msg"></p>
+    <div class="pay-again">
+      <fieldset class="pay-again-choice">
+        <legend>Como você quer pagar?</legend>
+        <label class="radio"><input type="radio" name="t_again_choice" value="pix" checked> Pix</label>
+        <label class="radio"><input type="radio" name="t_again_choice" value="card"> Cartão</label>
+      </fieldset>
+      <button type="button" id="t-again-btn" class="button full">Gerar novo pagamento</button>
+      <p id="t-again-status" class="pay-again-status" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+  <!-- v4 N8: só com post_payment do servidor (pagamento aprovado), uma vez por pedido -->
+  <section class="about-section post-pay" id="t-thanks" aria-labelledby="t-thanks-title" hidden>
+    <h2 id="t-thanks-title">Obrigada pela preferência!</h2>
+    <p>Sua opinião ajuda muito a Docinhos da Gigi a crescer.</p>
+    <a id="t-review" class="button full" href="#" target="_blank" rel="noopener noreferrer" hidden>Avaliar no Google<span class="sr-only"> (abre em nova aba)</span></a>
+    <a id="t-insta" class="button full post-pay-ig" href="#" target="_blank" rel="noopener noreferrer" hidden>Seguir no Instagram<span class="sr-only"> (abre em nova aba)</span></a>
+    <button type="button" id="t-thanks-close" class="link-btn">Fechar</button>
   </section>
   <section class="about-section" id="t-recent-box" hidden>
     <h2>Seus pedidos recentes</h2>
@@ -41,7 +98,7 @@
   <section class="about-section about-cta">
     <h2>Dúvidas sobre o pedido?</h2>
     <p>Fale com a gente pelo WhatsApp informando o código do pedido.</p>
-    <a class="button wa" data-wa data-wa-text="Olá! Tenho uma dúvida sobre o meu pedido." href="https://wa.me/5511987882303?text=Ol%C3%A1!%20Tenho%20uma%20d%C3%BAvida%20sobre%20o%20meu%20pedido." target="_blank" rel="noopener noreferrer">Falar no WhatsApp</a>
+    <a class="button wa" id="t-wa" data-wa data-wa-text="Olá! Tenho uma dúvida sobre o meu pedido." href="https://wa.me/5511987882303?text=Ol%C3%A1!%20Tenho%20uma%20d%C3%BAvida%20sobre%20o%20meu%20pedido." target="_blank" rel="noopener noreferrer">Falar no WhatsApp<span class="sr-only"> (abre em nova aba)</span></a>
   </section>
 </main>
 

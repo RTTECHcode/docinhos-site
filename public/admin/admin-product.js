@@ -6,6 +6,7 @@
   const { el } = DG;
   const MAX_SIDE = 1000;
   const MAX_BYTES = 2000000;
+  const CROP_OUT = 800;
 
   function readAsDataUrl(blobOrFile) {
     return new Promise((resolve, reject) => {
@@ -26,10 +27,22 @@
   function toBlob(canvas, type, quality) {
     return new Promise(resolve => canvas.toBlob(resolve, type, quality));
   }
-  // Redimensiona (lado maior 1000 px) e comprime: WebP, ou JPEG se o navegador não gerar WebP.
-  DG.prepareImage = async function (file) {
+  // Comprime o canvas: WebP, ou JPEG se o navegador não gerar WebP. Confere o limite de 2 MB.
+  async function finishCanvas(canvas, quality) {
+    let blob = await toBlob(canvas, 'image/webp', quality);
+    if (!blob || blob.type !== 'image/webp') blob = await toBlob(canvas, 'image/jpeg', quality);
+    if (!blob) throw new Error('Não foi possível processar a imagem.');
+    if (blob.size > MAX_BYTES) throw new Error('A imagem ficou maior que 2 MB. Escolha outra foto.');
+    const dataUrl = await readAsDataUrl(blob);
+    return { dataUrl, base64: dataUrl.slice(dataUrl.indexOf(',') + 1) };
+  }
+  DG.loadPhoto = async function (file) {
     if (!file || !/^image\//.test(file.type)) throw new Error('Escolha um arquivo de imagem.');
-    const img = await loadImage(await readAsDataUrl(file));
+    return loadImage(await readAsDataUrl(file));
+  };
+  // Foto inteira: lado maior 1000 px, WebP/JPEG 0,82 (comportamento antigo, sem corte).
+  DG.prepareImage = async function (fileOrImg) {
+    const img = fileOrImg instanceof HTMLImageElement ? fileOrImg : await DG.loadPhoto(fileOrImg);
     const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
@@ -38,12 +51,88 @@
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    let blob = await toBlob(canvas, 'image/webp', 0.82);
-    if (!blob || blob.type !== 'image/webp') blob = await toBlob(canvas, 'image/jpeg', 0.82);
-    if (!blob) throw new Error('Não foi possível processar a imagem.');
-    if (blob.size > MAX_BYTES) throw new Error('A imagem ficou maior que 2 MB. Escolha outra foto.');
-    const dataUrl = await readAsDataUrl(blob);
-    return { dataUrl, base64: dataUrl.slice(dataUrl.indexOf(',') + 1) };
+    return finishCanvas(canvas, 0.82);
+  };
+  // F-01: recorte quadrado 800x800, WebP/JPEG 0,85. view = { cx, cy, side } em pixels da foto original.
+  DG.prepareCropped = async function (img, view) {
+    const canvas = document.createElement('canvas');
+    canvas.width = CROP_OUT; canvas.height = CROP_OUT;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, CROP_OUT, CROP_OUT);
+    ctx.drawImage(img, view.cx - view.side / 2, view.cy - view.side / 2, view.side, view.side, 0, 0, CROP_OUT, CROP_OUT);
+    return finishCanvas(canvas, 0.85);
+  };
+
+  // F-01: prévia quadrada (formato do cartão do cardápio), centrada, com arrastar e zoom (dedo, mouse, roda, controle e setas).
+  // Resolve { mode: 'crop', view } | { mode: 'full' } | null (cancelou).
+  DG.frameImage = function (img) {
+    return new Promise(resolve => {
+      const w = img.naturalWidth, h = img.naturalHeight, minSide = Math.min(w, h);
+      const v = { cx: w / 2, cy: h / 2, z: 1 }; // z = 1 mostra o maior quadrado possível; 4 = zoom máximo
+      const Z_MAX = 4;
+      const pic = el('img', { src: img.src, alt: '', draggable: 'false' });
+      pic.style.width = w + 'px'; pic.style.height = h + 'px';
+      const stage = el('div', { class: 'crop-stage', tabindex: '0', role: 'group', 'aria-label': 'Prévia do enquadramento. Arraste a foto para mover; use as setas do teclado para mover e + e - para o zoom.' }, pic);
+      const zoom = el('input', { type: 'range', min: '1', max: String(Z_MAX), step: '0.01', value: '1', 'aria-label': 'Zoom da foto' });
+      const size = () => stage.clientWidth || 300;
+      const clamp = () => {
+        v.z = Math.min(Z_MAX, Math.max(1, v.z));
+        const half = minSide / v.z / 2;
+        v.cx = Math.min(w - half, Math.max(half, v.cx));
+        v.cy = Math.min(h - half, Math.max(half, v.cy));
+      };
+      const paint = () => {
+        clamp();
+        const S = size(), side = minSide / v.z, s = S / side;
+        pic.style.transform = 'translate(' + (S / 2 - v.cx * s) + 'px,' + (S / 2 - v.cy * s) + 'px) scale(' + s + ')';
+        zoom.value = String(v.z);
+      };
+      const pts = new Map();
+      let last = null;
+      const gesture = () => {
+        const a = [...pts.values()];
+        return a.length === 1 ? { x: a[0].x, y: a[0].y, d: 0 } : { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2, d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) };
+      };
+      stage.addEventListener('pointerdown', e => {
+        pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        try { stage.setPointerCapture(e.pointerId); } catch { /* sem captura */ }
+        last = gesture(); stage.classList.add('dragging');
+      });
+      stage.addEventListener('pointermove', e => {
+        if (!pts.has(e.pointerId)) return;
+        pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const g = gesture(), s = size() / (minSide / v.z);
+        if (last) {
+          v.cx -= (g.x - last.x) / s; v.cy -= (g.y - last.y) / s;
+          if (pts.size > 1 && last.d > 0 && g.d > 0) v.z *= g.d / last.d;
+        }
+        last = g; paint();
+      });
+      const up = e => { pts.delete(e.pointerId); last = pts.size ? gesture() : null; if (!pts.size) stage.classList.remove('dragging'); };
+      stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+      stage.addEventListener('wheel', e => { e.preventDefault(); v.z *= Math.exp(-e.deltaY * 0.0015); paint(); }, { passive: false });
+      stage.addEventListener('keydown', e => {
+        const step = minSide / v.z * 0.05;
+        if (e.key === 'ArrowLeft') v.cx -= step; else if (e.key === 'ArrowRight') v.cx += step;
+        else if (e.key === 'ArrowUp') v.cy -= step; else if (e.key === 'ArrowDown') v.cy += step;
+        else if (e.key === '+' || e.key === '=') v.z *= 1.1; else if (e.key === '-') v.z /= 1.1;
+        else return;
+        e.preventDefault(); paint();
+      });
+      zoom.addEventListener('input', () => { v.z = Number(zoom.value) || 1; paint(); });
+      DG.sheet('Enquadrar foto', (body, close) => {
+        const done = r => { resolve(r); close(); };
+        body.append(
+          el('p', { class: 'muted small wrap', text: 'O cardápio mostra a foto num quadrado. Arraste para mover e use o zoom para escolher o que aparece.' }),
+          stage,
+          el('label', { class: 'field' }, el('span', { text: 'Zoom' }), zoom),
+          el('button', { class: 'btn primary block', type: 'button', text: 'Usar este enquadramento', on: { click: () => done({ mode: 'crop', view: { cx: v.cx, cy: v.cy, side: minSide / v.z } }) } }),
+          el('button', { class: 'btn block', type: 'button', text: 'Usar a foto inteira', on: { click: () => done({ mode: 'full' }) } }),
+          el('button', { class: 'btn block', type: 'button', text: 'Cancelar', on: { click: () => done(null) } }));
+        requestAnimationFrame(paint);
+      }, () => resolve(null));
+    });
   };
 
   function photoBox(product, onChange) {
@@ -65,8 +154,12 @@
       const file = input.files && input.files[0];
       input.value = '';
       if (!file) return;
+      let img;
+      try { img = await DG.loadPhoto(file); } catch (e) { DG.toast(e.message, true); return; }
+      const choice = await DG.frameImage(img);
+      if (!choice) return;
       const r = await DG.run(async () => {
-        const prepared = await DG.prepareImage(file);
+        const prepared = choice.mode === 'crop' ? await DG.prepareCropped(img, choice.view) : await DG.prepareImage(img);
         const res = await DG.api('product_image', { body: { product_id: product.id, data: prepared.base64 } });
         return { res, prepared };
       }, 'Foto salva.');

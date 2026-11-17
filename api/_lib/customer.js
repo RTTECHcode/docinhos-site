@@ -189,7 +189,7 @@ async function logoutFromRequest(sql, req) {
 
 // ---------- Bloqueio por tentativas ----------
 // Login e recuperação: 5 erros = 30 min e 10 erros em 24 h = 24 h, por par telefone+IP (detalhes em lockMessage). Acerto zera a contagem do par.
-// Scopes (migração scripts/migrate-2026-11-10-scopes.js): 'login', 'recover', 'register' (cadastro, por IP; phone = '')
+// Scopes (migração scripts/migracoes/migrate-2026-11-10-scopes.js): 'login', 'recover', 'register' (cadastro, por IP; phone = '')
 // e 'password' (senha atual errada na troca de senha, phone = telefone da conta; contagem separada do login).
 // LEGADO: antes da migração, cadastro e troca de senha iam para scope 'login' com chaves falsas na coluna phone
 // ('#cadastro' e '#senha:+55...'). Essas linhas continuam sendo LIDAS (só lidas) dentro das mesmas janelas
@@ -441,11 +441,12 @@ async function listOrders(sql, customerId, { limit = 20, offset = 0 } = {}) {
   await orders.sweepOrders(sql);
   const n = Math.min(Math.max(Number.parseInt(limit, 10) || 20, 1), 50), off = Math.max(Number.parseInt(offset, 10) || 0, 0);
   const rows = await sql.query(
-    `select public_code, items, subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, ${orders.TRACKING_COLUMNS}
+    `select id, public_code, items, subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, club_points, coupon_code, coupon_discount_cents, ${orders.TRACKING_COLUMNS}
        from orders where customer_id = $1 order by created_at desc, id desc limit ${n} offset ${off}`, [customerId]);
   return rows.map(r => ({
-    ...orders.trackingView(r), items: r.items, subtotal_cents: r.subtotal_cents, delivery_fee_cents: r.delivery_fee_cents,
-    discount_cents: r.discount_cents, points_redeemed: r.points_redeemed
+    ...orders.trackingView(r), id: r.id, items: r.items, subtotal_cents: r.subtotal_cents, delivery_fee_cents: r.delivery_fee_cents,
+    discount_cents: r.discount_cents, points_redeemed: r.points_redeemed,
+    club_points: r.club_points, coupon_code: r.coupon_code, coupon_discount_cents: r.coupon_discount_cents
   }));
 }
 

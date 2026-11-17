@@ -15,11 +15,15 @@ const customerLib = require('./_lib/customer');
 const loyalty = require('./_lib/loyalty');
 const orderApi = require('./order')._internal; // D4: a prévia de pontos reaproveita a precificação do pedido (priceItems/loadCatalog)
 const { hitExceeded } = require('./_lib/rate-limit');
+const club = require('./_lib/club'); // v4 N3
+const coupons = require('./_lib/coupons'); // v4 N6
+const { phoneKey } = require('./_lib/text');
 const getSql = () => require('./_lib/db'); // carregado sob demanda, como no admin
 
 const MAX_BODY_BYTES = 20 * 1024;
 const REGISTER_MAX_PER_HOUR = 15;   // tentativas de cadastro por IP em 1 h (inclusive as que dão 400 e 409)
 const PREVIEW_WINDOW_MINUTES = 10, PREVIEW_MAX_PER_IP = 120; // points_preview: por IP em 10 min (escopo próprio, banco)
+const COUPON_WINDOW_MINUTES = 10, COUPON_MAX_PER_IP = 20; // coupon_check (v4 N6): por IP em 10 min, contra adivinhação de código
 const MSG_LOGIN_REQUIRED = 'Entre na sua conta para continuar.';
 const MSG_METHOD = 'Método não permitido.';
 
@@ -63,12 +67,16 @@ function orderView(o) {
   return {
     public_code: o.public_code, created_at: o.created_at, total_cents: o.total_cents,
     subtotal_cents: o.subtotal_cents, delivery_fee_cents: o.delivery_fee_cents, discount_cents: o.discount_cents, points_redeemed: o.points_redeemed,
+    // v4 N1: rótulo único de status (o mesmo do acompanhamento). N3/N6: pontos dos prêmios e cupom usados no pedido.
+    status_key: o.status_key, status_label: o.status_label,
+    club_points: o.club_points || 0, coupon_code: o.coupon_code || null, coupon_discount_cents: o.coupon_discount_cents || 0,
     fulfillment_status: o.fulfillment_status, fulfillment_label: o.fulfillment_label,
     payment_status: o.payment_status, payment_label: paymentLabel(o.payment_status),
     delivery_method: o.delivery_method,
-    items_summary: items.map(i => `${Number(i && i.qty) || 1}x ${String((i && i.name) || 'Item').slice(0, 80)}${i && i.size ? ` (${String(i.size).slice(0, 40)})` : ''}`),
-    // Os pedidos guardam só o SHA-256 do token de acompanhamento: sem token não há link. A tela mostra o status direto.
-    tracking_url: null
+    items_summary: items.map(i => `${Number(i && i.qty) || 1}x ${String((i && i.name) || 'Item').slice(0, 80)}${i && i.size ? ` (${String(i.size).slice(0, 40)})` : ''}${i && i.reward ? ' (prêmio do Clube)' : ''}`),
+    // F3: os pedidos guardam só o SHA-256 do token de acompanhamento (o token não volta). O link da conta usa o número interno
+    // do pedido (?o=) e só abre com a sessão do próprio cliente (order-status confere o dono). Nada novo é gravado.
+    tracking_url: Number.isInteger(o.id) ? `/pedido.html?o=${o.id}` : null
   };
 }
 // Descrição do extrato em português (o servidor monta; a tela só exibe com textContent).
@@ -79,6 +87,9 @@ function ledgerDescription(row) {
     case 'redeem_reserve': return `Pontos usados no pedido${code}`;
     case 'redeem_release': return `Pontos devolvidos${code ? ` (pedido${code} não foi pago)` : ''}`;
     case 'redeem_commit': return `Desconto confirmado no pedido${code} (pagamento aprovado)`;
+    case 'reward_reserve': return `Prêmio do Clube no pedido${code}`;
+    case 'reward_release': return `Pontos do prêmio devolvidos${code ? ` (pedido${code} não foi pago)` : ''}`;
+    case 'reward_commit': return `Prêmio confirmado no pedido${code} (pagamento aprovado)`;
     case 'reversal': return `Pontos estornados do pedido${code}`;
     case 'adjust': return row.note ? `Ajuste da loja: ${String(row.note).slice(0, 120)}` : 'Ajuste da loja';
     default: return 'Movimentação de pontos';
@@ -192,7 +203,8 @@ const A = {
   } },
 
   // D4: quantos pontos o carrinho vai gerar. Preço recalculado no servidor (mesma precificação do pedido) e mesma regra de
-  // loyalty.earnPoints. Funciona para visitante e logado. use_points (opcional) só abate o desconto para a conta; não confere saldo.
+  // loyalty.earnPoints. Funciona para visitante e logado. v4 N3: o desconto por pontos acabou, use_points é ignorado.
+  // A prévia não considera cupom (o pedido final pode gerar um pouco menos de pontos se tiver cupom).
   points_preview: { m: 'POST', async fn({ sql, req, body }) {
     if (await hitExceeded(sql, 'points_preview', auth.clientIp(req), { windowMinutes: PREVIEW_WINDOW_MINUTES, max: PREVIEW_MAX_PER_IP })) {
       throw new HttpError(429, 'Muitas consultas de pontos. Aguarde alguns minutos.', 'rate_limited');
@@ -209,10 +221,42 @@ const A = {
       if (e instanceof orderApi.ValidationError) throw new HttpError(400, e.message, 'invalid_items');
       throw e;
     }
-    let discount = 0;
-    const up = body.use_points;
-    if (Number.isInteger(up) && up > 0 && up % rules.block_points === 0) discount = Math.min(loyalty.discountForPoints(up, rules), priced.subtotal_cents);
-    return resp(loyalty.earnPoints(priced.subtotal_cents, discount, rules), priced.subtotal_cents);
+    return resp(loyalty.earnPoints(priced.subtotal_cents, 0, rules), priced.subtotal_cents);
+  } },
+
+  // v4 N3: Clube da conta: saldo, reservado, bloqueio de 48 h e prêmios com quanto falta para cada um.
+  club: { m: 'GET', async fn({ sql, req }) {
+    const { customer } = await requireSession(sql, req);
+    return { body: { club: await club.customerClub(sql, customer.id) } };
+  } },
+
+  // v4 N6: confere o cupom no carrinho. Visitante ou logado. O subtotal é recalculado no servidor (os preços do navegador
+  // são ignorados). Limite por cliente: só o telefone da conta (logado). F5-S-08: o `phone` digitado por visitante é
+  // ignorado (revelaria se o telefone de outra pessoa já usou o cupom); para visitante o limite por pessoa vale no pedido.
+  // É só uma prévia: o pedido valida tudo de novo (e reserva o uso) na hora de criar.
+  coupon_check: { m: 'POST', async fn({ sql, req, body }) {
+    if (await hitExceeded(sql, 'coupon_check', auth.clientIp(req), { windowMinutes: COUPON_WINDOW_MINUTES, max: COUPON_MAX_PER_IP })) {
+      throw new HttpError(429, 'Muitas tentativas de cupom. Aguarde alguns minutos.', 'rate_limited');
+    }
+    if (typeof body.code !== 'string' || !body.code.trim()) throw new HttpError(400, 'Digite o código do cupom.', 'invalid_coupon');
+    const items = body.items;
+    if (!Array.isArray(items) || items.length === 0) throw new HttpError(400, 'O carrinho está vazio.', 'invalid_items');
+    if (items.length > orderApi.MAX_ITEMS) throw new HttpError(400, `O carrinho tem itens demais (máximo ${orderApi.MAX_ITEMS}).`, 'invalid_items');
+    const ids = [...new Set(items.map(i => (i && orderApi.isId(i.product_id) ? i.product_id : null)).filter(Boolean))];
+    let priced;
+    try { priced = orderApi.priceItems(items, await orderApi.loadCatalog(sql, ids)); } catch (e) {
+      if (e instanceof orderApi.ValidationError) throw new HttpError(400, e.message, 'invalid_items');
+      throw e;
+    }
+    const session = await customerLib.getSession(sql, req);
+    const phone = session ? session.customer.phone : '';
+    const hasRewards = Array.isArray(body.rewards) && body.rewards.length > 0;
+    const ev = await coupons.evaluate(sql, { code: body.code, paidSubtotalCents: priced.subtotal_cents, phoneKey: phoneKey(phone) || null, hasRewards });
+    const c = ev.coupon;
+    return { body: {
+      ok: true, coupon: { code: c.code, kind: c.kind, value: c.value, stacks_with_club: !!c.stacks_with_club, expires_at: c.expires_at ? new Date(c.expires_at).toISOString() : null },
+      subtotal_cents: priced.subtotal_cents, discount_cents: ev.discount_cents
+    } };
   } },
 
   orders: { m: 'GET', async fn({ sql, req, query }) {
@@ -281,7 +325,8 @@ async function handler(req, res) {
     const result = await action.fn({ sql: getSql(), req, res, body, query });
     return send(res, result.status || 200, result.body, result.cookie ? { 'Set-Cookie': result.cookie } : null);
   } catch (error) {
-    const known = error instanceof HttpError || error instanceof customerLib.CustomerError || error instanceof auth.AuthError || error instanceof loyalty.LoyaltyError;
+    const known = error instanceof HttpError || error instanceof customerLib.CustomerError || error instanceof auth.AuthError || error instanceof loyalty.LoyaltyError
+      || error instanceof club.ClubError || error instanceof coupons.CouponError;
     if (known) return send(res, error.status, { error: error.message, ...(error.code ? { code: error.code } : {}) });
     // Só o código do erro (ex.: '23505') ou um rótulo fixo: a mensagem pode trazer SQL, valores ou dados pessoais.
     const code = error && typeof error.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(error.code) ? error.code : 'sem_codigo';

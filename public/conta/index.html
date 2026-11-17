@@ -7,17 +7,31 @@
 <meta name="theme-color" content="#3b1a12">
 <title>Minha conta — Docinhos da Gigi</title>
 <meta name="description" content="Sua conta na Docinhos da Gigi: pedidos, pontos e dados.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="canonical" href="https://docinhosdagigioz.com.br/conta/">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:site_name" content="Docinhos da Gigi">
+<meta property="og:title" content="Minha conta — Docinhos da Gigi">
+<meta property="og:description" content="Sua conta na Docinhos da Gigi: pedidos, pontos e dados.">
+<meta property="og:url" content="https://docinhosdagigioz.com.br/conta/">
+<meta property="og:image" content="https://docinhosdagigioz.com.br/images/branding/compartilhar.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Logo da Docinhos da Gigi ao lado de um Copo da Felicidade">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preload" href="/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/images/branding/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/conta/conta.css">
 </head>
 <body class="conta">
 <header class="conta-top">
   <a class="conta-brand" href="/" aria-label="Docinhos da Gigi, voltar ao cardápio">
-    <img src="/images/branding/logo.jpg" alt="" class="conta-logo" width="52" height="52">
+    <img src="/images/branding/logo.webp" alt="" class="conta-logo" width="52" height="52">
     <span class="conta-brand-name">Docinhos da Gigi</span>
   </a>
   <a class="conta-back" href="/">Voltar ao cardápio</a>
@@ -26,7 +40,7 @@
 <main class="conta-main" id="conta-main">
   <nav id="conta-tabs" class="conta-tabs" aria-label="Minha conta" hidden>
     <a href="#pedidos" data-tab="pedidos">Pedidos</a>
-    <a href="#pontos" data-tab="pontos">Pontos</a>
+    <a href="#pontos" data-tab="pontos">Clube</a>
     <a href="#dados" data-tab="dados">Meus dados</a>
   </nav>
 
@@ -130,7 +144,7 @@
           <input type="checkbox" name="whatsapp_consent" id="cad-consent">
           <span id="cad-consent-text" class="check-text">Carregando texto...</span>
         </label>
-        <p class="hint">Isso é opcional: sua conta funciona do mesmo jeito sem marcar. <a href="/privacidade.html" target="_blank" rel="noopener">Política de privacidade</a>.</p>
+        <p class="hint">Isso é opcional: sua conta funciona do mesmo jeito sem marcar. <a href="/privacidade.html" target="_blank" rel="noopener">Política de privacidade<span class="sr-only"> (abre em nova aba)</span></a>.</p>
       </fieldset>
 
       <p class="form-error" role="alert" hidden></p>
@@ -186,7 +200,7 @@
 
   <!-- U5: pontos -->
   <section id="view-pontos" class="panel" data-view="pontos" hidden aria-labelledby="t-pontos">
-    <h1 id="t-pontos" class="panel-title" tabindex="-1">Meus pontos</h1>
+    <h1 id="t-pontos" class="panel-title" tabindex="-1">Clube da Gigi</h1>
     <p id="pontos-status" class="muted" role="status">Carregando...</p>
     <div id="pontos-corpo" hidden>
       <div class="points-card">
@@ -194,16 +208,20 @@
         <strong id="pontos-saldo" class="points-balance">0</strong>
         <span id="pontos-valor" class="points-worth"></span>
       </div>
-      <p id="pontos-pausado" class="notice warn" hidden>O programa de pontos está pausado no momento: as compras não somam pontos novos e não dá para usar pontos. Seu saldo continua guardado.</p>
+      <p id="pontos-pausado" class="notice warn" hidden>O Clube está pausado no momento: as compras não somam pontos novos e não dá para trocar prêmios. Seu saldo continua guardado.</p>
       <p id="pontos-bloqueio" class="notice warn" hidden></p>
       <p id="pontos-reservados" class="notice info" hidden></p>
+      <h2 class="section-title" id="t-premios">Prêmios do Clube</h2>
+      <ul id="clube-premios" class="rewards" aria-labelledby="t-premios"></ul>
+      <p id="clube-vazio" class="muted" hidden>Ainda não há prêmios no Clube. Seus pontos continuam guardados.</p>
+      <p id="clube-erro" class="muted" hidden>Não foi possível carregar os prêmios agora. Tente de novo em instantes.</p>
       <div class="rules">
         <h2>Como funciona</h2>
         <ul>
           <li id="pontos-regra-ganho">Você ganha 1 ponto a cada R$ 1 em produtos.</li>
-          <li id="pontos-regra-resgate">Cada 100 pontos valem R$ 10 de desconto no pedido.</li>
+          <li>Seus pontos viram doces: troque por um prêmio da lista acima. O prêmio sai de graça no pedido.</li>
           <li>Os pontos entram só depois que o pagamento é aprovado.</li>
-          <li>Para usar, escolha os pontos na hora de finalizar o pedido, estando com a conta aberta.</li>
+          <li>Para trocar, escolha o prêmio na hora de finalizar o pedido, com a conta aberta. O pedido precisa ter pelo menos R$ 1,00 em outros produtos.</li>
         </ul>
       </div>
       <h2 class="section-title">Extrato</h2>
@@ -265,7 +283,7 @@
           <input type="checkbox" id="dados-consent">
           <span id="dados-consent-text" class="check-text"></span>
         </label>
-        <p class="hint">Você pode ligar ou desligar quando quiser. Cada mudança fica registrada. <a href="/privacidade.html" target="_blank" rel="noopener">Política de privacidade</a>.</p>
+        <p class="hint">Você pode ligar ou desligar quando quiser. Cada mudança fica registrada. <a href="/privacidade.html" target="_blank" rel="noopener">Política de privacidade<span class="sr-only"> (abre em nova aba)</span></a>.</p>
         <p id="dados-consent-msg" class="notice ok" role="status" hidden></p>
         <p id="dados-consent-erro" class="form-error" role="alert" hidden></p>
       </div>

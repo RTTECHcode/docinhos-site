@@ -1,6 +1,13 @@
-const sql = require('./_lib/db');
+// GET /api/health (público, para o monitor externo: UptimeRobot ou Better Stack). v4 O-01.
+// Responde só ok e verificações sim/não: banco, MERCADOPAGO_ACCESS_TOKEN e MERCADOPAGO_WEBHOOK_SECRET presentes
+// (nunca o valor) e webhook sem alerta: menos de 3 avisos recusados (401) nas últimas 24 h depois do último aceito
+// (F5-S-01; a chave segue webhook_no_401_24h por compatibilidade). 503 se alguma falhar.
+// Detalhes (hora do último aviso aceito, quantidade de 401) só no painel: GET /api/admin?a=health_detail.
+const { healthChecks } = require('./_lib/monitor');
 module.exports = async (req, res) => {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Método não permitido' });
-  try { await sql`select 1`; res.status(200).json({ ok: true }); }
-  catch { res.status(500).json({ ok: false }); }
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex');
+  if (req.method !== 'GET' && req.method !== 'HEAD') return res.status(405).json({ error: 'Método não permitido' });
+  const r = await healthChecks(() => require('./_lib/db'));
+  return res.status(r.ok ? 200 : 503).json({ ok: r.ok, checks: r.checks });
 };

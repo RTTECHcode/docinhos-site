@@ -15,7 +15,7 @@ const VIACEP_URL = 'https://viacep.com.br/ws/';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const OSRM_URL = 'https://router.project-osrm.org/route/v1/driving/';
 // Política do Nominatim: User-Agent identificando o app (sem e-mail), no máximo 1 requisição por segundo.
-const USER_AGENT = 'DocinhosDaGigi/1.0 (+https://docinhos-site.vercel.app)';
+const USER_AGENT = `DocinhosDaGigi/1.0 (+${require('./site').DEFAULT_SITE_URL})`; // F6 M4: domínio próprio
 const TIMEOUT_MS = 5000;
 const NOMINATIM_GAP_MS = 1100;
 const TOTAL_BUDGET_MS = 12000; // orçamento total de rede por cotação (função serverless curta)
@@ -200,7 +200,7 @@ async function routeKm(sql, origin, dest) {
 }
 
 // ---------- CEP -> endereço (v3 D3) ----------
-// Devolve rua, bairro, cidade e UF de um CEP. Usa a tabela cep_cache (scripts/migrate-2026-11-10-v3-schema.js) para não repetir
+// Devolve rua, bairro, cidade e UF de um CEP. Usa a tabela cep_cache (scripts/migracoes/migrate-2026-11-10-v3-schema.js) para não repetir
 // chamadas ao ViaCEP: CEP encontrado vale CEP_CACHE_DAYS dias; CEP inexistente (404 do ViaCEP) vale CEP_NOT_FOUND_DAYS dia.
 // CEP inexistente é guardado SEM coluna nova: linha com localidade e uf vazias (CEP real sempre traz cidade e UF).
 // Teto global de chamadas ao ViaCEP (escopo cep_lookup_global, soma todos os IPs): checado só ANTES da chamada externa,
@@ -254,7 +254,7 @@ async function tooManyNewLookups(sql) {
 
 /**
  * Cotação de entrega. input: { cep, address, number? }. Lança ShippingError (status 400/422/503).
- * Retorna { km, fee_cents, band: { max_km, fee_cents }, source: 'osrm'|'straight_line', max_km }.
+ * Retorna { km, fee_cents, band: { max_km, fee_cents }, source: 'osrm'|'straight_line', max_km, district, city }.
  */
 async function quoteDelivery(sql, input) {
   const deadline = Date.now() + TOTAL_BUDGET_MS;
@@ -294,7 +294,9 @@ async function quoteDelivery(sql, input) {
   const km = Math.round(route.km * 100) / 100;
   const band = bandForKm(bands, km);
   if (!band) { const e = new ShippingError(422, `Fora da área de entrega (até ${kmLabel(maxKmOf(bands))} km).`, 'out_of_area'); e.max_km = maxKmOf(bands); throw e; }
-  return { km, fee_cents: band.fee_cents, band: { max_km: band.max_km, fee_cents: band.fee_cents }, source: route.source, max_km: maxKmOf(bands) };
+  // F3: bairro e cidade do CEP (ViaCEP, no servidor) para o rastreio resumido; null se o ViaCEP não respondeu.
+  return { km, fee_cents: band.fee_cents, band: { max_km: band.max_km, fee_cents: band.fee_cents }, source: route.source, max_km: maxKmOf(bands),
+    district: via && via.bairro ? String(via.bairro).slice(0, 120) : null, city: via && via.localidade ? String(via.localidade).slice(0, 120) : null };
 }
 
 module.exports = {

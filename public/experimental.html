@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- N9 (v4): landing EXPERIMENTAL. Não indexar e não linkar de nenhuma página. Só lê /api/menu. -->
+<meta name="robots" content="noindex, nofollow">
+<title>Docinhos da Gigi — Doces artesanais em Osasco (experimental)</title>
+<meta name="description" content="Versão experimental da página inicial da Docinhos da Gigi.">
+<meta name="theme-color" content="#3b1a12">
+<link rel="preload" href="/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/experimental.css">
+<script src="/config.js" defer></script>
+<script src="/whatsapp.js" defer></script>
+<script src="/experimental.js" defer></script>
+</head>
+<body>
+<a class="x-skip" href="#x-main">Pular para o conteúdo</a>
+<header class="x-top">
+  <a class="x-brand" href="/">
+    <img src="/images/branding/logo.webp" alt="" width="40" height="40">
+    <span>Docinhos da Gigi</span>
+  </a>
+  <a class="x-btn x-btn-sm" href="/#cardapio">Ver cardápio</a>
+</header>
+
+<main id="x-main">
+  <section class="x-hero" aria-labelledby="x-hero-title">
+    <div class="x-hero-text">
+      <p class="x-kicker">Osasco/SP · doces artesanais</p>
+      <h1 id="x-hero-title">Feito para adoçar seu dia</h1>
+      <p class="x-lead">Copos da felicidade, geladinhos gourmet, açaí e brigadeiros. Peça pelo site, pague com Pix ou cartão e receba em casa ou retire na loja.</p>
+      <p id="x-store" class="x-store" role="status" hidden></p>
+      <div class="x-cta">
+        <a class="x-btn" href="/#cardapio">Escolher meus doces</a>
+        <a class="x-btn x-btn-wa" data-wa href="https://wa.me/5511987882303?text=Ol%C3%A1!%20Gostaria%20de%20ver%20o%20card%C3%A1pio%20e%20fazer%20um%20pedido." target="_blank" rel="noopener noreferrer">Falar no WhatsApp<span class="sr-only"> (abre em nova aba)</span></a>
+      </div>
+    </div>
+    <div class="x-hero-art" aria-hidden="true">
+      <div class="x-polaroid x-p1"><img id="x-art-1" alt="" width="220" height="220" hidden></div>
+      <div class="x-polaroid x-p2"><img id="x-art-2" alt="" width="180" height="180" hidden></div>
+      <img class="x-morango" src="/images/branding/morango.svg" alt="" width="56" height="56">
+    </div>
+  </section>
+
+  <ul class="x-trust" id="x-trust" aria-label="Por que pedir aqui">
+    <li><strong>Pix ou cartão</strong><span>pagamento seguro pelo Mercado Pago</span></li>
+    <li><strong>Retirada grátis</strong><span id="x-pickup">na loja, em Osasco</span></li>
+    <li><strong>Entrega</strong><span id="x-ship">consulte o frete no carrinho</span></li>
+    <li id="x-points-li" hidden><strong>Clube de pontos</strong><span id="x-points"></span></li>
+  </ul>
+
+  <section class="x-sec" aria-labelledby="x-fav-title">
+    <h2 id="x-fav-title">Os queridinhos</h2>
+    <p id="x-status" class="x-status">Carregando os doces...</p>
+    <ul id="x-favs" class="x-favs"></ul>
+  </section>
+
+  <section class="x-sec" aria-labelledby="x-cat-title">
+    <h2 id="x-cat-title">Escolha por categoria</h2>
+    <ul id="x-cats" class="x-cats"></ul>
+  </section>
+
+  <section class="x-sec x-how" aria-labelledby="x-how-title">
+    <h2 id="x-how-title">Como funciona</h2>
+    <ol class="x-steps">
+      <li><strong>Escolha</strong><span>Monte seu pedido no cardápio, do seu jeito.</span></li>
+      <li><strong>Pague</strong><span>Pix ou cartão, direto no site.</span></li>
+      <li><strong>Receba</strong><span>Em casa ou na retirada, com acompanhamento do pedido.</span></li>
+    </ol>
+    <a class="x-btn" href="/#cardapio">Ver o cardápio completo</a>
+  </section>
+</main>
+
+<footer class="x-foot">
+  <span>Docinhos da Gigi · Osasco/SP</span>
+  <a href="/quem-somos.html">Quem somos</a>
+  <a href="/privacidade.html">Privacidade</a>
+  <small>Página experimental: os preços e o pedido valem no cardápio oficial.</small>
+</footer>
+</body>
+</html>

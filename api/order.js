@@ -6,8 +6,16 @@ const ordersLib = require('./_lib/orders');
 const loyalty = require('./_lib/loyalty');
 const customerLib = require('./_lib/customer');
 const auth = require('./_lib/auth');
+const club = require('./_lib/club');
+const coupons = require('./_lib/coupons');
+const scheduling = require('./_lib/scheduling'); // v4 N10: encomenda com data marcada
+const { phoneKey } = require('./_lib/text');
+const { hitExceeded } = require('./_lib/rate-limit');
+const payments = require('./_lib/payments');
 
-const SITE_URL = 'https://docinhos-site.vercel.app';
+// A-05 (v4): endereço do site num ponto só (variável SITE_URL, padrão https://docinhosdagigioz.com.br desde a F6 M4).
+const SITE_URL = require('./_lib/site').siteUrl();
+const { SITE_DOMAIN } = require('./_lib/site');
 const MP_PREFERENCES_URL = 'https://api.mercadopago.com/checkout/preferences';
 const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
 // ?source_news=webhooks: o Mercado Pago manda só o formato Webhooks (assinado, com data.id), sem o IPN antigo
@@ -15,16 +23,17 @@ const MP_PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments';
 const NOTIFICATION_URL = `${SITE_URL}/api/mp-webhook?source_news=webhooks`;
 // Volta do Checkout Pro: com o token de rastreio, aprovado e pendente vão para a página do pedido (que mostra o
 // pagamento mudar sozinho); a falha volta para a loja, onde há o botão de tentar pagar de novo.
-function backUrls(trackingToken) {
-  const track = st => `${SITE_URL}/pedido.html?t=${encodeURIComponent(trackingToken)}&pagamento=${st}`;
-  return trackingToken
+// F3: retry_payment pela conta (sem token) volta para /pedido.html?o=<id>, que abre com a sessão do cliente.
+function backUrls(trackingToken, orderId = null) {
+  const ref = trackingToken ? `t=${encodeURIComponent(trackingToken)}` : `o=${Number(orderId)}`;
+  const track = st => `${SITE_URL}/pedido.html?${ref}&pagamento=${st}`;
+  return trackingToken || Number.isInteger(orderId)
     ? { success: track('ok'), failure: `${SITE_URL}/?pagamento=erro`, pending: track('pendente') }
     : { success: `${SITE_URL}/?pagamento=ok`, failure: `${SITE_URL}/?pagamento=erro`, pending: `${SITE_URL}/?pagamento=pendente` };
 }
 
-// Endereço da loja gravado nos pedidos de retirada ("pickup").
-// TODO: no futuro virá do painel admin (configuração da loja), não mais desta constante.
-const STORE_ADDRESS = 'Manoel Hare Peralta, 101';
+// Endereço da loja gravado nos pedidos de retirada ("pickup"). Padrão em _lib/orders.js; o painel troca em settings.store_address.
+const STORE_ADDRESS = ordersLib.STORE_ADDRESS;
 
 const DELIVERY_METHODS = ['delivery', 'pickup'];
 const MAX_ITEMS = 30;
@@ -35,6 +44,7 @@ const MAX_ATTEMPTS_PER_IP = 20; // tentativas (aceitas OU recusadas: 400, 409, 4
 const MSG_TOO_MANY = 'Muitos pedidos em pouco tempo. Aguarde alguns minutos e tente novamente.';
 const MSG_SHIPPING_BUSY = 'Muitas consultas de frete agora. Tente de novo em instantes.';
 const MAX_INT4 = 2147483647;
+const MSG_REWARD_MIN = 'Para trocar pontos por um prêmio, o pedido precisa ter pelo menos R$ 1,00 em outros produtos.';
 
 // Decisões de pagamento:
 // - Cartão (Checkout Pro, redirecionamento): só crédito e débito, sem Pix.
@@ -43,8 +53,9 @@ const MAX_INT4 = 2147483647;
 // - Pix: gerado direto no site via POST /v1/payments (sem preference), válido por 30 min
 //   (mínimo aceito pela API do Mercado Pago).
 // - A API exige payer.email no Pix e não coletamos e-mail do cliente. Usamos um e-mail sintético
-//   por pedido (pedido-<codigo>@docinhos-site.vercel.app): tem formato válido, não pertence a ninguém
-//   e não é usado para contato (o aviso ao cliente é feito pelo WhatsApp).
+//   por pedido (pedido-<codigo>@docinhosdagigioz.com.br, F6 M4): tem formato válido, fica no domínio da loja (antes era
+//   um subdomínio da Vercel, que outro projeto poderia assumir depois do corte) e não é usado para contato (o aviso ao
+//   cliente é feito pelo WhatsApp).
 const MAX_INSTALLMENTS = 3;
 const PREFERENCE_TTL_MS = 2 * 60 * 60 * 1000;
 const PIX_TTL_MS = 30 * 60 * 1000;
@@ -219,14 +230,15 @@ async function loadCatalog(sql, productIds) {
 // Um item do Mercado Pago por item do pedido (preço em reais, calculado no servidor).
 // A taxa de entrega (se > 0) entra como item extra: o total pago precisa ser igual ao total_cents do pedido,
 // senão o webhook (que confere o valor) nunca aprova.
-// Com desconto de pontos o Mercado Pago não aceita valor negativo: os produtos viram uma linha só, já com o desconto
-// (subtotal - desconto), para o total pago continuar igual ao total_cents do pedido.
+// Com desconto (cupom ou pontos antigos) o Mercado Pago não aceita valor negativo: os produtos viram uma linha só, já com
+// o desconto (subtotal - desconto), para o total pago continuar igual ao total_cents do pedido.
+// Prêmio do Clube (v4 N3) vale R$ 0 e não vai para o Mercado Pago (a API recusa item com preço 0).
 function buildPreferenceItems(items, deliveryFeeCents = 0, discountCents = 0, orderLabel = 'Pedido') {
-  // Com desconto de pontos: um item só com o subtotal já descontado (o MP não aceita item de valor negativo ou zero).
+  // Com desconto: um item só com o subtotal já descontado (o MP não aceita item de valor negativo ou zero).
   const discounted = items.reduce((s, i) => s + i.unit_total_cents * i.qty, 0) - discountCents;
   const list = discountCents > 0
     ? (discounted > 0
-      ? [{ id: '1', title: `${orderLabel} - Docinhos da Gigi (com desconto de pontos)`.slice(0, 256), quantity: 1, currency_id: 'BRL', unit_price: Number((discounted / 100).toFixed(2)) }]
+      ? [{ id: '1', title: `${orderLabel} - Docinhos da Gigi (com desconto)`.slice(0, 256), quantity: 1, currency_id: 'BRL', unit_price: Number((discounted / 100).toFixed(2)) }]
       : [])
     : items
     .filter(i => i.unit_total_cents > 0)
@@ -245,7 +257,7 @@ function buildPreferenceBody(order, prefItems, now = new Date()) {
   return {
     items: prefItems,
     external_reference: order.code,
-    back_urls: backUrls(order.tracking_token),
+    back_urls: backUrls(order.tracking_token, order.track_order_id),
     auto_return: 'approved',
     notification_url: NOTIFICATION_URL,
     statement_descriptor: 'DOCINHOS GIGI',
@@ -268,13 +280,13 @@ function buildPreferenceBody(order, prefItems, now = new Date()) {
   };
 }
 
-async function createPreference(token, order, prefItems) {
+async function createPreference(token, order, prefItems, idempotencyKey = `pref-${order.code}`) {
   const mpRes = await fetch(MP_PREFERENCES_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
-      'X-Idempotency-Key': `pref-${order.code}`
+      'X-Idempotency-Key': idempotencyKey
     },
     body: JSON.stringify(buildPreferenceBody(order, prefItems)),
     signal: AbortSignal.timeout(8000)
@@ -284,7 +296,7 @@ async function createPreference(token, order, prefItems) {
 }
 
 function pixPayerEmail(code) {
-  return `pedido-${String(code).toLowerCase()}@docinhos-site.vercel.app`;
+  return `pedido-${String(code).toLowerCase()}@${SITE_DOMAIN}`;
 }
 
 function buildPixBody(order, customerName, now = new Date()) {
@@ -300,14 +312,14 @@ function buildPixBody(order, customerName, now = new Date()) {
   };
 }
 
-async function createPixPayment(token, order, customerName) {
+async function createPixPayment(token, order, customerName, idempotencyKey = `pix-${order.code}`) {
   const body = buildPixBody(order, customerName);
   const mpRes = await fetch(MP_PAYMENTS_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
-      'X-Idempotency-Key': `pix-${order.code}`
+      'X-Idempotency-Key': idempotencyKey
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(8000)
@@ -338,7 +350,7 @@ const MAX_CODE_TRIES = 10;
 const send = (res, status, payload) => res.status(status).json(payload);
 
 // Registra esta tentativa e diz se o IP passou do limite (a tentativa atual entra na conta). Tabela order_attempts
-// (scripts/migrate-2026-11-10-order-attempts.js). De vez em quando apaga linhas com mais de 1 dia.
+// (scripts/migracoes/migrate-2026-11-10-order-attempts.js). De vez em quando apaga linhas com mais de 1 dia.
 async function attemptsExceeded(sql, ip) {
   const [{ n }] = await sql.query(
     `with ins as (insert into order_attempts (ip) values ($1) returning 1)
@@ -356,6 +368,152 @@ async function recentOrders(sql, phone, ip) {
 }
 const overOrderLimit = r => r.n >= MAX_ORDERS_PER_PHONE || r.by_ip >= MAX_ORDERS_PER_IP;
 
+// ---------- F3: novo pagamento do mesmo pedido (POST /api/order?a=retry_payment) ----------
+// Gera de novo o Pix ou o link do cartão de um pedido já criado, sem refazer o pedido. Valores, itens e reservas (prêmio do
+// Clube, cupom e vaga agendada) continuam os mesmos: nada é recalculado nem reservado de novo. Vale só para pedido com
+// pagamento não aprovado, não cancelado e criado há menos de 24 h. Se a reserva já foi devolvida (pagamento recusado ou
+// vencido), recusa (409 reservation_released): o cliente faz um pedido novo.
+const RETRY_WINDOW_MIN = 10;
+const RETRY_MAX_PER_IP = 10;    // por IP em 10 min
+const RETRY_MAX_PER_ORDER = 3;  // por pedido em 10 min
+const RETRY_CHECK_TIMEOUT_MS = 4000;
+const PAID_STATUSES = ['approved', 'refunded', 'charged_back'];
+const PROCESSING_STATUSES = ['in_process', 'authorized']; // cartão em análise: outro pagamento poderia cobrar duas vezes
+const MSG_RETRY_TOO_MANY = 'Muitas tentativas de pagamento em pouco tempo. Aguarde alguns minutos.';
+const RETRY_COLUMNS = `id, code, public_code, customer_id, customer_name, payment_status, payment_method, payment_id, fulfillment_status,
+  created_at, items, delivery_fee_cents, discount_cents, total_cents, club_points, points_redeemed, coupon_id, scheduled_for,
+  payment_attempt_at, (created_at > now() - interval '24 hours') as fresh`;
+
+// Motivo para não gerar novo pagamento, ou null. o = linha com RETRY_COLUMNS.
+async function retryBlock(sql, o, now = new Date()) {
+  if (PAID_STATUSES.includes(o.payment_status)) return [409, 'Este pedido já está pago.', 'already_paid'];
+  if (o.fulfillment_status === 'cancelled') return [409, 'Este pedido foi cancelado. Faça um novo pedido.', 'order_cancelled'];
+  if (!o.fresh) return [409, 'Passou o prazo de 24 horas para pagar este pedido. Faça um novo pedido.', 'retry_expired'];
+  if (PROCESSING_STATUSES.includes(o.payment_status)) {
+    return [409, 'O Mercado Pago ainda está analisando o pagamento deste pedido. Aguarde alguns minutos.', 'payment_in_process'];
+  }
+  if (o.scheduled_for && new Date(o.scheduled_for).getTime() <= now.getTime()) {
+    return [409, 'O horário marcado para este pedido já passou. Faça um novo pedido.', 'schedule_passed'];
+  }
+  const released = [409, 'O prêmio do Clube ou o cupom deste pedido já foi devolvido. Faça um novo pedido.', 'reservation_released'];
+  if (o.club_points > 0 || o.points_redeemed > 0) {
+    const rows = await sql.query('select kind from loyalty_ledger where order_id = $1', [o.id]);
+    const has = k => rows.some(r => r.kind === k);
+    if ((has('reward_release') && !has('reward_commit')) || (has('redeem_release') && !has('redeem_commit'))) return released;
+  }
+  if (o.coupon_id) {
+    const [r] = await sql.query('select status from coupon_redemptions where order_id = $1', [o.id]);
+    if (!r || r.status === 'released') return released;
+  }
+  // Vaga agendada: pedido pendente só segura a vaga por 60 min (N10). Se já não segura, confere se ainda há vaga.
+  if (o.scheduled_for) {
+    const cfg = await scheduling.getConfig(sql);
+    if (cfg.slot_capacity > 0) {
+      const [{ occ }] = await sql.query(`select (${scheduling.OCCUPIES_SQL}) as occ from orders where id = $1`, [o.id]);
+      if (!occ && (await scheduling.slotTaken(sql, new Date(o.scheduled_for))) >= cfg.slot_capacity) {
+        return [409, 'A janela marcada para este pedido lotou. Faça um novo pedido com outro horário.', 'slot_full'];
+      }
+    }
+  }
+  return null;
+}
+
+// Itens pagos do pedido gravado (prêmio do Clube vale R$ 0 e fica de fora), no formato de buildPreferenceItems.
+function paidItemsOf(o) {
+  const list = Array.isArray(o.items) ? o.items : [];
+  return list.filter(i => i && !i.reward).map(i => ({
+    name: String(i.name || 'Item'), size: i.size || null, extras: Array.isArray(i.extras) ? i.extras.map(String) : [],
+    qty: Number(i.qty) || 0, unit_total_cents: Number(i.unit_total_cents) || 0
+  }));
+}
+
+async function retryPayment(req, res, sql) {
+  const ip = auth.clientIp(req);
+  if (await hitExceeded(sql, 'retry_payment', ip, { windowMinutes: RETRY_WINDOW_MIN, max: RETRY_MAX_PER_IP })) {
+    return send(res, 429, { error: MSG_RETRY_TOO_MANY, code: 'rate_limited' });
+  }
+  let b = req.body;
+  if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) b = {};
+  const notFound = () => send(res, 404, { error: 'Pedido não encontrado.', code: 'order_not_found' });
+  // Pedido pelo token de rastreio (t) ou, na conta, pelo número interno (o) com a sessão do dono (F3, tracking_url).
+  const token = typeof b.t === 'string' ? b.t : '';
+  let o;
+  if (token) {
+    if (!ordersLib.TRACKING_RE.test(token)) return notFound();
+    [o] = await sql.query(`select ${RETRY_COLUMNS} from orders where tracking_token_hash = $1`, [ordersLib.hashTrackingToken(token)]);
+  } else if (b.o !== undefined) {
+    if (!isId(b.o)) return notFound();
+    const session = await customerLib.getSession(sql, req);
+    if (!session) return send(res, 401, { error: 'Entre na sua conta para pagar este pedido.', code: 'login_required' });
+    [o] = await sql.query(`select ${RETRY_COLUMNS} from orders where id = $1 and customer_id = $2`, [b.o, session.customer.id]);
+  }
+  if (!o) return notFound();
+  if (await hitExceeded(sql, 'retry_payment_order', 'order:' + o.id, { windowMinutes: RETRY_WINDOW_MIN, max: RETRY_MAX_PER_ORDER })) {
+    return send(res, 429, { error: MSG_RETRY_TOO_MANY, code: 'rate_limited' });
+  }
+  if (b.payment_choice !== undefined && !PAYMENT_CHOICES.includes(b.payment_choice)) fail('Escolha Pix ou cartão.');
+  const choice = b.payment_choice || (o.payment_method === 'pix' ? 'pix' : 'card');
+  const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!mpToken) return send(res, 503, { error: 'O pagamento on-line está indisponível agora. Fale com a loja pelo WhatsApp.', code: 'payment_unavailable' });
+
+  // O cliente pode ter acabado de pagar: confere no Mercado Pago antes (mesmas regras do webhook). Falha só vai para o log.
+  if (o.payment_method && !PAID_STATUSES.includes(o.payment_status) && o.fulfillment_status !== 'cancelled') {
+    try { await payments.checkOrderPayment(sql, o, { source: 'retry_payment', timeoutMs: RETRY_CHECK_TIMEOUT_MS }); } catch (err) {
+      console.error('retry_payment: conferência falhou:', err.message);
+    }
+    [o] = await sql.query(`select ${RETRY_COLUMNS} from orders where id = $1`, [o.id]);
+  }
+  const block = await retryBlock(sql, o);
+  if (block) return send(res, block[0], { error: block[1], code: block[2] });
+
+  // Chave de idempotência nova a cada tentativa (a do pedido devolveria o pagamento antigo). A hora é marcada ANTES de
+  // chamar o Mercado Pago: aviso não aprovado de pagamento criado antes dela é ignorado (payments.syncPayment).
+  // F5-S-03: a hora é GRAVADA antes da chamada (UPDATE condicional, pedido ainda aberto). Antes era gravada só depois, e o
+  // aviso de expiração do Pix antigo que chegasse durante a chamada devolvia prêmio, pontos e cupom. Se o Mercado Pago
+  // falhar, a hora anterior volta (os avisos do pagamento antigo voltam a valer).
+  const startedAt = new Date();
+  const suffix = crypto.randomBytes(4).toString('hex');
+  const stillOpen = n => `payment_status <> all($${n}::text[]) and fulfillment_status <> 'cancelled'`;
+  const marked = await sql.query(`update orders set payment_attempt_at = $2 where id = $1 and ${stillOpen(3)} returning id`, [o.id, startedAt, PAID_STATUSES]);
+  if (!marked.length) return send(res, 409, { error: 'Este pedido já está pago ou foi cancelado.', code: 'already_paid' });
+  let payment;
+  try {
+    if (choice === 'pix') {
+      const pix = await createPixPayment(mpToken, o, o.customer_name, `pix-${o.code}-${suffix}`);
+      const exp = new Date(pix.expires_at);
+      const rows = await sql.query(
+        `update orders set payment_method = 'pix', payment_id = $2, payment_status = $3, pix_qr_code = $4, pix_qr_base64 = $5, pix_expires_at = $6,
+                payment_attempt_at = $7
+          where id = $1 and ${stillOpen(8)} returning id`,
+        [o.id, pix.id, pix.status, String(pix.qr_code).slice(0, 4000), String(pix.qr_code_base64).slice(0, 200000),
+          Number.isNaN(exp.getTime()) ? new Date(Date.now() + PIX_TTL_MS) : exp, startedAt, PAID_STATUSES]);
+      if (!rows.length) return send(res, 409, { error: 'Este pedido já está pago ou foi cancelado.', code: 'already_paid' });
+      payment = { type: 'pix', id: pix.id, qr_code: pix.qr_code, qr_code_base64: pix.qr_code_base64, expires_at: pix.expires_at };
+    } else {
+      const prefItems = buildPreferenceItems(paidItemsOf(o), o.delivery_fee_cents, o.discount_cents, o.public_code);
+      const sum = prefItems.reduce((s, i) => s + Math.round(i.unit_price * 100) * i.quantity, 0);
+      if (sum !== o.total_cents) throw new Error('itens do pedido não somam o total');
+      const pref = await createPreference(mpToken, { ...o, tracking_token: token || null, track_order_id: o.id }, prefItems, `pref-${o.code}-${suffix}`);
+      if (!pref || !pref.init_point || !pref.id) throw new Error('preferência sem link');
+      const rows = await sql.query(
+        `update orders set payment_method = 'mercadopago_card', payment_id = $2, payment_status = 'pending',
+                pix_qr_code = null, pix_qr_base64 = null, pix_expires_at = null, payment_attempt_at = $3
+          where id = $1 and ${stillOpen(4)} returning id`,
+        [o.id, String(pref.id), startedAt, PAID_STATUSES]);
+      if (!rows.length) return send(res, 409, { error: 'Este pedido já está pago ou foi cancelado.', code: 'already_paid' });
+      payment = { type: 'card', url: pref.init_point, id: String(pref.id) };
+    }
+  } catch (err) {
+    console.error('retry_payment: falha ao gerar pagamento:', String(err.message || '').replace(/\S+@\S+/g, '<email>').slice(0, 160));
+    // F5-S-03: devolve a hora anterior só se ninguém gravou outra no meio (outra tentativa).
+    await sql.query('update orders set payment_attempt_at = $2 where id = $1 and payment_attempt_at = $3', [o.id, o.payment_attempt_at || null, startedAt])
+      .catch(e => console.error('retry_payment: falha ao devolver payment_attempt_at:', e.message));
+    return send(res, 502, { error: 'Não foi possível gerar o pagamento agora. Tente de novo em instantes.', code: 'payment_unavailable' });
+  }
+  return send(res, 200, { public_code: o.public_code, total_cents: o.total_cents, payment_choice: choice, payment });
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
@@ -363,7 +521,11 @@ module.exports = async (req, res) => {
   // (text/plain dispensaria o preflight de CORS e deixaria outro site postar pedidos).
   if (!auth.sameOrigin(req)) return res.status(403).json({ error: 'Origem não permitida.', code: 'forbidden_origin' });
   if (!auth.isJsonType(req)) return res.status(415).json({ error: 'Envie os dados como JSON.', code: 'unsupported_type' });
+  // F3: ?a=retry_payment gera novo pagamento de um pedido existente. Sem ?a: cria pedido (como antes).
+  const action = (req.query && typeof req.query.a === 'string') ? req.query.a : new URL(req.url || '/', 'http://x').searchParams.get('a');
+  if (action && action !== 'retry_payment') return res.status(404).json({ error: 'Ação desconhecida.', code: 'unknown_action' });
   try {
+    if (action === 'retry_payment') return await retryPayment(req, res, require('./_lib/db'));
     const sql = require('./_lib/db'); // carregado aqui para testar a função pura sem DATABASE_URL
     // Limite por IP antes de qualquer trabalho caro (frete, catálogo). Toda tentativa conta, até as recusadas.
     // 403/415 acima não contam: um site de terceiros não consegue gastar a cota do IP de quem o visita.
@@ -374,14 +536,19 @@ module.exports = async (req, res) => {
     if (!b || typeof b !== 'object' || Array.isArray(b)) fail('Dados inválidos.');
 
     // Loja fechada (horário, fechamento manual ou pausa antiga): recusa já, informando quando abre.
+    // v4 N10: com data marcada (scheduled_for) a loja fechada agora não impede; a janela é validada logo abaixo.
+    const wantsSchedule = b.scheduled_for !== undefined && b.scheduled_for !== null && b.scheduled_for !== '';
     const state = await storeHours.getStoreState(sql);
-    if (!state.open) {
+    if (!state.open && !wantsSchedule) {
       return send(res, 503, {
         error: state.message || 'Estamos fechados no momento.',
         code: 'store_closed',
         store: { open: false, reason: state.reason, reopens_at: state.reopens_at, next_open_at: state.next_open_at, message: state.message }
       });
     }
+
+    // v4 N10: janela de 30 min, horário do dia, antecedência, máximo de dias e vaga. null = o quanto antes.
+    const schedule = await scheduling.validateRequested(sql, b.scheduled_for);
 
     const settingRows = await sql.query(`select key, value from settings where key in ('store_address')`);
     const st = {};
@@ -393,6 +560,14 @@ module.exports = async (req, res) => {
     // Mesmo teto global de consultas novas de endereço do /api/store (protege ViaCEP/Nominatim/OSRM), antes do catálogo e do frete.
     if (customer.method === 'delivery' && await shipping.tooManyNewLookups(sql)) return send(res, 429, { error: MSG_SHIPPING_BUSY, code: 'shipping_busy' });
     const choice = PAYMENT_CHOICES.includes(b.payment_choice) ? b.payment_choice : 'card';
+    // v4 N3: o desconto em reais por pontos acabou (o saldo continua e vale para os prêmios do Clube).
+    if (b.use_points !== undefined && b.use_points !== null && b.use_points !== 0 && b.use_points !== false) {
+      return send(res, 400, { error: 'O desconto com pontos foi substituído pelo Clube: troque seus pontos por um prêmio.', code: 'points_discount_ended' });
+    }
+    const hasRewardsInput = Array.isArray(b.rewards) && b.rewards.length > 0;
+    if ((!Array.isArray(b.items) || b.items.length === 0) && hasRewardsInput) {
+      return send(res, 400, { error: MSG_REWARD_MIN, code: 'reward_min_subtotal' });
+    }
     if (!Array.isArray(b.items) || b.items.length === 0) fail('O carrinho está vazio.');
     if (b.items.length > MAX_ITEMS) fail(`O pedido pode ter no máximo ${MAX_ITEMS} itens.`);
     const ids = [...new Set(b.items.map(i => (i && isId(i.product_id) ? i.product_id : null)).filter(Boolean))];
@@ -401,67 +576,106 @@ module.exports = async (req, res) => {
     const priced = priceItems(b.items, catalog);
 
     // Frete: retirada R$ 0; entrega por faixa de km, recalculado aqui (o cliente nunca informa valor).
-    let deliveryFee = 0, distanceKm = null;
+    let deliveryFee = 0, distanceKm = null, area = { district: null, city: null };
     if (customer.method === 'delivery') {
       const quote = await shipping.quoteDelivery(sql, { cep: customer.cep, address: customer.address, number: customer.number });
       deliveryFee = quote.fee_cents;
       distanceKm = quote.km;
+      area = { district: quote.district || null, city: quote.city || null }; // F3: bairro e cidade do CEP, para o rastreio
     }
 
-    // Pontos (só com cliente logado): saldo, bloqueio de 48 h, regra em vigor (Ajustes do painel) e desconto conferidos no servidor.
-    let discount = 0, pointsRedeemed = 0;
-    if (b.use_points !== undefined && b.use_points !== null && b.use_points !== 0 && (!Number.isInteger(b.use_points) || b.use_points < 0)) fail('Quantidade de pontos inválida.');
     const session = await customerLib.getSession(sql, req);
-    if (b.use_points) {
-      if (!session) return send(res, 401, { error: 'Entre na sua conta para usar seus pontos.', code: 'login_required' });
-      const bal = await loyalty.getBalance(sql, session.customer.id);
-      const red = loyalty.validateRedemption({
-        points: b.use_points, subtotalCents: priced.subtotal_cents, balance: bal.balance, lockedUntil: session.customer.points_locked_until,
-        rules: bal.rules
-      });
-      discount = red.discount_cents;
-      pointsRedeemed = red.points;
-    }
-    const total = priced.subtotal_cents - discount + deliveryFee;
-    if (total < loyalty.MIN_CHARGE_CENTS) {
-      fail('O valor a pagar precisa ser de pelo menos R$ 1,00. Use menos pontos neste pedido.');
+
+    // Clube (v4 N3): prêmios trocados por pontos. Exige login, programa ligado, sem bloqueio de 48 h, saldo e R$ 1,00 em itens pagos.
+    const rewards = await club.resolveRewards(sql, b.rewards);
+    const clubPoints = rewards.points_total;
+    if (clubPoints > 0) {
+      if (!session) return send(res, 401, { error: 'Entre na sua conta para trocar pontos por prêmios.', code: 'login_required' });
+      if (priced.subtotal_cents < loyalty.MIN_CHARGE_CENTS) return send(res, 400, { error: MSG_REWARD_MIN, code: 'reward_min_subtotal' });
+      const bal = await loyalty.getBalance(sql, session.customer.id); // também devolve reservas vencidas
+      if (!bal.points_enabled) return send(res, 409, { error: 'O Clube está pausado no momento. Faça o pedido sem prêmios; seu saldo continua guardado.', code: 'points_disabled' });
+      if (bal.locked_until) {
+        return send(res, 423, { error: 'A troca de pontos está bloqueada por 48 h por segurança (recuperação de conta recente). Você pode fazer o pedido sem prêmios.', code: 'points_locked', locked_until: bal.locked_until });
+      }
+      if (bal.balance < clubPoints) {
+        return send(res, 409, { error: `Saldo de pontos insuficiente: você tem ${Math.max(0, bal.balance)} pontos e os prêmios custam ${clubPoints}.`, code: 'insufficient_points' });
+      }
     }
 
-    // Limite de abuso: o insert só acontece se o telefone tiver < 5 pedidos e o IP < 10 pedidos nos últimos 10 min, e se o
-    // DG-#### não existir entre os pedidos dos últimos 90 dias (checagem e inserção na mesma instrução, para reduzir corridas).
+    // Cupom (v4 N6): validado no servidor sobre o subtotal dos itens pagos. Limite por cliente = por telefone normalizado.
+    const pk = phoneKey(customer.phone);
+    let coupon = null, couponDiscount = 0;
+    if (b.coupon_code !== undefined && b.coupon_code !== null && b.coupon_code !== '') {
+      const ev = await coupons.evaluate(sql, { code: b.coupon_code, paidSubtotalCents: priced.subtotal_cents, phoneKey: pk, hasRewards: clubPoints > 0 });
+      coupon = ev.coupon;
+      couponDiscount = ev.discount_cents;
+    }
+    const discount = couponDiscount;
+    const total = priced.subtotal_cents - discount + deliveryFee;
+    if (total < loyalty.MIN_CHARGE_CENTS) fail('O valor a pagar precisa ser de pelo menos R$ 1,00.');
+    const allItems = [...priced.items, ...rewards.items];
+
+    // A-02 + A-07 (v4): pedido e reservas (prêmio do Clube e cupom) numa transação só. O pedido nunca fica gravado sem a reserva.
+    //  1. trava de pontos do cliente (classe 1), do cupom (classe 2) e da janela agendada (classe 3, v4 N10), sempre nessa ordem (sem deadlock);
+    //  2. insert do pedido condicionado: limite por telefone e IP, DG-#### livre, saldo >= pontos dos prêmios, cupom com uso livre
+    //     e vaga na janela agendada;
+    //  3. reserva dos pontos (reward_reserve) e do cupom, lidas do pedido recém-criado (nada é gravado se o pedido não entrou).
+    // Cada instrução da transação enxerga o que foi gravado antes de a trava ser obtida: dois pedidos simultâneos nunca gastam
+    // o mesmo ponto nem passam do limite de usos do cupom.
     const tracking = ordersLib.newTrackingToken();
+    const customerId = session ? session.customer.id : null;
     let order = null;
     for (let attempt = 0; attempt < MAX_CODE_TRIES && !order; attempt++) {
       const publicCode = ordersLib.newPublicCode();
-      const rows = await sql.query(
+      const queries = [];
+      if (clubPoints > 0) queries.push(sql.query('select pg_advisory_xact_lock($1::int, $2::int)', [loyalty.LOCK_POINTS, customerId]));
+      if (coupon) queries.push(sql.query('select pg_advisory_xact_lock($1::int, $2::int)', [loyalty.LOCK_COUPON, coupon.id]));
+      if (schedule && schedule.capacity > 0) queries.push(sql.query('select pg_advisory_xact_lock($1::int, $2::int)', [scheduling.LOCK_SLOT, schedule.key]));
+      queries.push(sql.query(
         `insert into orders (code, public_code, tracking_token_hash, customer_id, customer_name, customer_phone, delivery_method, address, items,
-                             subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, total_cents, distance_km, notes, payment_status, client_ip)
+                             subtotal_cents, delivery_fee_cents, discount_cents, points_redeemed, total_cents, distance_km, notes, payment_status, client_ip,
+                             club_points, coupon_id, coupon_code, coupon_discount_cents, scheduled_for, address_district, address_city)
          select $1::text, $2::text, $3::text, $4::int, $5::text, $6::text, $7::text, $8::text, $9::jsonb,
-                $10::int, $11::int, $12::int, $13::int, $14::int, $15::numeric, $16::text, 'pending', $18::text
+                $10::int, $11::int, $12::int, 0, $13::int, $14::numeric, $15::text, 'pending', $17::text,
+                $19::int, $20::int, $21::text, $12::int, $23::timestamptz, $25::text, $26::text
           where (select count(*) from orders
                   where regexp_replace(customer_phone, '\\D', '', 'g') = $6::text
-                    and created_at > now() - interval '10 minutes') < $17::int
-            and (select count(*) from orders where client_ip = $18::text and created_at > now() - interval '10 minutes') < $19::int
+                    and created_at > now() - interval '10 minutes') < $16::int
+            and (select count(*) from orders where client_ip = $17::text and created_at > now() - interval '10 minutes') < $18::int
             and not exists (select 1 from orders where public_code = $2::text and created_at > now() - interval '${ordersLib.PUBLIC_CODE_WINDOW}')
+            and ($19::int = 0 or (select coalesce(sum(points), 0) from loyalty_ledger where customer_id = $4::int) >= $19::int)
+            and ($20::int is null or ${coupons.eligibleSql('$20', '$22')})
+            and ($23::timestamptz is null or $24::int = 0
+                 or (select count(*) from orders where scheduled_for = $23::timestamptz and ${scheduling.OCCUPIES_SQL}) < $24::int)
          returning id, code, public_code, total_cents`,
-        [newCode(), publicCode, tracking.hash, session ? session.customer.id : null, customer.name, customer.phone, customer.method, customer.address,
-          JSON.stringify(priced.items), priced.subtotal_cents, deliveryFee, discount, pointsRedeemed, total, distanceKm, customer.notes, MAX_ORDERS_PER_PHONE,
-          ip, MAX_ORDERS_PER_IP]
-      );
+        [newCode(), publicCode, tracking.hash, customerId, customer.name, customer.phone, customer.method, customer.address,
+          JSON.stringify(allItems), priced.subtotal_cents, deliveryFee, discount, total, distanceKm, customer.notes, MAX_ORDERS_PER_PHONE,
+          ip, MAX_ORDERS_PER_IP, clubPoints, coupon ? coupon.id : null, coupon ? coupon.code : null, pk,
+          schedule ? schedule.iso : null, schedule ? schedule.capacity : 0, area.district, area.city]
+      ));
+      if (clubPoints > 0) {
+        queries.push(sql.query(
+          `insert into loyalty_ledger (customer_id, order_id, kind, points, note)
+           select o.customer_id, o.id, 'reward_reserve', -o.club_points, 'reserva de prêmio do Clube'
+             from orders o where o.tracking_token_hash = $1::text and o.club_points > 0
+           on conflict (order_id, kind) where order_id is not null do nothing`, [tracking.hash]));
+      }
+      if (coupon) queries.push(coupons.reserveStatement(sql, { couponId: coupon.id, trackingHash: tracking.hash, phoneKey: pk, discountCents: couponDiscount }));
+      const results = await sql.transaction(queries);
+      const rows = results[(clubPoints > 0 ? 1 : 0) + (coupon ? 1 : 0) + (schedule && schedule.capacity > 0 ? 1 : 0)];
       if (rows.length) { order = rows[0]; break; }
+      // Não entrou: descobre o motivo (limite, saldo, cupom) ou foi colisão do DG-#### (sorteia outro).
       if (overOrderLimit(await recentOrders(sql, customer.phone, ip))) return send(res, 429, { error: MSG_TOO_MANY, code: 'rate_limited' });
-      // senão foi colisão do DG-####: sorteia outro
+      if (clubPoints > 0) {
+        const [{ n }] = await sql.query('select coalesce(sum(points), 0)::int n from loyalty_ledger where customer_id = $1', [customerId]);
+        if (n < clubPoints) return send(res, 409, { error: 'Saldo de pontos insuficiente. Atualize a página e tente de novo.', code: 'insufficient_points' });
+      }
+      // v4 N10: a janela lotou entre a conferência e o insert (outro pedido levou a última vaga).
+      if (schedule && schedule.capacity > 0 && (await scheduling.slotTaken(sql, schedule.start)) >= schedule.capacity) throw scheduling.slotFull();
+      // Cupom esgotado ou limite do cliente atingido no meio do caminho: evaluate lança o erro certo (409).
+      if (coupon) await coupons.evaluate(sql, { code: coupon.code, paidSubtotalCents: priced.subtotal_cents, phoneKey: pk, hasRewards: clubPoints > 0 });
     }
     if (!order) throw new Error('não foi possível gerar um código de pedido único');
-
-    // Reserva dos pontos (atômica com a conferência do saldo). Se outra compra gastou antes, desfaz este pedido.
-    if (pointsRedeemed > 0) {
-      const reserved = await loyalty.reserve(sql, { customerId: session.customer.id, orderId: order.id, points: pointsRedeemed });
-      if (!reserved) {
-        await sql.query('delete from orders where id = $1', [order.id]);
-        return send(res, 409, { error: 'Saldo de pontos insuficiente. Atualize a página e tente de novo.', code: 'insufficient_points' });
-      }
-    }
 
     // Se a criação do pagamento falhar, o pedido continua válido (payment: null).
     let payment = null;
@@ -470,7 +684,13 @@ module.exports = async (req, res) => {
       try {
         const pix = await createPixPayment(mpToken, order, customer.name);
         payment = { type: 'pix', id: pix.id, qr_code: pix.qr_code, qr_code_base64: pix.qr_code_base64, expires_at: pix.expires_at };
-        await sql`update orders set payment_method = 'pix', payment_id = ${pix.id}, payment_status = ${pix.status} where id = ${order.id}`;
+        // U-01 (v4): guarda o Pix para a página do pedido reabrir o pagamento (apagado quando o pagamento sai de pendente).
+        const exp = new Date(pix.expires_at);
+        await sql.query(
+          `update orders set payment_method = 'pix', payment_id = $2, payment_status = $3, pix_qr_code = $4, pix_qr_base64 = $5, pix_expires_at = $6
+            where id = $1`,
+          [order.id, pix.id, pix.status, String(pix.qr_code).slice(0, 4000), String(pix.qr_code_base64).slice(0, 200000),
+            Number.isNaN(exp.getTime()) ? new Date(Date.now() + PIX_TTL_MS) : exp]);
       } catch (err) {
         payment = null;
         console.error('Falha ao criar Pix no Mercado Pago:', err.message);
@@ -495,18 +715,25 @@ module.exports = async (req, res) => {
       subtotal_cents: priced.subtotal_cents,
       delivery_fee_cents: deliveryFee,
       discount_cents: discount,
-      points_redeemed: pointsRedeemed,
+      points_redeemed: 0,
+      club_points: clubPoints,
+      coupon_code: coupon ? coupon.code : null,
+      coupon_discount_cents: couponDiscount,
       total_cents: order.total_cents,
       distance_km: distanceKm,
       delivery_method: customer.method,
       address: customer.address,
-      items: priced.items,
+      items: allItems,
+      scheduled_for: schedule ? schedule.iso : null, // v4 N10: null = o quanto antes
+      scheduled_label: schedule ? scheduling.scheduledLabel(schedule.start) : null,
       payment
     });
   } catch (error) {
     if (error instanceof ValidationError) return res.status(400).json({ error: error.message });
     if (error instanceof shipping.ShippingError) return res.status(error.status).json({ error: error.message, code: error.code, ...(error.max_km ? { max_km: error.max_km } : {}) });
-    if (error instanceof loyalty.LoyaltyError) return res.status(error.status).json({ error: error.message, code: error.code });
+    if (error instanceof loyalty.LoyaltyError || error instanceof club.ClubError || error instanceof coupons.CouponError || error instanceof scheduling.ScheduleError) {
+      return res.status(error.status).json({ error: error.message, code: error.code });
+    }
     // QA v3 B1: a mensagem de erro inesperado pode trazer valores (telefone, e-mail). Loga o código e a mensagem
     // com e-mails e sequências de 4+ dígitos mascarados, o suficiente para diagnosticar sem dados pessoais.
     const code = error && typeof error.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(error.code) ? error.code : 'sem_codigo';
@@ -516,4 +743,4 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._internal = { MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, backUrls, NOTIFICATION_URL, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError, loadCatalog, isId, MAX_ITEMS };
+module.exports._internal = { RETRY_MAX_PER_IP, RETRY_MAX_PER_ORDER, retryBlock, paidItemsOf, MAX_ORDERS_PER_PHONE, MAX_ORDERS_PER_IP, MAX_ATTEMPTS_PER_IP, priceItems, validateCustomer, buildPreferenceItems, buildPreferenceBody, buildPixBody, backUrls, NOTIFICATION_URL, pixPayerEmail, createPixPayment, PAYMENT_CHOICES, STORE_ADDRESS, ValidationError, loadCatalog, isId, MAX_ITEMS };

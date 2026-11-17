@@ -435,7 +435,7 @@ async function cleanup() {
     assert.equal(oc.status, 200); assert.equal(oc.body.orders.length, 1);
     const o = oc.body.orders[0];
     assert.equal(o.public_code, 'DG-9101'); assert.equal(o.total_cents, 2500); assert.equal(o.fulfillment_label, 'em preparo'); assert.equal(o.payment_label, 'pago');
-    assert.deepEqual(o.items_summary, ['2x Brigadeiro ZZ (Grande)']); assert.equal(o.tracking_url, null);
+    assert.deepEqual(o.items_summary, ['2x Brigadeiro ZZ (Grande)']); assert.equal(o.tracking_url, `/pedido.html?o=${oC.id}`); // F3
     const txt = JSON.stringify(oc.body); assert.ok(!txt.includes('DG-9102') && !txt.includes('Rua Secreta') && !txt.includes('11900009999') && !txt.includes('customer_phone'));
     const od = await get('orders', { cookie: dCookie });
     assert.deepEqual(od.body.orders.map(x => x.public_code), ['DG-9102']); assert.equal(od.body.orders[0].payment_label, 'aguardando pagamento');

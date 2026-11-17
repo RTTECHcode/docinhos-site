@@ -83,16 +83,24 @@ for (const bad of ['', 'dg0123456789', 'DG012345678', 'DG01234567890', 'DG012345
 (async () => {
   const handler = require('../api/mp-webhook');
   const mkRes = () => { const r = { code: null, headers: {}, setHeader() {}, status(c) { r.code = c; return r; }, json() { return r; } }; return r; };
-  const savedSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET, savedEnv = process.env.VERCEL_ENV;
+  const savedSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET, savedEnv = process.env.APP_ENV, savedNode = process.env.NODE_ENV;
+  delete process.env.NODE_ENV;
   const origWarn = console.warn, origErr = console.error;
   console.warn = console.error = () => {};
   try {
     delete process.env.MERCADOPAGO_WEBHOOK_SECRET;
-    process.env.VERCEL_ENV = 'production';
+    // F6 M3: fail-closed. APP_ENV ausente, "production" ou com erro de digitação = produção (500 sem segredo).
+    for (const v of [undefined, 'production', 'prod', 'Development ', '']) {
+      if (v === undefined) delete process.env.APP_ENV; else process.env.APP_ENV = v;
+      const r0 = mkRes();
+      await handler({ method: 'POST', query: {}, headers: {}, body: { type: 'merchant_order', data: { id: '1' } } }, r0);
+      assert.strictEqual(r0.code, v === 'Development ' ? 200 : 500, 'APP_ENV=' + JSON.stringify(v));
+    }
+    process.env.APP_ENV = 'production';
     let res = mkRes();
     await handler({ method: 'POST', query: {}, headers: {}, body: { type: 'payment', data: { id: '1' } } }, res);
     assert.strictEqual(res.code, 500, 'produção sem segredo deve responder 500');
-    process.env.VERCEL_ENV = 'preview';
+    process.env.APP_ENV = 'preview';
     res = mkRes();
     await handler({ method: 'POST', query: {}, headers: {}, body: { type: 'merchant_order', data: { id: '1' } } }, res);
     assert.strictEqual(res.code, 200, 'fora de produção sem segredo segue');
@@ -123,7 +131,7 @@ for (const bad of ['', 'dg0123456789', 'DG012345678', 'DG01234567890', 'DG012345
     process.env.MERCADOPAGO_WEBHOOK_SECRET = secret;
 
     // W2: IPN (Feed v2.0) recebe 200 sem processar e sem consultar o Mercado Pago, mesmo sem assinatura e em produção.
-    process.env.VERCEL_ENV = 'production';
+    process.env.APP_ENV = 'production';
     const realFetch = globalThis.fetch; let fetched = 0;
     globalThis.fetch = async () => { fetched++; throw new Error('não deveria consultar'); };
     try {
@@ -137,7 +145,8 @@ for (const bad of ['', 'dg0123456789', 'DG012345678', 'DG01234567890', 'DG012345
   } finally {
     console.warn = origWarn; console.error = origErr;
     if (savedSecret === undefined) delete process.env.MERCADOPAGO_WEBHOOK_SECRET; else process.env.MERCADOPAGO_WEBHOOK_SECRET = savedSecret;
-    if (savedEnv === undefined) delete process.env.VERCEL_ENV; else process.env.VERCEL_ENV = savedEnv;
+    if (savedEnv === undefined) delete process.env.APP_ENV; else process.env.APP_ENV = savedEnv;
+    if (savedNode !== undefined) process.env.NODE_ENV = savedNode;
   }
   console.log('mp-webhook: handler ok');
 })().catch(e => { console.error(e); process.exit(1); });

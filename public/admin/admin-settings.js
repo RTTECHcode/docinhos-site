@@ -1,5 +1,5 @@
 'use strict';
-/* Aba Ajustes (A5): horários e fechamento da loja, frete, pontos, sinônimos, loja e segurança do admin.
+/* Aba Ajustes (A5): horários e fechamento da loja, frete, pontos, loja e segurança do admin. (v4 N4: sinônimos removidos.)
    Também: tela obrigatória de pergunta de segurança e "Esqueci a senha" (usadas por admin.js). */
 (function () {
   const DG = window.DG;
@@ -275,131 +275,136 @@
     });
   }
 
-  // ---------- Pontos (regra editável; o servidor valida e calcula tudo) ----------
-  const ptsWord = n => (n === 1 ? '1 ponto' : n.toLocaleString('pt-BR') + ' pontos');
-  // Percentual do valor gasto que volta em desconto (só para orientar; o limite de verdade é do servidor).
-  const returnPct = r => (r.points_per_real * r.block_value_cents) / r.block_points;
-  const pctText = r => returnPct(r).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
-
+  // ---------- Pontos: desde a v4 (N3) ficam na tela Clube (Mais > Clube de pontos). O desconto em reais acabou. ----------
   function pointsCard() {
+    return el('div', { class: 'card stack' },
+      el('p', { class: 'wrap', text: 'Os pontos agora são trocados por prêmios do Clube. A regra de pontos e os prêmios ficam em Mais > Clube de pontos.' }),
+      el('button', { class: 'btn block', type: 'button', text: 'Abrir o Clube', on: { click: () => DG.go('club') } }));
+  }
+
+  // ---------- Encomendas, prazo e selo (v4 N10 e N11) ----------
+  // Limites vêm na resposta (settings.limits); o servidor confere tudo de novo. Manda só o que mudou.
+  const fmtMin = m => (m >= 60 && m % 60 === 0 ? (m / 60) + ' h' : m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min');
+  function orderSettingsCard() {
     const box = el('div', { class: 'card stack' }, DG.loading());
     const load = async () => {
-      const r = await DG.api('points_get').catch(() => null);
-      if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar a regra de pontos.' })); return; }
-      const p = r.points, x = p.rules;
+      const r = await DG.api('order_settings').catch(() => null);
+      if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar os ajustes de pedido.' })); return; }
+      const s = r.settings;
       box.replaceChildren(
-        el('div', { class: 'row between' }, el('strong', { text: 'Programa de pontos' }),
-          el('span', { class: 'pill ' + (x.enabled ? 'ok' : 'off'), text: x.enabled ? 'Ligado' : 'Desligado' })),
         el('dl', { class: 'kv' },
-          el('dt', { text: 'Ganho' }), el('dd', { text: ptsWord(x.points_per_real) + ' a cada R$ 1,00 pago (sem o frete)' }),
-          el('dt', { text: 'Resgate' }), el('dd', { text: ptsWord(x.block_points) + ' = ' + DG.money(x.block_value_cents) + ' de desconto' }),
-          el('dt', { text: 'Volta' }), el('dd', { text: 'cerca de ' + pctText(x) + ' do valor gasto' })),
-        x.enabled ? null : el('p', { class: 'a5-warn wrap', text: 'Desligado: os clientes não ganham pontos novos e não podem usar pontos. O saldo de cada um fica guardado.' }),
-        isAdmin() ? el('button', { class: 'btn block', type: 'button', text: 'Editar pontos', on: { click: () => pointsSheet(p, load) } })
-          : el('p', { class: 'muted small', text: 'Só o administrador edita a regra de pontos.' }));
+          el('dt', { text: 'Agendamento' }), el('dd', { text: s.scheduling_enabled ? 'Ligado' : 'Desligado' }),
+          el('dt', { text: 'Antecedência' }), el('dd', { text: 'pelo menos ' + fmtMin(s.scheduling_min_lead_min) }),
+          el('dt', { text: 'Até' }), el('dd', { text: s.scheduling_max_days + (s.scheduling_max_days === 1 ? ' dia' : ' dias') + ' à frente' }),
+          el('dt', { text: 'Por janela' }), el('dd', { text: s.scheduling_slot_capacity ? s.scheduling_slot_capacity + ' pedido(s) a cada 30 min' : 'sem limite' }),
+          el('dt', { text: 'Prazo' }), el('dd', { text: 'Entrega em ' + s.delivery_eta_min + ' a ' + s.delivery_eta_max + ' min' }),
+          el('dt', { text: 'Selo' }), el('dd', { text: s.best_seller_enabled ? '"Mais pedido" ligado' : '"Mais pedido" desligado' })),
+        isAdmin() ? el('button', { class: 'btn block', type: 'button', text: 'Editar ajustes de pedido', on: { click: () => orderSettingsSheet(s, load) } }) : el('p', { class: 'muted small', text: 'Só o administrador edita estes ajustes.' }));
     };
     load();
     return box;
   }
-
-  function pointsSheet(p, onSaved) {
-    DG.sheet('Regra de pontos', (body, close) => {
-      const L = p.limits, D = p.defaults;
-      const state = { ...p.rules };
-      const num = (value, [min, max], label) => el('input', { type: 'number', inputmode: 'numeric', min, max, step: 1, value: String(value), 'aria-label': label });
-      const perReal = num(state.points_per_real, L.points_per_real, 'Pontos por R$ 1,00');
-      const block = num(state.block_points, L.block_points, 'Pontos por resgate');
-      const value = el('input', { type: 'text', inputmode: 'decimal', value: DG.moneyInput(state.block_value_cents), 'aria-label': 'Desconto por resgate em reais' });
-      const stateTxt = el('span', { class: 'state ' + (state.enabled ? 'on' : 'off'), text: state.enabled ? 'Ligado' : 'Desligado' });
-      // Só muda o rascunho; grava no "Salvar pontos".
-      const sw = DG.switchEl(state.enabled, 'Programa de pontos ligado', async next => {
-        state.enabled = next; stateTxt.textContent = next ? 'Ligado' : 'Desligado'; stateTxt.className = 'state ' + (next ? 'on' : 'off'); return true;
-      }, true);
-      const preview = el('p', { class: 'muted small wrap', 'aria-live': 'polite' });
-      const msg = el('p', { class: 'error wrap', hidden: true });
-
-      // Lê os campos. Retorna { rules } ou { problem } (mensagem para a tela).
-      const read = () => {
-        const ints = [[perReal, L.points_per_real, 'Pontos por R$ 1,00'], [block, L.block_points, 'Pontos por resgate']].map(([input, [min, max], label]) => {
-          const n = Number(input.value);
-          return Number.isInteger(n) && n >= min && n <= max ? n : label + ': use um número inteiro de ' + min + ' a ' + max + '.';
-        });
-        const bad = ints.find(v => typeof v === 'string');
-        if (bad) return { problem: bad };
-        const cents = DG.parseMoney(value.value);
-        const [vmin, vmax] = L.block_value_cents;
-        if (cents === null || Number.isNaN(cents) || cents < vmin || cents > vmax) return { problem: 'Desconto por resgate: use um valor de ' + DG.money(vmin) + ' a ' + DG.money(vmax) + '.' };
-        const rules = { enabled: state.enabled, points_per_real: ints[0], block_points: ints[1], block_value_cents: cents };
-        if (returnPct(rules) > L.max_return_pct) return { problem: 'Com essa regra o cliente receberia mais de ' + L.max_return_pct + '% do valor gasto de volta. Aumente os pontos por resgate ou diminua o desconto.' };
-        return { rules };
-      };
-      const paintPreview = () => {
-        const { rules } = read();
-        if (!rules) { preview.textContent = ''; return; }
-        const spend = Math.ceil(rules.block_points / rules.points_per_real);
-        preview.textContent = 'Exemplo: uma compra de ' + DG.money(5000) + ' rende ' + ptsWord(50 * rules.points_per_real) + '. Para ganhar '
-          + DG.money(rules.block_value_cents) + ' de desconto o cliente precisa gastar ' + DG.money(spend * 100) + ' (volta cerca de ' + pctText(rules) + ').';
-      };
-      for (const i of [perReal, block, value]) i.addEventListener('input', () => { msg.hidden = true; paintPreview(); });
-      paintPreview();
-
-      const save = el('button', { class: 'btn primary block', type: 'button', text: 'Salvar pontos' });
-      save.addEventListener('click', async () => {
-        const { rules, problem } = read();
-        if (problem) { msg.textContent = problem; msg.hidden = false; return; }
-        if (p.rules.enabled && !rules.enabled && !(await DG.confirm('Desligar o programa de pontos? Os clientes param de ganhar e de usar pontos até você ligar de novo. O saldo deles fica guardado.', 'Desligar', true))) return;
-        msg.hidden = true; save.disabled = true;
-        const r = await DG.run(() => DG.api('points_save', { body: rules }), 'Regra de pontos salva.');
-        if (r) { close(); onSaved(); } else save.disabled = false;
-      });
-      const reset = el('button', { class: 'btn block', type: 'button', text: 'Voltar ao padrão', on: { click: () => {
-        perReal.value = String(D.points_per_real); block.value = String(D.block_points); value.value = DG.moneyInput(D.block_value_cents);
-        msg.hidden = true; paintPreview(); DG.toast('Valores padrão preenchidos. Lembre de salvar.');
-      } } });
-
-      body.append(
-        el('div', { class: 'card row between' }, el('div', { class: 'grow' }, el('strong', { text: 'Programa de pontos' }), el('p', {}, stateTxt)), sw),
-        el('label', { class: 'field' }, el('span', { text: 'Pontos ganhos a cada R$ 1,00 pago (' + L.points_per_real[0] + ' a ' + L.points_per_real[1] + ')' }), perReal),
-        el('div', { class: 'grid2' },
-          el('label', { class: 'field' }, el('span', { text: 'Pontos por resgate' }), block),
-          el('label', { class: 'field' }, el('span', { text: 'Desconto (R$)' }), value)),
-        preview,
-        el('p', { class: 'muted small wrap', text: 'Vale para os próximos pagamentos aprovados. Pontos já creditados e descontos já usados não mudam. O desconto nunca passa do valor dos produtos do pedido.' }),
-        msg, save, reset);
+  function orderSettingsSheet(s, onSaved) {
+    DG.sheet('Encomendas e prazo', (body, close) => {
+      const L = s.limits || {};
+      const lim = (k, d) => (Array.isArray(L[k]) ? L[k] : d);
+      const [leadMin, leadMax] = lim('scheduling_min_lead_min', [0, 2880]);
+      const [daysMin, daysMax] = lim('scheduling_max_days', [1, 30]);
+      const [capMin, capMax] = lim('scheduling_slot_capacity', [0, 100]);
+      const [etaMin, etaMax] = lim('delivery_eta', [0, 600]);
+      const sched = el('input', { type: 'checkbox', checked: s.scheduling_enabled });
+      const lead = DG.intField('Antecedência mínima em minutos (' + leadMin + ' a ' + leadMax + ')', s.scheduling_min_lead_min, leadMin, leadMax);
+      const days = DG.intField('Agendar até quantos dias à frente (' + daysMin + ' a ' + daysMax + ')', s.scheduling_max_days, daysMin, daysMax);
+      const cap = DG.intField('Pedidos por janela de 30 min (0 = sem limite, até ' + capMax + ')', s.scheduling_slot_capacity, capMin, capMax);
+      const eMin = DG.intField('Prazo de entrega: mínimo (min)', s.delivery_eta_min, etaMin, etaMax);
+      const eMax = DG.intField('Prazo de entrega: máximo (min)', s.delivery_eta_max, etaMin, etaMax);
+      const best = el('input', { type: 'checkbox', checked: s.best_seller_enabled });
+      const msg = el('p', { class: 'error wrap', role: 'alert', hidden: true });
+      const fail = t => { msg.textContent = t; msg.hidden = false; msg.scrollIntoView({ block: 'nearest' }); };
+      const save = el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar' });
+      const form = el('form', { class: 'stack', novalidate: true, on: { submit: async e => {
+        e.preventDefault();
+        msg.hidden = true;
+        const vals = {
+          scheduling_min_lead_min: DG.readInt(lead.input, leadMin, leadMax, 'Antecedência'),
+          scheduling_max_days: DG.readInt(days.input, daysMin, daysMax, 'Dias à frente'),
+          scheduling_slot_capacity: DG.readInt(cap.input, capMin, capMax, 'Pedidos por janela'),
+          delivery_eta_min: DG.readInt(eMin.input, etaMin, etaMax, 'Prazo mínimo'),
+          delivery_eta_max: DG.readInt(eMax.input, etaMin, etaMax, 'Prazo máximo')
+        };
+        const bad = Object.values(vals).find(v => typeof v !== 'number');
+        if (bad) return fail(bad.problem);
+        if (vals.delivery_eta_max < vals.delivery_eta_min) return fail('O prazo máximo precisa ser maior ou igual ao mínimo.');
+        vals.scheduling_enabled = sched.checked;
+        vals.best_seller_enabled = best.checked;
+        const payload = {};
+        for (const [k, v] of Object.entries(vals)) if (v !== s[k]) payload[k] = v;
+        if (!Object.keys(payload).length) return fail('Nada para alterar.');
+        save.disabled = true;
+        try { await DG.api('order_settings_save', { body: payload }); DG.toast('Ajustes de pedido salvos.'); close(); onSaved(); } catch (ex) { fail(ex.message); save.disabled = false; }
+      } } },
+      el('h3', { class: 'section-title', text: 'Encomenda com data marcada' }),
+      el('label', { class: 'a5-check' }, sched, el('span', { text: 'Cliente pode agendar dia e horário (janelas de 30 min, dentro do horário da loja)' })),
+      lead.field, days.field, cap.field,
+      el('h3', { class: 'section-title', text: 'Prazo de entrega na loja' }),
+      el('div', { class: 'grid2' }, eMin.field, eMax.field),
+      el('p', { class: 'muted small wrap', text: 'Só informativo: a loja mostra "Entrega em X a Y min".' }),
+      el('h3', { class: 'section-title', text: 'Selo "Mais pedido"' }),
+      el('label', { class: 'a5-check' }, best, el('span', { text: 'Mostrar o selo nos 3 produtos mais vendidos dos últimos 30 dias (mínimo de 5 unidades)' })),
+      msg, save);
+      body.replaceChildren(form);
+      sched.focus();
     });
   }
 
-  // ---------- Sinônimos ----------
-  function synonymsCard() {
-    const box = el('div', { class: 'stack' });
+  // ---------- Avaliação no Google e Instagram (v4 N8) ----------
+  // O cliente vê o pedido de avaliação depois do pagamento aprovado. Link vazio desliga o bloco. Só https.
+  function reviewCard() {
+    const box = el('div', { class: 'card stack' }, DG.loading());
     const load = async () => {
-      const r = await DG.api('synonyms').catch(() => null);
-      if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar os sinônimos.' })); return; }
+      const r = await DG.api('review_settings').catch(() => null);
+      if (!r) { box.replaceChildren(el('p', { class: 'error', text: 'Não consegui carregar o link de avaliação.' })); return; }
+      const v = r.review;
+      const link = (url, off) => (url ? el('a', { class: 'wrap rv-link', href: url, target: '_blank', rel: 'noopener noreferrer' }, url, el('span', { class: 'sr-only', text: ' (abre em nova aba)' })) : el('span', { class: 'muted', text: off }));
       box.replaceChildren(
-        ...(r.synonyms.length ? r.synonyms.map(x => el('div', { class: 'card row' },
-          el('div', { class: 'grow' }, el('strong', { class: 'wrap', text: x.synonym }), el('p', { class: 'muted small wrap', text: 'vale como: ' + x.canonical })),
-          el('button', { class: 'btn small', type: 'button', text: 'Editar', on: { click: () => edit(x) } }),
-          el('button', { class: 'btn small danger', type: 'button', 'aria-label': 'Apagar ' + x.synonym, text: '×', on: { click: async () => {
-            if (!(await DG.confirm('Apagar o sinônimo "' + x.synonym + '"?', 'Apagar', true))) return;
-            if (await DG.run(() => DG.api('synonym_delete', { body: { id: x.id } }), 'Apagado.')) load();
-          } } }))) : [DG.empty('Nenhum sinônimo cadastrado.')]),
-        el('button', { class: 'btn block', type: 'button', text: 'Novo sinônimo', on: { click: () => edit(null) } }));
-    };
-    const edit = x => {
-      DG.sheet(x ? 'Editar sinônimo' : 'Novo sinônimo', (body, close) => {
-        const syn = el('input', { type: 'text', maxlength: 60, value: x ? x.synonym : '', placeholder: 'Ex.: oreo' });
-        const can = el('input', { type: 'text', maxlength: 60, value: x ? x.canonical : '', placeholder: 'Ex.: biscoito oreo' });
-        body.append(el('p', { class: 'muted small', text: 'Quando você pausar um ingrediente, o painel também procura pelos sinônimos.' }),
-          el('label', { class: 'field' }, el('span', { text: 'Como você chama' }), syn), el('label', { class: 'field' }, el('span', { text: 'Nome no cardápio' }), can),
-          el('button', { class: 'btn primary block', type: 'button', text: 'Salvar', on: { click: async () => {
-            const b = { canonical: can.value.trim(), synonym: syn.value.trim() };
-            if (x) b.id = x.id;
-            if (await DG.run(() => DG.api('synonym_save', { body: b }), 'Salvo.')) { close(); load(); }
-          } } }));
-      });
+        el('dl', { class: 'kv' },
+          el('dt', { text: 'Google' }), el('dd', {}, link(v.google_review_url, 'Desligado (o cliente não vê o pedido de avaliação)')),
+          el('dt', { text: 'Instagram' }), el('dd', {}, link(v.instagram_url, 'Sem botão do Instagram'))),
+        v.google_review_url && v.review_url_is_default ? el('p', { class: 'muted small wrap', text: 'Usando o link padrão (busca da loja no Google Maps). Se tiver o link direto "Pedir avaliações" do Perfil da Empresa no Google, cole aqui.' }) : null,
+        el('p', { class: 'muted small wrap', text: 'Quando o cliente contar que avaliou, use "Cliente avaliou: dar mimo" no pedido ou em Mais > Relatórios > Clientes.' }),
+        isAdmin() ? el('button', { class: 'btn block', type: 'button', text: 'Editar links', on: { click: () => reviewSheet(v, load) } }) : el('p', { class: 'muted small', text: 'Só o administrador edita estes links.' }));
     };
     load();
     return box;
+  }
+  function reviewSheet(v, onSaved) {
+    DG.sheet('Avaliação e Instagram', (body, close) => {
+      const g = el('input', { type: 'url', inputmode: 'url', maxlength: 300, placeholder: 'https://g.page/r/...', value: v.google_review_url || '' });
+      const ig = el('input', { type: 'url', inputmode: 'url', maxlength: 300, placeholder: 'https://instagram.com/...', value: v.instagram_url || '' });
+      const msg = el('p', { class: 'error wrap', role: 'alert', hidden: true });
+      const fail = t => { msg.textContent = t; msg.hidden = false; };
+      const send = async (payload, btn, ok) => {
+        msg.hidden = true; btn.disabled = true;
+        try { await DG.api('review_settings_save', { body: payload }); DG.toast(ok); close(); onSaved(); } catch (e) { fail(e.message); btn.disabled = false; }
+      };
+      const save = el('button', { class: 'btn primary block', type: 'submit', text: 'Salvar links' });
+      const reset = el('button', { class: 'btn block', type: 'button', text: 'Voltar ao link padrão do Google', on: { click: () => send({ reset_review_url: true }, reset, 'Link padrão restaurado.') } });
+      const form = el('form', { class: 'stack', novalidate: true, on: { submit: e => {
+        e.preventDefault();
+        const gv = g.value.trim(), iv = ig.value.trim();
+        if ((gv && !/^https:\/\//i.test(gv)) || (iv && !/^https:\/\//i.test(iv))) return fail('Os links precisam começar com https://');
+        const payload = {};
+        if (gv !== (v.google_review_url || '')) payload.google_review_url = gv;
+        if (iv !== (v.instagram_url || '')) payload.instagram_url = iv;
+        if (!Object.keys(payload).length) return fail('Nada para alterar.');
+        send(payload, save, 'Links salvos.');
+      } } },
+      el('label', { class: 'field' }, el('span', { text: 'Link de avaliação no Google (vazio = desligado)' }), g),
+      el('label', { class: 'field' }, el('span', { text: 'Link do Instagram (vazio = sem botão)' }), ig),
+      msg, save, v.review_url_is_default ? null : reset);
+      body.replaceChildren(form);
+      g.focus();
+    });
   }
 
   // ---------- Segurança ----------
@@ -449,8 +454,9 @@
       view.replaceChildren(
         el('h2', { class: 'section-title', text: 'Horários e fechamento da loja' }), hoursSection(catalog),
         el('h2', { class: 'section-title', text: 'Frete' }), shippingCard(),
-        el('h2', { class: 'section-title', text: 'Pontos' }), pointsCard(),
-        el('h2', { class: 'section-title', text: 'Sinônimos de ingredientes' }), synonymsCard(),
+        el('h2', { class: 'section-title', text: 'Encomendas e prazo de entrega' }), orderSettingsCard(),
+        el('h2', { class: 'section-title', text: 'Clube de pontos' }), pointsCard(),
+        el('h2', { class: 'section-title', text: 'Avaliação no Google' }), reviewCard(),
         el('h2', { class: 'section-title', text: 'Loja' }), DG.storeCard(catalog),
         el('h2', { class: 'section-title', text: 'Segurança' }), securityCard());
     }

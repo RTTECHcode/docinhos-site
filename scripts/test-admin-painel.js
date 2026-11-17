@@ -341,19 +341,24 @@ async function cleanup() {
   });
   await t('points_save: só admin (staff 403, sem sessão 401); válida vale no painel, cardápio e saldo; audita antes -> depois', async () => {
     try {
-      const nova = { enabled: true, points_per_real: 2, block_points: 50, block_value_cents: 500 };
+      // F3: só enabled e points_per_real. block_* (desconto antigo) é ignorado se vier e as chaves antigas não mudam.
+      await Q('delete from settings where key = any($1::text[])', [POINT_KEYS]);
+      const nova = { enabled: true, points_per_real: 2 };
       assert.equal((await post(ST, 'points_save', nova)).status, 403);
       assert.equal((await post(null, 'points_save', nova)).status, 401);
-      const ok = await post(A, 'points_save', nova);
+      const ok = await post(A, 'points_save', { ...nova, block_points: 50, block_value_cents: 500 });
       assert.equal(ok.status, 200, JSON.stringify(ok.json));
-      assert.deepEqual(ok.json.points.rules, nova);
-      assert.deepEqual((await get(A, 'points_get')).json.points.rules, nova);
-      assert.deepEqual((await menuCall()).body.points, { enabled: true, pointsPerReal: 2, blockPoints: 50, blockValueCents: 500 });
+      assert.deepEqual(ok.json.points.rules, { ...DEF, ...nova });
+      assert.deepEqual((await get(A, 'points_get')).json.points.rules, { ...DEF, ...nova });
+      assert.deepEqual((await menuCall()).body.points, { enabled: true, pointsPerReal: 2, blockPoints: 100, blockValueCents: 1000 });
       const keys = Object.fromEntries((await Q('select key, value from settings where key = any($1::text[])', [POINT_KEYS])).map(r => [r.key, r.value]));
-      assert.deepEqual(keys, { points_enabled: '1', points_per_real: '2', points_block_points: '50', points_block_value_cents: '500' });
+      assert.deepEqual(keys, { points_enabled: '1', points_per_real: '2' });
       const au = (await Q(`select action, detail from admin_audit where username = $1 and action = 'pontos_regra_alterada' order by id desc limit 1`, [adm.username]))[0];
       assert.ok(au, 'auditoria gravada');
-      assert.match(au.detail, /-> ligado, 2 pt\/R\$ 1, 50 pts = 500 centavos$/);
+      assert.match(au.detail, /-> ligado, 2 pt\/R\$ 1$/);
+      // 10 pt/R$ 1 (máximo) vale mesmo com o block_* antigo (antes o teto de retorno derrubava a regra para o padrão)
+      assert.equal((await post(A, 'points_save', { enabled: true, points_per_real: 10 })).status, 200);
+      assert.equal((await loyalty.getRules(sql)).points_per_real, 10);
       // desligar
       const off = await post(A, 'points_save', { ...nova, enabled: false });
       assert.equal(off.status, 200);
@@ -361,21 +366,20 @@ async function cleanup() {
       assert.equal((await loyalty.getRules(sql)).enabled, false);
     } finally { await restorePoints(); }
   });
-  await t('points_save: inválidas -> 400 com mensagem e a regra não muda (negativo, zero, fração, texto, acima do limite, retorno > 50%)', async () => {
+  await t('points_save: inválidas -> 400 com mensagem e a regra não muda (negativo, zero, fração, texto, acima do limite)', async () => {
     try {
-      const base = { enabled: true, points_per_real: 1, block_points: 100, block_value_cents: 1000 };
-      assert.equal((await post(A, 'points_save', { ...base, block_points: 200 })).status, 200);
-      const bads = [{}, { ...base, enabled: 'sim' }, { ...base, points_per_real: -1 }, { ...base, points_per_real: 0 }, { ...base, points_per_real: 1.5 },
-        { ...base, points_per_real: 11 }, { ...base, block_points: '100' }, { ...base, block_points: 5 }, { ...base, block_points: 20000 },
-        { ...base, block_value_cents: -500 }, { ...base, block_value_cents: 50 }, { ...base, block_value_cents: 10001 },
-        { ...base, points_per_real: 10, block_points: 100, block_value_cents: 1000 }];
+      await Q('delete from settings where key = any($1::text[])', [POINT_KEYS]);
+      const base = { enabled: true, points_per_real: 3 };
+      assert.equal((await post(A, 'points_save', base)).status, 200);
+      const bads = [{}, { ...base, enabled: 'sim' }, { enabled: true }, { ...base, points_per_real: -1 }, { ...base, points_per_real: 0 },
+        { ...base, points_per_real: 1.5 }, { ...base, points_per_real: 11 }, { ...base, points_per_real: '2' }];
       for (const b of bads) {
         const r = await post(A, 'points_save', b);
         assert.equal(r.status, 400, JSON.stringify(b));
         assert.equal(r.json.code, 'invalid_rules');
         assert.ok(r.json.error && r.json.error.length > 10, 'mensagem em português');
       }
-      assert.deepEqual((await get(A, 'points_get')).json.points.rules, { ...base, block_points: 200 }, 'erro não altera a regra');
+      assert.deepEqual((await get(A, 'points_get')).json.points.rules, { ...DEF, ...base }, 'erro não altera a regra');
       assert.equal((await get(A, 'points_save')).status, 405);
       assert.equal((await post(A, 'points_get', {})).status, 405);
     } finally { await restorePoints(); }
@@ -394,7 +398,7 @@ async function cleanup() {
       await loyalty.onPaymentStatus(sql, o2.id);
       const bal = await loyalty.getBalance(sql, cust.id);
       assert.equal(bal.balance, 30 + 60, 'o1 continua 30; o2 ganha 60 pela regra nova');
-      assert.deepEqual([bal.points_per_real, bal.block_points, bal.block_value_cents, bal.points_enabled], [2, 50, 500, true]);
+      assert.deepEqual([bal.points_per_real, bal.points_enabled], [2, true]);
       assert.equal((await post(A, 'points_save', { enabled: false, points_per_real: 2, block_points: 50, block_value_cents: 500 })).status, 200);
       const o3 = await mk(3000);
       await loyalty.onPaymentStatus(sql, o3.id);
@@ -411,20 +415,14 @@ async function cleanup() {
   const comp = (await Q(`insert into complements (name, price_cents, kind, active) values ('ZZ-TESTE Biscoito Oreo', 300, 'additional', true) returning id`))[0];
   await Q('insert into product_complements (product_id, complement_id, max_quantity) values ($1, $2, 1)', [prod.id, comp.id]);
   let synId;
-  await t('sinônimos: sementes existem; salvar, editar, duplicado e inválidos; excluir', async () => {
-    const list = (await get(A, 'synonyms')).json.synonyms;
-    assert.ok(list.some(s => /oreo/i.test(s.canonical) || /oreo/i.test(s.synonym)));
-    assert.ok(list.some(s => /morango/i.test(s.canonical + s.synonym)));
-    const r = await post(A, 'synonym_save', { canonical: 'ZZ-TESTE leite ninho', synonym: 'ZZ-TESTE leite em pó' });
-    assert.equal(r.status, 200); synId = r.json.synonym.id;
-    assert.equal((await post(A, 'synonym_save', { id: synId, canonical: 'ZZ-TESTE leite ninho', synonym: 'ZZ-TESTE ninho' })).json.synonym.synonym, 'ZZ-TESTE ninho');
-    assert.equal((await post(A, 'synonym_save', { canonical: 'ZZ-TESTE leite ninho', synonym: 'ZZ-TESTE ninho' })).status >= 400, true, 'par duplicado');
-    for (const bad of [{ canonical: 'a', synonym: 'bb' }, { canonical: 'oreo', synonym: 'OREO' }, { canonical: 'ÓREO', synonym: 'oreo' }, { canonical: 'abc' }, {}, { canonical: 'x'.repeat(61), synonym: 'abc' }])
-      assert.equal((await post(A, 'synonym_save', bad)).status, 400, JSON.stringify(bad));
-    assert.equal((await post(A, 'synonym_delete', { id: synId })).status, 200);
-    assert.equal((await post(A, 'synonym_delete', { id: synId })).status, 404);
+  // v4 N4: sinônimos removidos. As ações não existem mais (404) e a busca procura o termo dentro do texto.
+  await t('v4 N4: synonyms, synonym_save e synonym_delete foram removidos (404)', async () => {
+    assert.equal((await get(A, 'synonyms')).status, 404);
+    assert.equal((await post(A, 'synonym_save', { canonical: 'ZZ-TESTE a', synonym: 'ZZ-TESTE b' })).status, 404);
+    assert.equal((await post(A, 'synonym_delete', { id: 1 })).status, 404);
+    void synId;
   });
-  await t('prévia: acha por sinônimo, sem acento, no nome, descrição e complemento; NÃO altera nada', async () => {
+  await t('prévia: sem acento, plural, começo de palavra, no nome, descrição e complemento; NÃO altera nada', async () => {
     const before = JSON.stringify([await Q('select id, paused from products order by id'), await Q('select product_id, complement_id, paused from product_complements order by 1,2')]);
     for (const term of ['oreo', 'ÓREO', 'biscoito oreo', 'Biscoito Óreo']) {
       const r = await post(A, 'pause_preview', { term });
@@ -432,8 +430,11 @@ async function cleanup() {
       assert.ok(r.json.products.some(p => p.id === prod.id && p.matched_in === 'descrição'), `${term}: produto pela descrição`);
       const c = r.json.complements.find(x => x.id === comp.id);
       assert.ok(c && c.links.some(l => l.product_id === prod.id && l.paused === false), `${term}: complemento e vínculo`);
-      assert.ok(r.json.terms.includes('oreo') && r.json.terms.includes('biscoito oreo'), 'sinônimo expandido');
+      assert.equal(r.json.terms.length, 1, 'v4 N4: só o termo digitado, sem sinônimos');
     }
+    const pre = await post(A, 'pause_preview', { term: 'ore' });
+    assert.ok(pre.json.complements.some(x => x.id === comp.id), 'v4 N4: "ore" acha "Biscoito Oreo" (começo de palavra)');
+    assert.ok(!(await post(A, 'pause_preview', { term: 'iscoito' })).json.complements.some(x => x.id === comp.id), 'v4 N4: meio de palavra não casa');
     const m = await post(A, 'pause_preview', { term: 'morango' });
     assert.ok(m.json.products.some(p => p.id === prod.id), 'plural "morangos" casa com "morango"');
     assert.equal((await post(A, 'pause_preview', { term: 'ninho' })).json.products.some(p => p.id === prod.id), true, 'nome');
@@ -548,12 +549,11 @@ async function cleanup() {
     assert.equal((await post(A, 'resume_apply', { term: 'zzmorango', confirm: true })).status, 404, 'lote já liberado: nada a fazer');
     assert.deepEqual((await get(A, 'pause_batches')).json.batches.map(b => b.id).filter(id => id === bMor || id === bOre), [bOre], 'só o lote aberto aparece');
   });
-  await t('reativar por sinônimo: "zzbiscoitinho" libera o lote do "zzoreo"; a torta volta (D6: sem restauração de etiqueta)', async () => {
-    assert.equal((await post(A, 'synonym_save', { canonical: 'zzoreo', synonym: 'zzbiscoitinho' })).status, 200);
-    const pv = await post(A, 'resume_preview', { term: 'zzbiscoitinho' });
+  await t('reativar com acento e plural: "ZZÓREOS" libera o lote do "zzoreo"; a torta volta (D6: sem restauração de etiqueta)', async () => {
+    const pv = await post(A, 'resume_preview', { term: 'ZZÓREOS' });
     assert.deepEqual(pv.json.batches.map(b => b.id), [bOre]);
     assert.equal(pv.json.summary.keep_paused, 0);
-    const r = await post(A, 'resume_apply', { term: 'zzbiscoitinho', confirm: true });
+    const r = await post(A, 'resume_apply', { term: 'ZZÓREOS', confirm: true });
     assert.equal(r.status, 200, JSON.stringify(r.json));
     assert.deepEqual([r.json.products_resumed, r.json.links_resumed], [1, 1]);
     assert.equal(await isPaused(lot.torta.id), false);
@@ -667,7 +667,7 @@ async function cleanup() {
     const l = await get(A, 'orders', { s: 'zz-teste auto' });
     assert.equal(l.json.orders[0].fulfillment_status, 'completed');
   });
-  await t('cancelar pedido pago com pontos reservados devolve os pontos; pedido já aprovado não devolve', async () => {
+  await t('cancelar pedido com pontos reservados devolve os pontos; v4 A-10: pedido já aprovado grava reversal (tira o ganho, devolve o gasto)', async () => {
     const cust = (await Q(`insert into customers (name, phone, password_hash, security_question, security_answer_hash) values ('ZZ-TESTE cliente pn', $1, 'x', 'prof_favorito', 'x') returning id`, ['+5511' + '9' + rnd().replace(/\D/g, '').padEnd(8, '1').slice(0, 8)]))[0];
     await loyalty.adjust(sql, { customerId: cust.id, points: 300, note: 'teste' });
     const o = await mkOrder('com pontos', { pay: 'pending', customerId: cust.id });
@@ -681,13 +681,17 @@ async function cleanup() {
     await loyalty.reserve(sql, { customerId: cust.id, orderId: o2.id, points: 100 });
     await Q(`update orders set payment_status = 'approved' where id = $1`, [o2.id]);
     await loyalty.onPaymentStatus(sql, o2.id);
+    const earned = (await Q(`select coalesce(sum(points), 0)::int n from loyalty_ledger where order_id = $1 and kind = 'earn'`, [o2.id]))[0].n;
     const bal = (await loyalty.getBalance(sql, cust.id)).balance;
-    await post(A, 'order_status', { id: o2.id, status: 'cancelled' });
-    assert.equal((await loyalty.getBalance(sql, cust.id)).balance, bal, 'pedido pago: cancelar não devolve os pontos já gastos');
+    assert.equal((await post(A, 'order_status', { id: o2.id, status: 'cancelled' })).status, 200);
+    assert.equal((await loyalty.getBalance(sql, cust.id)).balance, bal - earned + 100, 'A-10: pago cancelado tira o ganho e devolve os 100 gastos');
+    assert.equal((await Q(`select count(*)::int n from loyalty_ledger where order_id = $1 and kind = 'reversal'`, [o2.id]))[0].n, 1);
+    assert.equal((await post(A, 'order_status', { id: o2.id, status: 'cancelled' })).status, 200, 'repetir não estorna de novo');
+    assert.equal((await Q(`select count(*)::int n from loyalty_ledger where order_id = $1 and kind = 'reversal'`, [o2.id]))[0].n, 1);
   });
   await t('endpoints novos exigem sessão; GET/POST trocados -> 405; admin-only continua restrito', async () => {
-    for (const a of ['order_history', 'store_hours', 'store_state', 'shipping_get', 'synonyms', 'security_status']) assert.equal((await get(null, a)).status, 401, a);
-    for (const a of ['product_pause', 'pause_default_label', 'store_hours_save', 'store_close', 'store_reopen', 'shipping_save', 'synonym_save', 'synonym_delete', 'pause_preview', 'pause_apply', 'security_setup', 'recovery_codes_new', 'order_status'])
+    for (const a of ['order_history', 'store_hours', 'store_state', 'shipping_get', 'security_status']) assert.equal((await get(null, a)).status, 401, a);
+    for (const a of ['product_pause', 'pause_default_label', 'store_hours_save', 'store_close', 'store_reopen', 'shipping_save', 'pause_preview', 'pause_apply', 'security_setup', 'recovery_codes_new', 'order_status'])
       assert.equal((await post(null, a, {})).status, 401, a);
     assert.equal((await post(A, 'store_hours', {})).status, 405);
     assert.equal((await get(A, 'product_pause')).status, 405);

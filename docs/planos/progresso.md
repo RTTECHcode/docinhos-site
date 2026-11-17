@@ -44,3 +44,47 @@ Base: ajustes-v3 criada da painel-v3 (v2.1), que vai para a main.
 | F6 Relatório | feito | ajustes-v3 | docs/planos/relatorio-v3.md; aguarda Renan publicar e rodar W5 |
 
 Banco dev trocado em 11/11 (antigo expirou): cópia da produção; migrações v3 rodadas; horários 00:00-23:59 só no dev.
+
+## v4 — clube por itens, cupons, relatórios, mimo e Altos das auditorias
+
+Base: branch v4 criada da main (bff189f). Plano: docs/planos/plano-v4.md. Regras dos agentes: %LOCALAPPDATA%/gigi-tools/REGRAS-V4.md.
+
+| ID | Status | Branch | Nota |
+|---|---|---|---|
+| F0 A1 | feito | v4 | 4795c53; 0 Crítico, 2 Altos (S-01, O-01) |
+| F0 A5 | feito | v4 | c481d6f; 0 Crítico, 8 Altos (U-01 a U-06, P-01, P-02) |
+| F1 | feito | v4 | c481d6f; seção 2 do plano com os 10 Altos e 10 Médios/Baixos que entram |
+| F2 A2 | feito | v4-a2 | 89c63af; N1-N11 backend, Altos do A2, push sem dependência; 15 suítes ok; migração v4 rodada só no dev |
+| F4 A5 antecipada | feito | v4-a5 | 7a5d893; logo 1,7 MB para 9 KB, OG, CLS 0,47 para 0,00, morango/chocolate, N9, U-11 |
+| F3 A4 | feito | v4-a4 | 9e15662; N1-N3, N6-N8, N10, N11, U-01 a U-05, U-08 a U-10, X-01, P-06, P-12; 39 prints |
+| F3 A2 extra | feito | v4-a2 | 20e6207; retry_payment, tracking_url, itens/bairro no rastreio, MIME, points_save; 3 colunas novas (migração rodada só no dev) |
+| F3 A4 extra | feito | v4-a4 | be37ee2; Gerar novo pagamento (rastreio e checkout), rastreio ?o= com login, F5-S-09, faixa de confiança, aviso de nova aba |
+| F3 A3 | feito | v4-a3 | 5972489; N1, N3-N6, N8, N10, N11, U-06 (som, PWA, push), O-01; 44 prints |
+| F4 A5 revisão | feito | v4-a5 | 6c46ab2; só CSS: toque 44 px, Quando? em 360, pós-pagamento, foco, barra do Clube; prints "depois" interrompidos por falta de memória (A6 cobre na F5) |
+| F5 A1 segurança | feito | v4-a1 | 9f17bb2; 0 Crítico/Alto; 2 Médios (F5-S-01, S-02) e 7 Baixos em seguranca-v4-f5.md |
+| F5 A2 correções + F6 Netlify | feito | v4-a2 | 7216106; F5-S-01 a S-08, M1-M6, CSV no adaptador, instagram_url no /api/menu; 22 suítes de banco ok (2 interferências externas repetidas ok) |
+| F5 A6 QA etapa 1 | feito | v4-a6 | 6613581; 20 suítes + 2 novas ok, sem bug; colisão com teste alheio (A6-01) repetida ok |
+| F5 A6 QA etapa 2 | feito | v4-a6 | 8503dcd; loja 38/38 x3, painel ok, 0 erro de console; só Baixos/Info (A6-02 a A6-07) em qa-v4.md |
+| F6 Netlify | em andamento | v4-a2 | código com o A2; URLs, robots/sitemap e analytics com A4/A5 depois; deploy só com o Renan |
+| F7 A3 painel | feito | v4-a3 | 2e0e30e; F-01 (prévia quadrada, arrastar/zoom, 800x800 WebP), A6-03/04/05, O-01 63 para 47 px, nova aba; 3 erros 404 de recurso com API moqueada (A6 confere) |
+| F7 A4 loja + F6 domínio | feito | v4-a4 | 237e01b; contém v4-a2; junta depois dos testes de banco do A2; Instagram precisa do A2 expor instagram_url no /api/menu |
+| F7 A5 visual | feito (7d99226) | v4-a5 | 81cbd6c; contém v4-a4 e v4-a2; fontes locais (CSP sem Google), nova aba, .pay-again, contraste 5,84 |
+| F7 limpeza worktrees | bloqueado | — | 22 antigas limpas e contidas na main; a10-account removida pela metade (Permission denied, OneDrive); prune negado pelo classificador; decisão do Renan |
+| F7 limpeza final | feito | v4-a7 | fc59d8f; npm test/test:puro, scripts/migracoes (v4-schema AINDA NÃO rodou em produção), README Netlify, A-04, O-03 (dry-run), Instagram da API |
+| F7 regressão final | feito | v4-a6b | 0b57ffb; 24 suítes ok (test-admin velho corrigido), navegador 27/27 em 360 e 1366, 0 Crítico/Alto/Médio |
+| F8 | feito | v4 | relatorio-v4.md; preview da branch v4 publicado na Vercel (banco dev); main intocada |
+
+Pendências do A5 para a F3: A4 aplica morango/chocolate no Quem somos, faixa de confiança, P-06, P-12. Fora da faixa de todos (vão para o A4 na F3): vercel.json e raiz de public/ (P-04 cache do menu, P-05 cache de estáticos, P-07 fontes locais + CSP, P-09 robots/sitemap, P-10 404, manifest da loja).
+
+Domínio docinhosdagigioz.com.br registrado em 14/11/2026 (vence 14/11/2027), ainda sem apontar.
+
+Para a F7 (achados do A5 na F4): placeholder da busca do painel cortado em 360 ao lado de "Ativar som" (A3); faixa O-01 alta demais no celular (A3); cartão "Frete" sozinho na faixa de confiança em 2 colunas (A4); links de nova aba sem aviso (A3/A4).
+
+Dev: shipping_bands ausente (teste interrompido apagou; vale a faixa padrão do código). Conferir na produção antes do deploy se existe ajuste salvo.
+Para a F7 (do A4): aviso de nova aba em privacidade.html e experimental.html (A5); revisar visual do .pay-again (A5); script v4-a4 antigo do U-08 clica no botão antigo "Tentar pagar de novo".
+Dev: sobram 2 pedidos e 1 cliente ZZ-a5 de 13/11 (do A5); apagar na F7.
+Migração v4 RODADA na produção pelo Renan em 15/11 (28 itens ok); limpar-ip-antigo --aplicar rodado (0 linhas). Antes do merge na main: Renan cadastra SITE_URL=https://docinhos-site.vercel.app na Vercel (senão o MP volta para o domínio que ainda não aponta). Analytics: CSP precisa de static.cloudflareinsights.com (script-src) e cloudflareinsights.com (connect-src).
+Relatório: depois do merge na main, a Vercel publica canonical/og apontando para o domínio; apontar o DNS logo. Imagens de /images com cache de 30 dias (trocar foto estática = nome novo). Cardápio com cache de 60 s.
+Números (preço, total, pontos, contadores, timer) em Fredoka 600, aprovado pelo Renan em 15/11 a pedido da Gigi; títulos seguem na Bagel Fat One (v4-a5).
+Interferência: às 05:06-05:10 UTC de 15/11 algum test-admin-painel alheio fechou a loja do dev até 05:08 e não restaurou; o A2 restaurou o store_state.
+Caminhos novos: scripts/migracoes/migrate-2026-11-12-v4-schema.js e scripts/migracoes/conferir-pagamento.js. A-06 (escrita na leitura do saldo de pontos) fica para a v5.

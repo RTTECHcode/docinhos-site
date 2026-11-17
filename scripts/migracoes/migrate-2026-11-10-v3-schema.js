@@ -3,9 +3,9 @@
 //  - cep_cache: cache de CEP -> rua/bairro/cidade/UF (consulta ViaCEP de GET /api/store?a=cep).
 // Idempotente e só aditiva: nenhuma linha, coluna ou tabela é apagada ou alterada.
 // Rodar ANTES do deploy do código v3 (o cadastro com endereço, a conta e a consulta de CEP usam as colunas e a tabela novas).
-// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migrate-2026-11-10-v3-schema.js
-// Uso (produção, só com ordem do Renan): node --env-file=.env scripts/migrate-2026-11-10-v3-schema.js
-const sql = require('../api/_lib/db');
+// Uso (banco de desenvolvimento): node -r ./scripts/dev-env.js scripts/migracoes/migrate-2026-11-10-v3-schema.js
+// Uso (produção, só com ordem do Renan): node --env-file=.env scripts/migracoes/migrate-2026-11-10-v3-schema.js
+const sql = require('../../api/_lib/db');
 
 (async () => {
   for (const col of ['address_cep', 'address_street', 'address_number', 'address_complement', 'address_district', 'address_city']) {

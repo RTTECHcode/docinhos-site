@@ -1,4 +1,7 @@
-// Servidor local para desenvolvimento e testes no navegador (imita a Vercel: public/ + api/*.js).
+// Servidor local para desenvolvimento e testes no navegador (imita a hospedagem: public/ + api/*.js).
+// F6 M5: cabeçalhos (segurança, CSP, Cache-Control) lidos do netlify.toml, a mesma fonte da Netlify; corpo da
+// requisição lido igual ao adaptador das Functions (netlify/lib/adapter.js), com req.rawBody. APP_ENV=development
+// vem de scripts/dev-env.js (local nunca é produção).
 // Lê variáveis SOMENTE de .env.dev via scripts/dev-env.js. Nunca lê .env (produção).
 // Uso: node scripts/dev-server.js [porta]   (padrão 3000)  ->  http://localhost:3000
 // Os valores das variáveis nunca são impressos.
@@ -9,18 +12,24 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.argv[2] || process.env.PORT || 3000);
 
+// F3: + .webmanifest e .wav (PWA e som do painel), .avif (fotos do cardápio), .txt e .xml (robots e sitemap), .woff, .gif, .mp3.
+// scripts/test-dev-server-mime.js confere que toda extensão de public/ tem tipo aqui.
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
-  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2'
+  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json', '.wav': 'audio/wav', '.avif': 'image/avif',
+  '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8',
+  '.woff': 'font/woff', '.gif': 'image/gif', '.mp3': 'audio/mpeg'
 };
+const mimeOf = file => MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
 
-const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
+const { headersFor, loadRules } = require('../netlify/lib/toml-headers');
+const { parseBody } = require('../netlify/lib/adapter');
+let headerRules = null;
 function applyHeaders(res, urlPath) {
-  for (const rule of vercel.headers || []) {
-    const re = new RegExp('^' + rule.source.replace(/\(\.\*\)/g, '.*') + '$');
-    if (re.test(urlPath)) for (const h of rule.headers) res.setHeader(h.key, h.value);
-  }
+  if (!headerRules) headerRules = loadRules([path.join(ROOT, 'netlify.toml')]) || [];
+  for (const [k, v] of Object.entries(headersFor(headerRules, urlPath))) res.setHeader(k, v);
 }
 
 function readBody(req) {
@@ -57,14 +66,8 @@ async function handleApi(req, res, url) {
   if (!fs.existsSync(file)) { res.statusCode = 404; return res.end('Not found'); }
   const raw = await readBody(req);
   req.query = Object.fromEntries(url.searchParams);
-  const type = String(req.headers['content-type'] || '');
-  if (raw.length && /application\/json/i.test(type)) {
-    try { req.body = JSON.parse(raw.toString('utf8')); } catch { req.body = raw.toString('utf8'); }
-  } else if (raw.length && /application\/x-www-form-urlencoded/i.test(type)) {
-    req.body = Object.fromEntries(new URLSearchParams(raw.toString('utf8')));
-  } else {
-    req.body = raw.length ? raw.toString('utf8') : undefined;
-  }
+  req.rawBody = raw;
+  req.body = parseBody(raw, req.headers['content-type']);
   addHelpers(res);
   delete require.cache[require.resolve(file)];
   try {
@@ -84,11 +87,14 @@ function handleStatic(req, res, url) {
   if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
   else if (!fs.existsSync(file) && fs.existsSync(file + '.html')) file += '.html';
   if (!fs.existsSync(file)) { res.statusCode = 404; return res.end('Not found'); }
-  res.setHeader('Content-Type', MIME[path.extname(file).toLowerCase()] || 'application/octet-stream');
+  res.setHeader('Content-Type', mimeOf(file));
   res.setHeader('Cache-Control', 'no-store');
   fs.createReadStream(file).pipe(res);
 }
 
+module.exports = { MIME, mimeOf, applyHeaders };
+// Importado (teste do MIME): não sobe o servidor nem lê o .env.dev.
+if (require.main === module) {
 const { loaded } = require('./dev-env');
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -98,3 +104,4 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
   console.log(`dev-server em http://localhost:${PORT} (variáveis de .env.dev: ${loaded.join(', ') || 'nenhuma'})`);
 });
+}
